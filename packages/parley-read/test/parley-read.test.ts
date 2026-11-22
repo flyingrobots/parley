@@ -1181,6 +1181,23 @@ describe("RD-17 the view's surface orders the answer", () => {
     expect(after.bundles.length).toBe(3);
     expect(after.bundles.flatMap((b) => b.records).some((r) => r.event === "query")).toBe(false);
   });
+
+  test("a record with no usable t sorts last in its tier rather than anywhere", () => {
+    const plan = planQuery({ asker: { tool: "t" }, view: "what-changed", window: WIDE });
+    if (plan.refused) throw new Error("the plan was refused");
+    const run = runId(1);
+    const undated: LoadedRecord = { ...loaded(run, 3, "result", 0, { _schema: { id: "t.count", version: "1.0.0" } }), t: null };
+    const ranking = rankRecords(plan.query, [
+      undated,
+      loaded(run, 4, "result", T0 + 10, { _schema: { id: "t.count", version: "1.0.0" } }),
+      loaded(run, 1, "receipt.head", T0),
+      loaded(run, 2, "end", T0 + 20, { status: 0 }),
+    ]);
+    expect(ids(ranking.records)).toEqual([`${run}:4`, `${run}:3`, `${run}:1`, `${run}:2`]);
+    expect(ranking.ranked[1]!.tier).toBe("surface");
+    expect(ranking.ranked[1]!.why.join(" ")).toContain("no usable t");
+    expect(ranking.records.length).toBe(4);
+  });
 });
 
 describe("RD-18 a purpose that implies a change puts the failures first", () => {

@@ -349,14 +349,6 @@ function inWindow(record: LoadedRecord, window: QueryWindow): boolean {
 }
 
 /**
- * Ascending by `t`, with `(run, seq)` breaking a tie so that two records stamped the same
- * millisecond come back in one stable order rather than in whichever order the directory was read.
- */
-function byTime(a: LoadedRecord, b: LoadedRecord): number {
-  return (a.t! - b.t!) || a.run.localeCompare(b.run) || (a.seq - b.seq);
-}
-
-/**
  * Make a read: refuse it, or record it and answer it.
  *
  * A refused read returns its refusals and does nothing else — no run, no receipt, nothing written.
@@ -419,7 +411,10 @@ export async function queryReceipts(request: QueryRequest, opts: QueryOptions = 
     const own = all.filter((r) => r.run === run.id);
     const others = all.filter((r) => r.run !== run.id);
     const undated = others.filter((r) => typeof r.t !== "number");
-    const inside = others.filter((r) => inWindow(r, query.window)).sort(byTime);
+    // One place decides the order, and it is the ranking: `(t, run, seq)` ascending is the last
+    // part of its key, so sorting here first would be the same order computed twice and two
+    // places for it to drift.
+    const inside = others.filter((r) => inWindow(r, query.window));
     const ranking = rankRecords(query, inside);
     const records = ranking.records;
 

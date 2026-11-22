@@ -13,7 +13,7 @@ that reason.
 ## Why stdout stays small
 
 A caller pays context for every byte it reads. A payload that is mostly provenance costs the
-caller to read the program's reasoning in order to use its answer. Splitting result from proof
+caller to read the program's reasoning in order to use its answer. Splitting result from record
 means the reasoning is always recorded and never forced on a reader who does not need it.
 
 ## Why the receipt is a file rather than a stream

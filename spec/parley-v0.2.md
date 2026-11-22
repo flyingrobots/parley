@@ -30,11 +30,28 @@ schema, or any plain text on any stream, is a **bug** — not a cosmetic one.
 | --- | --- |
 | **stdout** | The result. The smallest payload that answers the question, plus the bootstrap line. |
 | **stderr** | Errors, and only errors. |
-| **receipt file** | The proof: argv, resolved interpretation, input digests, per-step reasoning. |
+| **receipt file** | The record: argv, resolved interpretation, input digests, per-step reasoning. |
 
-**stdout carries what you need to act; the receipt carries what you need to verify.** A reader
+**stdout carries what you need to act; the receipt carries what you need to check.** A reader
 should not have to pay context to re-read the program's own reasoning in order to use its answer,
 and should always be able to go find that reasoning later.
+
+### 1.2a What a record establishes
+
+A receipt is written by the program it describes. It is a record, not a proof. Each kind of
+evidence in this protocol establishes a different thing, and a reader **MUST NOT** take one for
+another:
+
+| Evidence | Establishes |
+| --- | --- |
+| A line validates against its schema | The line has the declared shape |
+| A content digest (§2.2, §5) | The identity of the bytes that were digested, under the stated hash |
+| A receipt | What the producer reports it did |
+| An independent check of a receipt against its inputs | Whatever that check's stated procedure covers, and no more |
+
+The same boundary holds for the agent-facing fields. A `remedy` (§6) is advice. An `effects`
+declaration (§4.3) is a claim the program makes about itself. `observer` and `purpose` (§9) are
+query context. None of them grants permission, and none of them is enforced by this protocol.
 
 A program **MUST NOT** allow a third-party library to write unstructured text to either stream.
 Capture or silence it.
@@ -371,10 +388,11 @@ record be read as history rather than reconstructed from guesswork. Those apply 
 structure, editing and proof. parley applies it to the narrowest surface there is — what a
 program prints.
 
-That narrowness is the point. A tool conforms to parley by changing how it writes to stdout. It
-needs no substrate, no daemon, no causal graph. If the same tool later writes into a richer
-history, nothing it emits has to change, because the shape is already causal: identified,
-ordered, provenanced, replayable.
+That narrowness is the point. A tool conforms to parley by changing what it writes: JSON Lines
+on stdout and stderr, a receipt on disk, and the hygiene and retention around it. It needs no
+substrate, no daemon, no causal graph. If the same tool later writes into a richer history,
+nothing it emits has to change, because every line is already identified, ordered within its
+run, provenanced, and attributable to the run that produced it.
 
 It is a doorway, deliberately sized so someone can walk through it without agreeing to anything
 larger.

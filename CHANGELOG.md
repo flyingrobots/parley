@@ -32,6 +32,12 @@ The spec and each message schema are versioned separately from this package.
 - `parley.run.bootstrap` `1.1.0` → `1.1.1`: `paths.log` and `paths.error` are no longer
   described, since the protocol defines no such streams; `receipt` is the only defined path.
   Descriptions only; nothing previously valid is rejected. (flyingrobots/parley#18)
+- §1.2a states what each kind of evidence establishes: a validated line has the declared shape, a
+  digest identifies bytes, a receipt is what the producer reports, an independent check covers
+  its stated procedure. The receipt is a record, not a proof; remedies are advice, effects are
+  claims, observer and purpose are query context, and none grants or enforces permission. §9a and
+  the README no longer call the shape "causal" or "replayable"; they say what §1.3 defines.
+  (flyingrobots/parley#22)
 - Normative keywords cite RFC 2119 and RFC 8174; §1.1's no-colour rule carries its keyword; §3
   says how `v` differs from `_schema.version`; example timestamps are in 2026.
   (flyingrobots/parley#18)

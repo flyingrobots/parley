@@ -25,6 +25,10 @@
     "url": "git+https://github.com/flyingrobots/parley.git",
     "directory": "packages/parley-emit"
   },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "author": "James Ross",
   "engines": {
     "bun": ">=1.2"

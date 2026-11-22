@@ -5,7 +5,10 @@ on its own; the spec and each message schema move separately (spec §4.4).
 
 ## [Unreleased]
 
-The first version, `0.1.0`, is not yet on npm; this entry becomes its heading when it is published.
+## [0.1.0] — 2026-11-22
+
+The schemas this version ships are the repository drafts at the commit recorded in
+`src/schemas.ts`; no schema version is released by this package release (spec §4.5).
 
 ### Added
 

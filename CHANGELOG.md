@@ -8,7 +8,8 @@ The spec and each message schema are versioned separately from this package.
 ### Added
 
 - `packages/parley-emit`: the writer library `@flyingrobots/parley-emit` 0.1.0, a Bun workspace
-  package. A tool conforms by constructing a writer and emitting through it. Its own changelog
+  package, published to npm on 2026-11-22 (tag `parley-emit-v0.1.0`); the package version moves
+  on its own and this release publishes no schema version. A tool conforms by constructing a writer and emitting through it. Its own changelog
   lives beside it; the repository's `bun test` runs its suite, every case using the doctor as the
   oracle, and `bun run typecheck` checks it strictly. (flyingrobots/parley#1)
 

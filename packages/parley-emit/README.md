@@ -12,9 +12,7 @@ Spec version `0.2.0`. Package version moves with this code; each message schema 
 
 ## Install
 
-Bun 1.2 or later. No runtime dependencies. The package is not on npm yet; until it is, link a
-checkout of this repository (`bun link` in `packages/parley-emit`, then
-`bun link @flyingrobots/parley-emit` in the adopter) and declare `^0.1.0` as the version.
+Bun 1.2 or later. No runtime dependencies.
 
 ```bash
 bun add @flyingrobots/parley-emit

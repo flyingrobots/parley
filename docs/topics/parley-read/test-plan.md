@@ -20,6 +20,9 @@ writer (`@flyingrobots/parley-emit`) and load what it left behind.
 | RD-11 | A quarantined line is never evidence: not a record, not termination, not a validation result | §1.4 |
 | RD-12 | The receipts the writer leaves behind load with zero quarantines and every `parley.*` record validates | §1, §4.4 |
 | RD-13 | A thousand small receipts load in one bounded pass | — |
+| RD-14 | A query is refused unless it names an asker, a view and a window; the refusal is structured and records nothing | §9, §2.1 |
+| RD-15 | An accepted query is recorded through the writer as a `parley.query` event and read back by the loader as a record of its own run | §9, §1.3, §4.5 |
+| RD-16 | A query returns the window's records in time order, echoes the window, and projects, ranks and excludes nothing | §9 |
 
 | ID | Case | Oracle | Evidence | Status |
 | --- | --- | --- | --- | --- |
@@ -64,3 +67,20 @@ writer (`@flyingrobots/parley-emit`) and load what it left behind.
 | RD-12b | The writer's own sidecar bundle | the result the receipt does not carry inline is restored from the sidecar with its rows | `a writer run whose result went to a sidecar loads with the record restored` | implemented |
 | RD-12c | A writer run given a declared secret | the bundle is unavailable for replay and the value is nowhere in the loaded records | `a writer run that redacted a secret is unavailable for replay` | implemented |
 | RD-13a | A thousand six-line receipts in one directory | 1000 bundles, 6000 records, zero quarantines, one pass under 30 s | `a thousand small receipts load in bounded time` | implemented |
+| RD-14a | A request with a view and a window whose asker names no tool | refused with `query.asker_unnamed`; no observer is defaulted | planned | — |
+| RD-14b | A request with an asker and a window and no view | refused with `query.view_missing`; no view is guessed | planned | — |
+| RD-14c | A request whose view is not one of the five tokens | refused with `query.view_unknown`, naming the vocabulary | planned | — |
+| RD-14d | A request with no window, and one whose `to` is below its `from` | refused with `query.window_missing` and `query.window_inverted` | planned | — |
+| RD-14e | A request with `budget.records` of 0 | refused with `query.budget_invalid`: a bound that admits nothing is not a bound | planned | — |
+| RD-14f | Any refused request, over a directory with no `.parley` | every refusal carries a code, a problem and a remedy; nothing is written, no receipt and no `.parley` directory exists afterwards, and no query record is anywhere | planned | — |
+| RD-15a | A complete query over a directory holding three runs | exactly one `parley.query` record exists afterwards, carried by the read's own run, and the result names it by `(run, seq)` | planned | — |
+| RD-15b | The same directory loaded again after the query | the query record loads as `validated` against `parley.query@1.0.0`, in a bundle that terminated with status 0 | planned | — |
+| RD-15c | A query that supplies no budget | the recorded budget is `{"records": 20}` and the result says it was defaulted | planned | — |
+| RD-15d | The lines the read wrote to its stream | the `query` line validates against the shipped `parley.query@1.0.0` schema on its own, not only as loaded from the receipt | planned | — |
+| RD-15e | A query over a directory holding more receipts than any retention count would keep | every receipt is still there afterwards: a read never expires the history it reads | planned | — |
+| RD-16a | Five runs spread over a month, with a window covering two of them | only those runs' records come back, ascending by `t`, and the result echoes the window verbatim | planned | — |
+| RD-16b | A query over an empty directory | no records, and the query is recorded all the same | planned | — |
+| RD-16c | A window that no record falls in | no records, the window echoed, the query recorded | planned | — |
+| RD-16d | The query's own run | the read does not answer itself: none of its own records are in its result, and the record of it is there for the next read | planned | — |
+| RD-16e | Records written out of `t` order, across two runs, inside one window | one ascending sequence by `t`, with `(run, seq)` breaking a tie | planned | — |
+| RD-16f | The same window under `what-failed` and under `everything` | the same records in the same order: the view is recorded, and projecting and ranking by it is flyingrobots/parley#49 and flyingrobots/parley#50 | planned | — |

@@ -7,7 +7,7 @@ General rules live in `~/.agents/AGENTS.md`. This records what is specific to `p
 A **specification first**, libraries second. The spec in `spec/` is the product; any reader or
 writer we ship is a conforming implementation of it, not the definition of it.
 
-## The two versions, kept apart
+## The three versions, kept apart
 
 - **The spec version** (`spec/parley-vX.Y.md`) moves when the protocol changes.
 - **Each message schema version** (`schemas/*.schema.json`) moves when that message changes.

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://flyingrobots.dev/parley/schemas/parley.run.bootstrap/1.1.0",
+  "$id": "https://flyingrobots.dev/parley/schemas/parley.run.bootstrap/1.1.1",
   "title": "parley run bootstrap",
   "description": "First line of stdout, emitted before work begins so a crashed run still names its receipt.",
   "type": "object",
@@ -32,7 +32,7 @@
     },
     "v": {
       "type": "string",
-      "description": "The program's own version, distinct from any schema version."
+      "description": "The program's own version, distinct from _schema.version on the same line (spec \u00a73)."
     },
     "inv": {
       "type": "string",
@@ -53,15 +53,11 @@
       ],
       "properties": {
         "receipt": {
-          "type": "string"
-        },
-        "log": {
-          "type": "string"
-        },
-        "error": {
-          "type": "string"
+          "type": "string",
+          "description": "The receipt file for this run (spec \u00a75). The only path the protocol defines; a program may add others it documents."
         }
-      }
+      },
+      "description": "Files this run writes."
     },
     "_schema": {
       "type": "object",

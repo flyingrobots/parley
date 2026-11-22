@@ -1,7 +1,9 @@
 # parley v0.2 — specification
 
 **Status:** proposal. **Spec version:** `0.2.0`, versioned independently of any implementation.
-**Normative terms:** **MUST**, **SHOULD**, **MAY** indicate requirement strength.
+**Normative terms:** **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT** and **MAY** are to be
+interpreted as described in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119) and
+[RFC 8174](https://www.rfc-editor.org/rfc/rfc8174) when, and only when, they appear in bold.
 
 A protocol for programs whose primary caller is an agent. It defines how a program speaks on its
 output streams, how it describes itself, what it leaves behind, and how that record is read.
@@ -20,7 +22,7 @@ schema, or any plain text on any stream, is a **bug** — not a cosmetic one.
 - A program **MUST NOT** detect a TTY and change its output contract. Output that depends on how
   it was invoked is the one thing an agent cannot plan around, because an agent's call is never a
   TTY and it will silently receive a contract nobody tested.
-- No colour, spinners, progress bars, emoji or box drawing in the default format.
+- The default format **MUST NOT** contain colour, spinners, progress bars, emoji or box drawing.
 
 ### 1.2 Stream roles
 
@@ -123,13 +125,11 @@ The **first** line the run emits on any stream, and so the first line of stdout,
 **before work begins**.
 
 ```json
-{"event":"run","t":1763790412345,"seq":0,
+{"event":"run","t":1795326412345,"seq":0,
  "tool":"theme-book","v":"0.2.1",
  "inv":"inv_7f3a…","run":"01JD3K…","session":"ses_9c…",
- "paths":{"receipt":".parley/receipts/01JD3K….jsonl",
-          "log":".parley/logs/01JD3K….jsonl",
-          "error":".parley/errors/01JD3K….jsonl"},
- "_schema":{"id":"parley.run.bootstrap","version":"1.1.0"}}
+ "paths":{"receipt":".parley/receipts/01JD3K….jsonl"},
+ "_schema":{"id":"parley.run.bootstrap","version":"1.1.1"}}
 ```
 
 It **MUST** be emitted before the work starts, not after it finishes. **If the run crashes, the
@@ -138,6 +138,11 @@ path you never get on the failure path.
 
 The bootstrap line **MUST** stay small. The argv echo, the resolved interpretation and the input
 digests belong in the receipt's own first line (§5).
+
+`v` is the program's own version. `_schema.version` on the same line is the version of the
+bootstrap schema. They move for unrelated reasons (§4.4) and agree only by coincidence. `paths`
+names the files this run writes; `receipt` is the only one the protocol defines, and a program
+**MAY** add others it documents.
 
 ---
 
@@ -232,7 +237,7 @@ interpretation after defaults and environment are applied, and a digest per decl
 > a flag.
 
 ```json
-{"event":"receipt.head","t":1763790412346,"seq":1,"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8",
+{"event":"receipt.head","t":1795326412346,"seq":1,"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8",
  "inv":"inv_7f3a9c1e","session":"ses_9c4f",
  "argv":["theme-book","count","--format","css"],
  "resolved":{"command":"count","format":"css","cwd":"/work/site"},
@@ -269,7 +274,7 @@ Receipts are durable and may contain file contents, resolved paths and prompts. 
 Errors go to stderr, as JSON Lines, and **MUST** carry structure rather than prose:
 
 ```json
-{"event":"error","t":1763790412380,"seq":4,"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8","code":"contrast.unsatisfiable",
+{"event":"error","t":1795326412380,"seq":4,"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8","code":"contrast.unsatisfiable",
  "problem":"No opaque sRGB foreground reaches the required contrast on this background",
  "measured":5.3783,"limit":7,"remedy":"adjust the background",
  "remedy_target":"--destructive",
@@ -300,7 +305,7 @@ rather than diffing two payloads.
 Unbounded output **MUST** paginate explicitly with a cursor:
 
 ```json illustrative
-{"event":"page","t":1763790412390,"seq":7,"run":"01JD3K…","cursor":"…","has_more":true,
+{"event":"page","t":1795326412390,"seq":7,"run":"01JD3K…","cursor":"…","has_more":true,
  "_schema":{"id":"parley.page","version":"1.0.0"}}
 ```
 

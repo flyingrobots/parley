@@ -1,6 +1,6 @@
-# parley v0.1 — specification
+# parley v0.2 — specification
 
-**Status:** proposal. **Spec version:** `0.1.0`, versioned independently of any implementation.
+**Status:** proposal. **Spec version:** `0.2.0`, versioned independently of any implementation.
 **Normative terms:** **MUST**, **SHOULD**, **MAY** indicate requirement strength.
 
 A protocol for programs whose primary caller is an agent. It defines how a program speaks on its
@@ -45,20 +45,31 @@ Every emitted line **MUST** carry:
 | --- | --- |
 | `event` | Discriminator naming the line's kind |
 | `t` | POSIX time in **integer milliseconds**. No timezone, sortable as an integer |
-| `seq` | Monotonic counter within the run, from `0` |
+| `seq` | Position in the run's single sequence, from `0`. See below |
+| `run` | The execution this line belongs to (§2.1) |
 | `_schema` | `{ "id": …, "version": … }` identifying the schema this line validates against |
 
-`seq` exists because wall clocks move backwards under clock adjustment. Ordering within a run
-**MUST** use `seq`; ordering across runs **MAY** use `t`.
-
 Every line **MUST** stand alone. A consumer should not need to keep state from earlier lines to
-interpret a later one.
+interpret a later one. That is why `run` is on every line and not only on the first: a pipe can
+supply the context for a moment, but a line read out of a shared stream tomorrow cannot recover
+which run it belonged to, and two runs interleaved on one terminal cannot be told apart.
+
+**One sequence per run, across every stream.** A run holds a single counter. Every line it
+emits, on stdout, stderr or into the receipt, takes the next value. `seq` exists because wall
+clocks move backwards under clock adjustment. Ordering within a run **MUST** use `seq`; ordering
+across runs **MAY** use `t`.
+
+A line written to more than one stream, for example an error that goes to stderr and is also
+recorded in the receipt, is one event and **MUST** carry the same `seq` in every copy. The pair
+`(run, seq)` therefore identifies an event uniquely, and a consumer merging streams **MUST** treat
+two lines with the same pair as one event. Because the bootstrap line (§3) is emitted first, it is
+always `seq: 0`; nothing else is pinned.
 
 ---
 
 ## 2. Identity
 
-### 2.1 Two identifiers, and why both
+### 2.1 Three identifiers, and why
 
 | Id | Scope | Derivation |
 | --- | --- | --- |
@@ -69,6 +80,9 @@ interpret a later one.
 Two runs of the same question are still two events whose receipts must not collide, so `run` is
 required. But knowing they *were* the same question is what buys replay and change detection, so
 `inv` is required too. Collapsing them loses one or the other.
+
+`session` is optional. A program **MUST** carry it when the caller supplies one and **MUST NOT**
+invent one.
 
 ### 2.2 Computing `inv`
 
@@ -110,7 +124,7 @@ The **first** line of stdout, emitted **before work begins**.
  "paths":{"receipt":".parley/receipts/01JD3K….jsonl",
           "log":".parley/logs/01JD3K….jsonl",
           "error":".parley/errors/01JD3K….jsonl"},
- "_schema":{"id":"parley.run.bootstrap","version":"1.0.0"}}
+ "_schema":{"id":"parley.run.bootstrap","version":"1.1.0"}}
 ```
 
 It **MUST** be emitted before the work starts, not after it finishes. **If the run crashes, the
@@ -159,6 +173,32 @@ accept `--dry-run`, reporting what it would do without doing it.
   schema nothing checks drifts from what it describes, and is then worse than no schema because it
   is believed.
 
+### 4.5 Compatibility
+
+Schema versions are SemVer, and the number is a promise to readers:
+
+- A **minor** bump is additive. A line valid under `1.1.0` is valid under `1.0.0` with its new
+  fields ignored. A reader **MUST** ignore fields it does not know, so a reader built against
+  `1.0.0` keeps working when a writer moves to `1.1.0`.
+- A **major** bump may remove, rename or retype a field, or add a required one. A reader
+  **MUST** reject a line whose major version is newer than the one it was built against, since it
+  cannot know what changed.
+- A **patch** bump changes descriptions only.
+
+Because readers ignore unknown fields, parley schemas are **open**: they do not set
+`additionalProperties: false` at the top level. `_schema` itself is closed, and pinned by `const`
+in each message schema to that schema's own id and version, so a line cannot claim a schema it
+was not written to.
+
+### 4.6 Resolution
+
+`_schema.id` and `_schema.version` are identifiers, not fetch instructions. A reader resolves them
+to the schema it ships with for that id, and applies the rule in §4.5 to the version. The `$id`
+inside each published schema is `https://flyingrobots.dev/parley/schemas/<id>/<version>` and
+is likewise an identifier; it is not required to be served. Each schema lives at
+`schemas/<id>.schema.json` in this repository at its current version; earlier versions are in
+git history at the tag that published them.
+
 ---
 
 ## 5. Receipts
@@ -199,11 +239,11 @@ Receipts are durable and may contain file contents, resolved paths and prompts. 
 Errors go to stderr, as JSON Lines, and **MUST** carry structure rather than prose:
 
 ```json abridged
-{"event":"error","t":…,"seq":…,"code":"contrast.unsatisfiable",
+{"event":"error","t":…,"seq":…,"run":"01JD3K…","code":"contrast.unsatisfiable",
  "problem":"No opaque sRGB foreground reaches the required contrast on this background",
  "measured":5.3783,"limit":7,"remedy":"adjust the background",
  "remedy_target":"--destructive",
- "_schema":{"id":"parley.error","version":"1.0.0"}}
+ "_schema":{"id":"parley.error","version":"2.0.0"}}
 ```
 
 The fields that matter are **`measured`, `limit` and `remedy`**. An error naming the constraint,
@@ -230,7 +270,8 @@ rather than diffing two payloads.
 Unbounded output **MUST** paginate explicitly with a cursor:
 
 ```json illustrative
-{"event":"page","cursor":"…","has_more":true}
+{"event":"page","t":1763790412390,"seq":7,"run":"01JD3K…","cursor":"…","has_more":true,
+ "_schema":{"id":"parley.page","version":"1.0.0"}}
 ```
 
 A caller that fears a large payload will truncate it with a pipe, and silent truncation of JSON is

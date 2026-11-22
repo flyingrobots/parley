@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 import { doctor } from "../../../scripts/doctor.ts";
-import { defineTool, main, openRun, SCHEMA_SOURCE, SCHEMAS, ulid, type Sink, type ToolSpec } from "../src/index.ts";
+import { defineTool, main, SCHEMA_SOURCE, SCHEMAS, ulid, type Run, type Sink, type ToolSpec } from "../src/index.ts";
 
 const SCHEMAS_DIR = resolve(import.meta.dir, "../../../schemas");
 
@@ -59,7 +59,7 @@ function check(cwd: string, s: { stdout: Capture; stderr: Capture }, receiptPath
   return { violations, receipt: receipt ?? "", receiptLines: receipt ? receipt.trimEnd().split("\n").map((l) => JSON.parse(l) as Record<string, unknown>) : [], path };
 }
 
-async function runCount(cwd: string, env: Record<string, string>, argv: string[], body: (run: Awaited<ReturnType<typeof openRun>> extends infer R ? Extract<R, { ok: true }>["run"] : never) => Promise<void> | void, over: Partial<ToolSpec> = {}, inputs: { path: string; role?: string }[] = []) {
+async function runCount(cwd: string, env: Record<string, string>, argv: string[], body: (run: Run) => Promise<void> | void, over: Partial<ToolSpec> = {}, inputs: { path: string; role?: string }[] = []) {
   const s = streams();
   const status = await main(tool(over), ["t", ...argv], async (run) => { await body(run); }, { cwd, env, inputs: () => inputs, resolved: (args) => ({ command: "count", args }), ...s });
   return { ...s, status, ...check(cwd, s) };
@@ -97,7 +97,7 @@ describe("PE-1 conformance", () => {
 });
 
 describe("PE-2 inv", () => {
-  const body = (run: { result: Function }) => { run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" }); };
+  const body = (run: Run) => { run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" }); };
   const invOf = (r: { receiptLines: Record<string, unknown>[] }) => (r.receiptLines.find((o) => o.event === "receipt.inputs") as { inv?: string } | undefined)?.inv;
 
   test("inv is stable across reruns", async () => {
@@ -156,7 +156,7 @@ describe("PE-2 inv", () => {
 describe("PE-3 bootstrap before work", () => {
   test("bootstrap precedes work and the receipt exists", async () => {
     const { dir, env } = scratch();
-    let seen: { lines: number; exists: boolean } | null = null;
+    let seen: { lines: number; exists: boolean } | undefined;
     const s = streams();
     await main(tool(), ["t", "count"], async (run) => { seen = { lines: s.stdout.lines.length, exists: existsSync(run.receiptPath) }; }, { cwd: dir, env, ...s });
     expect(seen).toEqual({ lines: 1, exists: true });

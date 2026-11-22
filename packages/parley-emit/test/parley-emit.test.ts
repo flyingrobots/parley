@@ -6,7 +6,8 @@ import { join, resolve } from "node:path";
 import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 import { doctor } from "../../../scripts/doctor.ts";
-import { defineTool, main, SCHEMA_SOURCE, SCHEMAS, ulid, writeWholeLine, historyDays, HISTORY_DEFAULT_DAYS, HISTORY_MAX_DAYS, type Run, type Sink, type ToolSpec } from "../src/index.ts";
+import { checkRecord, defineTool, main, SCHEMA_SOURCE, SCHEMAS, transformDigest, ulid, writeWholeLine, historyDays, HISTORY_DEFAULT_DAYS, HISTORY_MAX_DAYS, type HistoryTransform, type MainOptions, type Run, type Sink, type ToolSpec } from "../src/index.ts";
+import { inspectSegment } from "../../../scripts/doctor.ts";
 
 const SCHEMAS_DIR = resolve(import.meta.dir, "../../../schemas");
 
@@ -59,9 +60,9 @@ function check(cwd: string, s: { stdout: Capture; stderr: Capture }, receiptPath
   return { violations, receipt: receipt ?? "", receiptLines: receipt ? receipt.trimEnd().split("\n").map((l) => JSON.parse(l) as Record<string, unknown>) : [], path };
 }
 
-async function runCount(cwd: string, env: Record<string, string>, argv: string[], body: (run: Run) => Promise<void> | void, over: Partial<ToolSpec> = {}, inputs: { path: string; role?: string }[] = []) {
+async function runCount(cwd: string, env: Record<string, string>, argv: string[], body: (run: Run) => Promise<void> | void, over: Partial<ToolSpec> = {}, inputs: { path: string; role?: string }[] = [], extra: Partial<MainOptions> = {}) {
   const s = streams();
-  const status = await main(tool(over), ["t", ...argv], async (run) => { await body(run); }, { cwd, env, inputs: () => inputs, resolved: (args) => ({ command: "count", args }), ...s });
+  const status = await main(tool(over), ["t", ...argv], async (run) => { await body(run); }, { cwd, env, inputs: () => inputs, resolved: (args) => ({ command: "count", args }), ...s, ...extra });
   return { ...s, status, ...check(cwd, s) };
 }
 
@@ -1195,5 +1196,289 @@ describe("PE-22 the retention window", () => {
     expect(r.status).toBe(0);
     expect(r.violations).toEqual([]);
     expect(readdirSync(hist).sort()).toEqual([recent, segmentFor(Date.now())].sort());
+  });
+});
+
+// ---- PE-23: the history sink's user-defined transform (flyingrobots/parley#57) -------------
+// The transform is the stream's own aperture: it narrows the stream copy and never the receipt.
+// The writer enforces the contract around it, so nothing it does can put an invalid line or a
+// changed envelope on the shared timeline, and a run without one is unchanged in every byte.
+
+const TRANSFORM_PAIR = { id: "parley.history.transform", version: "1.0.0" } as const;
+const draftOf = (id: string) => JSON.parse(readFileSync(join(SCHEMAS_DIR, `${id}.schema.json`), "utf8")) as object;
+const digestOfSource = (fn: HistoryTransform) => createHash("sha256").update(fn.toString()).digest("hex");
+const warningsOf = (r: { stderr: Capture }, code: string) => r.stderr.objs.filter((o) => o.event === "warning" && o.code === code);
+/** The stream copy's lines after the opening transform line. */
+const projectedLines = (hist: string) => segmentText(hist).trimEnd().split("\n").slice(1);
+
+async function projected(transform: HistoryTransform, body: (run: Run) => void, opts: { argv?: string[]; name?: string; over?: Partial<ToolSpec> } = {}) {
+  const { dir, env, hist } = historyScratch();
+  const r = await runCount(dir, { ...env, PARLEY_HISTORY: hist }, opts.argv ?? ["count"], body, opts.over ?? {}, [], { history: { transform, ...(opts.name ? { name: opts.name } : {}) } });
+  return { ...r, hist, objs: segmentObjs(hist), text: segmentText(hist) };
+}
+
+describe("PE-23 the history sink's transform", () => {
+  test("a transform projects the stream copy and never the receipt", async () => {
+    const dropDetail: HistoryTransform = (rec) => { if (rec.event !== "receipt.step") return rec; const { detail: _d, ...rest } = rec; return rest; };
+    const r = await projected(dropDetail, (run) => {
+      run.step("counted the things", "the stream need not carry the rows", { names: ["a.txt", "b.txt"] });
+      run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" });
+    });
+    expect(r.violations).toEqual([]);
+    expect(r.status).toBe(0);
+    expect(r.stderr.lines).toEqual([]);
+    const recStep = r.receiptLines.find((o) => o.event === "receipt.step" && o.decision === "counted the things")!;
+    const streamStep = r.objs.find((o) => o.event === "receipt.step" && o.decision === "counted the things")!;
+    expect(recStep.detail).toEqual({ names: ["a.txt", "b.txt"] });
+    expect("detail" in streamStep).toBe(false);
+    for (const k of ["event", "t", "seq", "run", "_schema"]) expect(streamStep[k]).toEqual(recStep[k]);
+  });
+
+  test("the envelope is reattached after the transform", async () => {
+    const forge: HistoryTransform = (rec) => ({ ...rec, event: "forged", t: 0, seq: 999, run: "FORGED", _schema: { id: "forged", version: "9.9.9" }, extra: 1 });
+    const r = await projected(forge, (run) => { run.result({ event: "result", value: 2 }, { id: "t.count", version: "1.0.0" }); });
+    expect(r.violations).toEqual([]);
+    expect(warningsOf(r, "history.transform_invalid")).toEqual([]);
+    const head = r.receiptLines[0]!;
+    const streamHead = r.objs.find((o) => o.event === "receipt.head")!;
+    for (const k of ["event", "t", "seq", "run", "_schema"]) expect(streamHead[k]).toEqual(head[k]);
+    expect(streamHead.extra).toBe(1);
+    expect(r.objs.every((o) => o.run === head.run || o.event === "history.transform")).toBe(true);
+    expect(r.objs.some((o) => o.event === "forged")).toBe(false);
+  });
+
+  test("an invalid body is withheld and warned by seq", async () => {
+    const strip: HistoryTransform = (rec) => { if (rec.event !== "receipt.step") return rec; const { because: _b, ...rest } = rec; return rest; };
+    const r = await projected(strip, (run) => {
+      run.step("counted the things", "a step without a reason is not a step");
+      run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" });
+    });
+    expect(r.violations).toEqual([]);
+    expect(r.status).toBe(0);
+    const stepSeq = r.receiptLines.find((o) => o.event === "receipt.step")!.seq as number;
+    const warns = warningsOf(r, "history.transform_invalid");
+    expect(warns.length).toBe(1);
+    expect(String(warns[0]!.problem)).toContain(`seq ${stepSeq}`);
+    expect(r.receiptLines.some((o) => o.event === "warning" && o.code === "history.transform_invalid")).toBe(true);
+    expect(r.objs.some((o) => o.event === "receipt.step" && o.seq === stepSeq)).toBe(false);
+    expect(r.objs.some((o) => o.event === "result")).toBe(true);
+  });
+
+  test("a throwing transform withholds the line and leaves the status alone", async () => {
+    const boom: HistoryTransform = (rec) => { if (rec.event === "receipt.step") throw new Error("the projection blew up"); return rec; };
+    const r = await projected(boom, (run) => {
+      run.step("counted the things", "a transform that throws withholds and warns");
+      run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" });
+    });
+    expect(r.violations).toEqual([]);
+    expect(r.status).toBe(0);
+    const stepSeq = r.receiptLines.find((o) => o.event === "receipt.step")!.seq as number;
+    const warns = warningsOf(r, "history.transform_failed");
+    expect(warns.length).toBe(1);
+    expect(String(warns[0]!.problem)).toContain(`seq ${stepSeq}`);
+    expect(String(warns[0]!.problem)).toContain("the projection blew up");
+    expect(r.objs.some((o) => o.seq === stepSeq)).toBe(false);
+    expect(r.objs.at(-1)!.event).toBe("end");
+  });
+
+  test("an identity transform changes nothing but the opening line", async () => {
+    const identity: HistoryTransform = (rec) => rec;
+    const r = await projected(identity, (run) => {
+      run.step("counted the things", "the identity projection is still a projection");
+      run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" });
+    });
+    expect(r.violations).toEqual([]);
+    expect(r.stderr.lines).toEqual([]);
+    expect(projectedLines(r.hist).join("\n") + "\n").toBe(r.receipt);
+    expect(r.objs[0]!.event).toBe("history.transform");
+  });
+
+  test("a transform that withholds everything leaves the opening line alone", async () => {
+    const nothing: HistoryTransform = () => undefined;
+    const r = await projected(nothing, (run) => { run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" }); });
+    expect(r.violations).toEqual([]);
+    expect(r.status).toBe(0);
+    expect(r.stderr.lines).toEqual([]);
+    expect(r.objs.length).toBe(1);
+    expect(r.objs[0]!.event).toBe("history.transform");
+  });
+
+  test("the stream copy opens with the transform line and the receipt explains the gap", async () => {
+    const dropNothing: HistoryTransform = (rec) => rec;
+    const r = await projected(dropNothing, (run) => { run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" }); }, { name: "drop-nothing" });
+    const open = r.objs[0]!;
+    expect(open.event).toBe("history.transform");
+    expect(open._schema).toEqual(TRANSFORM_PAIR);
+    expect(open.name).toBe("drop-nothing");
+    expect(open.sha256).toBe(digestOfSource(dropNothing));
+    expect(open.run).toBe(r.receiptLines[0]!.run);
+    const ajv = new Ajv2020({ strict: false, allErrors: true }); addFormats(ajv);
+    const validate = ajv.compile(draftOf("parley.history.transform"));
+    expect(validate(open), JSON.stringify(validate.errors)).toBe(true);
+    // The receipt never carries the line, and the seq it takes is accounted for there.
+    expect(r.receiptLines.some((o) => o.event === "history.transform")).toBe(false);
+    expect(r.receiptLines.some((o) => o.seq === open.seq)).toBe(false);
+    const step = r.receiptLines.find((o) => o.event === "receipt.step" && String(o.decision).includes("projection"))!;
+    expect(step).toBeDefined();
+    expect(String(step.because)).toContain(String(open.sha256));
+    expect(String(step.because)).toContain(`seq ${String(open.seq)}`);
+    expect(r.violations).toEqual([]);
+  });
+
+  test("a run with no transform is the run that existed before the transform did", async () => {
+    const { dir, env, hist } = historyScratch();
+    const r = await runCount(dir, { ...env, PARLEY_HISTORY: hist }, ["count"], (run) => {
+      run.step("counted the things", "no transform, no projection");
+      run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" });
+    });
+    expect(r.violations).toEqual([]);
+    expect(segmentText(hist)).toBe(r.receipt);
+    expect(segmentObjs(hist).some((o) => o.event === "history.transform")).toBe(false);
+    expect(r.receiptLines.some((o) => o.event === "receipt.step" && String(o.decision).includes("projection"))).toBe(false);
+    expect(r.stderr.lines).toEqual([]);
+  });
+
+  test("a transform with no stream configured changes nothing", async () => {
+    const { dir, env } = scratch();
+    const seen: string[] = [];
+    const spy: HistoryTransform = (rec) => { seen.push(String(rec.event)); return rec; };
+    const r = await runCount(dir, env, ["count"], (run) => { run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" }); }, {}, [], { history: { transform: spy } });
+    expect(r.violations).toEqual([]);
+    expect(seen).toEqual([]);
+    expect(r.stderr.lines).toEqual([]);
+    expect(r.receiptLines.map((o) => o.event)).toEqual(["receipt.head", "result", "end"]);
+    expect((r.stdout.objs[0]!.paths as Record<string, string>).history).toBeUndefined();
+  });
+
+  test("a tool-owned type is re-validated against the schema the tool declared", async () => {
+    const negative: HistoryTransform = (rec) => (rec.event === "result" ? { ...rec, value: -1 } : rec);
+    const bad = await projected(negative, (run) => { run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" }); });
+    const resultSeq = bad.receiptLines.find((o) => o.event === "result")!.seq as number;
+    expect(warningsOf(bad, "history.transform_invalid").length).toBe(1);
+    expect(String(warningsOf(bad, "history.transform_invalid")[0]!.problem)).toContain("t.count@1.0.0");
+    expect(bad.objs.some((o) => o.seq === resultSeq)).toBe(false);
+
+    const bigger: HistoryTransform = (rec) => (rec.event === "result" ? { ...rec, value: 7 } : rec);
+    const ok = await projected(bigger, (run) => { run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" }); });
+    expect(warningsOf(ok, "history.transform_invalid")).toEqual([]);
+    expect(ok.objs.find((o) => o.event === "result")!.value).toBe(7);
+    expect(ok.receiptLines.find((o) => o.event === "result")!.value).toBe(1);
+  });
+
+  test("a line the writer cannot re-validate is withheld rather than projected", async () => {
+    const identity: HistoryTransform = (rec) => rec;
+    const r = await projected(identity, (run) => { run.result({ event: "result", value: 1 }, { id: "t.undeclared", version: "3.1.4" }); });
+    const resultSeq = r.receiptLines.find((o) => o.event === "result")!.seq as number;
+    const warns = warningsOf(r, "history.transform_uncheckable");
+    expect(warns.length).toBe(1);
+    expect(String(warns[0]!.problem)).toContain(`seq ${resultSeq}`);
+    expect(String(warns[0]!.problem)).toContain("t.undeclared@3.1.4");
+    expect(r.objs.some((o) => o.seq === resultSeq)).toBe(false);
+    expect(r.status).toBe(0);
+  });
+
+  test("a transform that fails on every line cannot warn about its own warning", async () => {
+    const always: HistoryTransform = () => { throw new Error("every line"); };
+    const r = await projected(always, (run) => {
+      run.step("counted the things", "every line fails");
+      run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" });
+    });
+    expect(r.status).toBe(0);
+    expect(r.violations).toEqual([]);
+    const warns = warningsOf(r, "history.transform_failed");
+    expect(warns.length).toBeGreaterThan(0);
+    const warnSeqs = new Set(r.receiptLines.filter((o) => o.event === "warning").map((o) => o.seq));
+    for (const w of warns) {
+      const named = Number(/seq (\d+)/.exec(String(w.problem))![1]);
+      expect(warnSeqs.has(named)).toBe(false);
+    }
+    expect(r.objs.length).toBe(1);
+    expect(r.objs[0]!.event).toBe("history.transform");
+  });
+
+  test("the transform's identity is its name and the digest of its source", async () => {
+    function namedProjection(rec: Record<string, unknown>) { return rec; }
+    const r = await projected(namedProjection, () => {});
+    expect(r.objs[0]!.name).toBe("namedProjection");
+    expect(r.objs[0]!.sha256).toBe(digestOfSource(namedProjection));
+    expect(transformDigest(namedProjection)).toBe(digestOfSource(namedProjection));
+    const other: HistoryTransform = (rec) => ({ ...rec });
+    expect(transformDigest(other)).not.toBe(transformDigest(namedProjection));
+    expect(transformDigest(namedProjection)).toBe(transformDigest(namedProjection));
+    const anon = await projected((rec) => rec, () => {});
+    expect(String(anon.objs[0]!.name).length).toBeGreaterThan(0);
+  });
+
+  test("a transform cannot see or restore a declared secret", async () => {
+    const secret = "sk-live-9c1f2a";
+    const seen: string[] = [];
+    const restore: HistoryTransform = (rec) => { seen.push(JSON.stringify(rec)); return rec.event === "receipt.step" ? { ...rec, detail: { url: `https://api/${secret}` } } : rec; };
+    const { dir, env, hist } = historyScratch();
+    const r = await runCount(dir, { ...env, PARLEY_HISTORY: hist }, ["count", "--token", secret], (run) => {
+      run.step("called the api", "the step surfaces the token", { url: `https://api/${secret}` });
+      run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" });
+    }, {}, [], { history: { transform: restore } });
+    expect(r.violations).toEqual([]);
+    expect(seen.some((l) => l.includes("[redacted]"))).toBe(true);
+    expect(seen.some((l) => l.includes(secret))).toBe(false);
+    const text = segmentText(hist);
+    expect(text.includes(secret)).toBe(false);
+    const warns = warningsOf(r, "history.transform_unredacted");
+    expect(warns.length).toBe(1);
+    expect(String(warns[0]!.problem)).not.toContain(secret);
+    expect(r.status).toBe(0);
+  });
+
+  test("the re-validation checker covers every shipped schema", async () => {
+    const ajv = new Ajv2020({ strict: false, allErrors: true }); addFormats(ajv);
+    const samples: Record<string, unknown>[] = [
+      { event: "warning", t: 1, seq: 3, run: "r", code: "a.b", problem: "p", _schema: { id: "parley.warning", version: "1.0.0" } },
+      { event: "redaction", t: 1, seq: 6, run: "r", in: 4, at: "/detail/url", _schema: { id: "parley.redaction", version: "1.0.0" } },
+      { event: "end", t: 1, seq: 9, run: "r", status: 0, receipt: "/w/r.jsonl", redacted: false, _schema: { id: "parley.end", version: "1.0.0" } },
+      { event: "page", t: 1, seq: 7, run: "r", has_more: true, cursor: "c", _schema: { id: "parley.page", version: "1.0.0" } },
+      { event: "receipt.step", t: 1, seq: 2, run: "r", decision: "d", because: "b", _schema: { id: "parley.receipt.step", version: "1.0.0" } },
+    ];
+    for (const sample of samples) {
+      const pair = sample._schema as { id: string; version: string };
+      const doc = SCHEMAS.find((s) => s.id === pair.id && s.version === pair.version)!.schema;
+      const validate = ajv.compile(doc);
+      expect(checkRecord(sample, doc).ok).toBe(validate(sample));
+      for (const key of Object.keys(sample)) {
+        if (key === "_schema") continue;
+        const { [key]: _dropped, ...without } = sample;
+        expect(checkRecord(without, doc).ok).toBe(Boolean(validate(without)));
+      }
+    }
+    // Every shipped draft is inside the subset the checker implements, or the gate fails here.
+    for (const s of SCHEMAS) expect(checkRecord({ event: "x", t: 0, seq: 1, run: "r", _schema: { id: s.id, version: s.version } }, s.schema).unsupported).toBeUndefined();
+  });
+
+  test("the doctor reports a segment's projection and its withheld gaps", async () => {
+    const dropSteps: HistoryTransform = (rec) => (rec.event === "receipt.step" ? undefined : rec);
+    const r = await projected(dropSteps, (run) => {
+      run.step("counted the things", "steps stay local");
+      run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" });
+    });
+    const stepSeq = r.receiptLines.find((o) => o.event === "receipt.step" && o.decision === "counted the things")!.seq as number;
+    const vs = inspectSegment(r.text);
+    const proj = vs.filter((v) => v.event === "doctor.projection") as { run: string; name: string; sha256: string }[];
+    expect(proj.length).toBe(1);
+    expect(proj[0]!.name).toBe("dropSteps");
+    expect(proj[0]!.sha256).toBe(digestOfSource(dropSteps));
+    expect(proj[0]!.run).toBe(String(r.receiptLines[0]!.run));
+    const gaps = (vs.filter((v) => v.event === "doctor.gap") as { run: string; seq: number }[]).map((g) => g.seq);
+    expect(gaps).toContain(stepSeq);
+    const summary = vs.at(-1) as { event: string; runs: number; projected: number; gaps: number; torn: number; passed: boolean };
+    expect(summary.event).toBe("doctor.segment");
+    expect(summary).toMatchObject({ runs: 1, projected: 1, torn: 0, passed: true });
+    expect(summary.gaps).toBe(gaps.length);
+
+    const { dir, env, hist } = historyScratch();
+    const plain = await runCount(dir, { ...env, PARLEY_HISTORY: hist }, ["count"], (run) => { run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" }); });
+    expect(plain.violations).toEqual([]);
+    const plainVs = inspectSegment(segmentText(hist));
+    expect(plainVs.filter((v) => v.event === "doctor.projection")).toEqual([]);
+    expect(plainVs.filter((v) => v.event === "doctor.gap")).toEqual([]);
+    expect(plainVs.at(-1)).toMatchObject({ event: "doctor.segment", runs: 1, projected: 0, gaps: 0, passed: true });
   });
 });

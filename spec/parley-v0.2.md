@@ -98,18 +98,26 @@ bootstrap (§3.2), whose single diagnostic line is `seq: 0` instead.
 | Id | Scope | Derivation |
 | --- | --- | --- |
 | `run` | One execution | Unique per execution, lexicographically sortable (ULID or equivalent) |
-| `inv` | One *question* | **Content-addressed**: a digest over the tool, its version, the normalised arguments, and the **bytes of every declared input** |
+| `inv` | One *question* | **Content-addressed**: a digest over the tool, its version, the normalised arguments, and the **bytes of every declared input**. Tool-defined in v0.2 (§2.2) |
 | `session` | A working period spanning runs | Supplied by the caller or inherited from the environment |
 
 Two runs of the same question are still two events whose receipts must not collide, so `run` is
-required. But knowing they *were* the same question is what buys replay and change detection, so
-`inv` is required too. Collapsing them loses one or the other.
+required. Knowing they *were* the same question is what buys replay and change detection, so a
+program **SHOULD** supply `inv`. v0.2 does not fix its derivation; a program that supplies it
+**MUST** document how (§2.2). Collapsing the two identifiers loses one or the other.
 
 `session` is optional. A program **MUST** carry it when the caller supplies one and **MUST NOT**
 invent one. `run`, `inv`, `session`, `tool` and `v` are never empty strings; an identity with no
 content identifies nothing.
 
 ### 2.2 Computing `inv`
+
+In v0.2 `inv` is **SHOULD** and its derivation is tool-defined. A shared derivation is the goal
+for v0.3, written from a real implementation and conformance vectors rather than ahead of them;
+SHA-256 over canonical JSON, full-length encoding and role-preserving inputs are the candidates
+to test, not rules. Until then, a program that supplies `inv` **MUST** document its derivation
+and its scope, and **MUST** obey the constraints below, which are what make any derivation
+worth having.
 
 `inv` **MUST** be derived from:
 
@@ -118,14 +126,46 @@ content identifies nothing.
 - a digest of the **content** of every declared input, not its path.
 
 `inv` **MUST NOT** incorporate wall-clock time, process id, working directory, temporary paths,
-session id, or any value that varies between otherwise identical invocations.
+session id, the storage key of §5, or any value that varies between otherwise identical
+invocations.
 
 `inv` **MUST NOT** incorporate the value of any declared secret (§5.3). It **MAY** incorporate the
 fact that the secret was supplied, by name. A receipt carries `inv` beside every other component of
 its preimage, so a secret inside the preimage would be recoverable from the receipt by anyone who
 can guess it; a four-digit PIN falls in milliseconds. Excluding it means two invocations that
-differ only in a secret share one `inv`, which is why §5.3 forbids replaying from a redacted
-receipt.
+differ only in a secret share one `inv`, which is why §2.3 and §5.3 forbid replaying from a
+redacted receipt.
+
+The exclusion is transitive. A file whose content is a credential is a **secret source, not an
+input**: it **MUST** be declared in `secrets` (§4.3) and **MUST NOT** be a declared input, and its
+contents **MUST NOT** contribute to any input digest or to `inv`, directly or through a directory
+digest, an archive, a manifest or a derived value. Removing `--token-file` from the inputs while
+digesting its parent directory leaves the same hole. The receipt records the fact of supply by
+logical name only. If a program cannot establish that exclusion, it **MUST** omit `inv` rather
+than claim an identity it cannot make safe.
+
+When `inv` is unavailable, a program omits the field. It **MUST NOT** emit a placeholder.
+
+**Timing.** The bootstrap line (§3.1) **MUST NOT** wait on a directory scan or on stdin reaching
+EOF; it carries `inv` only when the identity is already known. The receipt head (§5) is written
+promptly with the declared inputs as descriptors (path, and a digest for each input already read)
+and whatever else is known. Digests that arrive later, and `inv` once it can be computed, are
+carried by one receipt metadata-finalisation record, `receipt.inputs`, emitted when the inputs
+are settled and before `end`:
+
+```json illustrative
+{"event":"receipt.inputs","t":1795326412360,"seq":5,"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8",
+ "inputs":[{"path":"src/tokens.css","sha256":"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"},
+           {"path":"-","role":"stdin","sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
+           {"path":"vendor/","role":"tree","error":"input.unreadable"}],
+ "inv":"inv_7f3a9c1e",
+ "_schema":{"id":"parley.receipt.inputs","version":"1.0.0"}}
+```
+
+Illustrative: `parley.receipt.inputs` is defined with the other receipt records in
+[flyingrobots/parley#10](https://github.com/flyingrobots/parley/issues/10). An input the program
+could not read is recorded with an `error` code and no digest; a run that then fails still
+closes a complete failed receipt (§3.3) without that digest and without `inv`.
 
 > **The trap.** Hashing input *paths* rather than input *bytes* makes `inv` stable across an edit
 > to the file. "Idempotent" then silently means "stale", and any cache built on it serves wrong
@@ -137,10 +177,14 @@ Each of these holds only where no declared secret is involved on either side: th
 no `redacted` (§5.3) and the invocation comparing against it supplied none. A redacted receipt
 shares its `inv` with every run that differed only in a secret, so none of them applies to it.
 
-- **Change detection.** Same `inv`, same result ⇒ nothing moved.
-- **Non-determinism detection, free.** Same `inv`, *different* result ⇒ the program is not
-  deterministic, which is a defect worth knowing about.
-- **Replay.** A prior receipt for the same `inv` can answer without recomputing.
+- **Change detection.** Same `inv`, same result ⇒ nothing moved within the declared input
+  boundary.
+- **Divergence detection.** Same `inv`, *different* result ⇒ the result diverged under the
+  recorded input boundary. Hidden context, intentionally live data and a defect in the program
+  are all consistent with that; the digest alone does not pick the cause, it only makes the
+  divergence visible.
+- **Replay.** A prior receipt for the same `inv` **MAY** answer without recomputing, subject to
+  the eligibility rules below.
 
 A program **MAY** short-circuit on a known `inv`. If it does, it **MUST** emit the hit as an
 event rather than silently serving a cached answer, and **MUST** offer a way to force recompute.
@@ -424,9 +468,10 @@ applied; and a digest per declared input.
 
 The head takes `seq: 1` because the bootstrap line took `0` and the run holds one counter (§1.3).
 It names `tool` and `v` again, although the bootstrap line already did, because a receipt is read
-on its own, tomorrow, by a reader that never saw stdout; without them it cannot say what wrote it
-and `inv` cannot be recomputed (§2.2). Recomputation works on a redacted receipt too, because a
-declared secret is never part of the preimage.
+on its own, tomorrow, by a reader that never saw stdout; without them it cannot say what wrote it,
+and a reader that knows the tool's documented derivation (§2.2) cannot recompute `inv`.
+Recomputation works on a redacted receipt too, because a declared secret is never part of the
+preimage.
 
 Subsequent lines carry the program's reasoning as it works — one line per decision, emitted as it
 happens rather than buffered, so a person watching sees the thing working.
@@ -487,9 +532,10 @@ Receipts are durable and may contain file contents, resolved paths and prompts. 
 Raw `argv` and the resolved environment are where credentials arrive, so §5's echo and this rule
 collide unless the program redacts. Privacy wins:
 
-- A program **MUST** declare which of its arguments and environment variables carry secrets, by
-  name, in the `secrets` list of its command description (§4.3), so the declaration is visible
-  through `--help` before the command runs. A command with no secrets declares an empty list.
+- A program **MUST** declare which of its arguments, environment variables and credential files
+  carry secrets, by name, in the `secrets` list of its command description (§4.3), so the
+  declaration is visible through `--help` before the command runs. A command with no secrets
+  declares an empty list. A credential file is a secret source, never a declared input (§2.2).
 - It **MUST** replace the value of each declared secret with the literal string `[redacted]`
   **before** the receipt head is written, wherever the receipt would carry it. An argument given as
   its own `argv` element becomes `[redacted]`; one given as `--name=value` becomes

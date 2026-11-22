@@ -20,6 +20,7 @@
 import { closeSync, mkdirSync, openSync, readdirSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { stateBase } from "./location.ts";
+import { carriesSecret } from "./redact.ts";
 
 /** The directory the stream lives in, or an off switch. Absolute when it names a directory. */
 export const HISTORY_ENV = "PARLEY_HISTORY";
@@ -93,7 +94,14 @@ export function resolveHistory(env: Record<string, string | undefined>, home: st
  * it. A failure is described rather than thrown: the caller warns and the run proceeds without a
  * stream (§8 is informative and opt-in; nothing may depend on it).
  */
-export function openHistory(plan: HistoryPlan): HistorySink | HistoryFailure {
+export function openHistory(plan: HistoryPlan, secrets: ReadonlySet<string> = new Set()): HistorySink | HistoryFailure {
+  // §5.3, as for the receipt path: a path the bootstrap line cannot print without disclosing a
+  // declared secret is never chosen. The receipt has nowhere else to go and fails startup; the
+  // stream is optional, so it yields and the run carries on without one. The field name is
+  // checked too, since a secret that is a substring of it would rename the key the line prints.
+  if (carriesSecret(plan.path, secrets) || carriesSecret("history", secrets)) {
+    return { code: "history.unavailable", problem: `the shared history stream's path or field name would carry a declared secret value, so no stream was used; the receipt is unaffected`, remedy: `point ${HISTORY_ENV} at a path that does not contain the secret, or do not pass that value as a declared secret` };
+  }
   if (!isAbsolute(plan.dir)) {
     return { code: "history.unavailable", problem: `${HISTORY_ENV} is ${JSON.stringify(plan.dir)}, which is not an absolute path, so no shared history stream was written`, remedy: `set ${HISTORY_ENV} to an absolute directory path, or unset it to use $XDG_STATE_HOME/parley/history` };
   }

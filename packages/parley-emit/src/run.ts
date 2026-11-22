@@ -16,10 +16,15 @@ const ENVELOPE_KEYS = ["t", "seq", "run", "_schema"] as const;
  * Writer-owned string fields never scrubbed in a writer-built record: digests (a secret cannot
  * occur in one except by hex coincidence, and replacing it would corrupt the digest) and public
  * identity the tool declared and every discovery line prints regardless: the tool's name and
- * version, a command's name, a schema's id and version. Tool-supplied values that reach a
- * writer-built record (`resolved`, input descriptors) are scrubbed in full before it is built.
+ * version, a command's name, a schema's id and version, and the `code` of a diagnostic the
+ * writer itself raises, which is the writer's own stable identifier and not a value a caller
+ * supplied — replacing part of it would put a line on the stream that no longer validates
+ * against its schema, which is the one thing redaction must not do. A tool's own diagnostic is
+ * not writer-built and its `code` is scrubbed like anything else. Tool-supplied values that
+ * reach a writer-built record (`resolved`, input descriptors) are scrubbed in full before it is
+ * built.
  */
-const DIGEST_KEYS = new Set(["sha256", "inv", "tool", "v", "name", "id", "version"]);
+const DIGEST_KEYS = new Set(["sha256", "inv", "tool", "v", "name", "id", "version", "code"]);
 
 export const SCHEMA_IDS = {
   bootstrap: { id: "parley.run.bootstrap", version: "1.1.1" },
@@ -149,7 +154,7 @@ export class Run {
       if (this.closed) return;
       const msg = e instanceof Error ? e.message : String(e);
       try {
-        this.warning({ code: "history.write_failed", problem: `appending to the shared history stream at ${h.path} failed: ${msg}; the receipt is unaffected and the rest of this run is not in the stream`, remedy: `free space or fix permissions on ${h.dir}, or set PARLEY_HISTORY=off; the receipt is the record and the stream is a convenience` });
+        this.writerWarning({ code: "history.write_failed", problem: `appending to the shared history stream at ${h.path} failed: ${msg}; the receipt is unaffected and the rest of this run is not in the stream`, remedy: `free space or fix permissions on ${h.dir}, or set PARLEY_HISTORY=off; the receipt is the record and the stream is a convenience` });
       } catch { /* the run ended between the write and the warning */ }
     }
   }
@@ -171,7 +176,7 @@ export class Run {
       if (!this.rendererFailed && !this.closed) {
         this.rendererFailed = true;
         const msg = e instanceof Error ? e.message : String(e);
-        queueMicrotask(() => { try { if (!this.closed) this.warning({ code: "human.renderer_failed", problem: `the tool's --human renderer threw: ${msg}; the default rendering is used for the rest of the run`, remedy: "fix the renderer; the receipt is complete regardless" }); } catch { /* the run ended first */ } });
+        queueMicrotask(() => { try { if (!this.closed) this.writerWarning({ code: "human.renderer_failed", problem: `the tool's --human renderer threw: ${msg}; the default rendering is used for the rest of the run`, remedy: "fix the renderer; the receipt is complete regardless" }); } catch { /* the run ended first */ } });
       }
     }
     if (typeof custom === "string") return custom.endsWith("\n") ? custom : custom + "\n";
@@ -279,6 +284,13 @@ export class Run {
   }
 
   warning(d: Diagnostic): number { return this.emit({ to: { stderr: true, receipt: true } }, { event: "warning", ...this.diagnostic(d) }, SCHEMA_IDS.warning); }
+
+  /**
+   * Internal: a warning the writer itself raises, such as a relocated receipt or an unusable
+   * history stream. Its `code` is the writer's own identifier, so it is not scrubbed; the
+   * `problem` and `remedy`, which carry paths, are.
+   */
+  writerWarning(d: Diagnostic): number { return this.emit({ to: { stderr: true, receipt: true }, writer: true }, { event: "warning", ...this.diagnostic(d) }, SCHEMA_IDS.warning); }
 
   /** A structured error (§6). The run then closes with status 2 unless `end` is given another non-zero status. `receiptExtra` goes to the receipt copy only. */
   error(d: Diagnostic, receiptExtra?: Record_): number {

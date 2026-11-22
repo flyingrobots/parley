@@ -1139,3 +1139,37 @@ process.exit(await main(tool, ["t", "count"], (run) => {
     expect(segmentObjs(hist).some((o) => o.event === "redaction")).toBe(true);
   });
 });
+
+describe("PE-22 a secret the stream's path or field name would carry", () => {
+  test("a secret in the stream's path means no stream, and the head is still the receipt's first line", async () => {
+    const { dir, env } = scratch();
+    const hist = mkdtempSync(join(tmpdir(), "parley-history-"));
+    const secret = hist.split("/").pop()!.slice(-4);
+    const s = streams();
+    const status = await main(tool(), ["t", "count", "--token", secret], async (run) => {
+      run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" });
+    }, { cwd: dir, env: { ...env, PARLEY_HISTORY: hist }, ...s, resolved: () => ({ command: "count" }) });
+    expect(status).toBe(0);
+    const r = check(dir, s);
+    expect(r.violations).toEqual([]);
+    expect(r.receiptLines[0]!.event).toBe("receipt.head");
+    expect(pathsOf(s.stdout.objs[0]!)).toEqual({ receipt: r.path! });
+    expect(s.stdout.text.includes(secret)).toBe(false);
+    expect(s.stderr.objs.filter((o) => o.event === "warning" && o.code === "history.unavailable").length).toBe(1);
+    expect(s.stderr.text.includes(secret)).toBe(false);
+    expect(readdirSync(hist)).toEqual([]);
+  });
+
+  test("a secret that would rename the paths field means no stream", async () => {
+    const { dir, env } = scratch();
+    const hist = mkdtempSync(join(tmpdir(), "parley-h-"));
+    const s = streams();
+    const status = await main(tool(), ["t", "count", "--token", "hist"], async () => {}, { cwd: dir, env: { ...env, PARLEY_HISTORY: hist }, ...s, resolved: () => ({ command: "count" }) });
+    expect(status).toBe(0);
+    const r = check(dir, s);
+    expect(r.violations).toEqual([]);
+    expect(r.receiptLines[0]!.event).toBe("receipt.head");
+    expect(Object.keys(pathsOf(s.stdout.objs[0]!))).toEqual(["receipt"]);
+    expect(s.stderr.objs.filter((o) => o.event === "warning" && o.code === "history.unavailable").length).toBe(1);
+  });
+});

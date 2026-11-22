@@ -152,7 +152,7 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
   else {
     historyPlan = resolveHistory(env, opts.home ?? homedir(), now());
     if (historyPlan) {
-      const opened = openHistory(historyPlan);
+      const opened = openHistory(historyPlan, secretValues);
       if (isHistoryFailure(opened)) { historyWarning = opened; historyPlan = null; }
       else history = opened;
     }
@@ -203,8 +203,8 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
   run.flushDeferredFailures();
   capture.attach(run);
   if (run.sinkFailed) { release(); return run.end(); }
-  if (location.warning) run.warning(location.warning);
-  if (historyWarning) run.warning(historyWarning);
+  if (location.warning) run.writerWarning(location.warning);
+  if (historyWarning) run.writerWarning(historyWarning);
 
   retain(run, location.receiptDir, spec.retention.count, dryRun, now());
   if (history) retainStream(run, history.dir, historyPlan?.days ?? historyDays(env), dryRun, now());

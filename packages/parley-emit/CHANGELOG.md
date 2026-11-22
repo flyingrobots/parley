@@ -42,6 +42,24 @@ on its own; the spec and each message schema move separately (spec §4.4).
   warning and a failed append is one `history.write_failed` warning: never an error, never a sink
   failure, never a different exit status, because the dependency runs one way.
 
+  The stream's own path gets the rule the receipt's path already had: one carrying a declared
+  secret value is never chosen, since the bootstrap line prints it. The receipt has nowhere else
+  to go and fails startup; the stream yields with one `history.unavailable` warning and the run
+  carries on without it. The literal field name `history` is checked the same way, because a
+  secret that is a substring of it would rename the key the line prints.
+
+### Changed
+
+- The `code` of a diagnostic **the writer itself raises** is no longer scrubbed. It is the
+  writer's own stable identifier, like a schema id or a command's name, and replacing part of it
+  put a line on the stream that no longer validated against `parley.warning` or `parley.error` —
+  which is the one thing redaction must not do. `receipt.relocated`, `human.renderer_failed`,
+  `sink.write_failed`, `sink.sidecar_failed` and the two `history.*` warnings are affected; a
+  tool's own `run.warning` and `run.error` are not writer-built and their `code` is scrubbed
+  exactly as before. `startup.failed` already behaved this way, scrubbing only its `problem`.
+  Found by review of flyingrobots/parley#3, where a secret that is a substring of `history`
+  reached it. (flyingrobots/parley#3)
+
 ## [0.1.0] — 2026-11-22
 
 The schemas this version ships are the repository drafts at the commit recorded in

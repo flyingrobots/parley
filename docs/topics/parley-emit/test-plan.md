@@ -22,34 +22,36 @@ violations against the repository's draft schemas.
 
 | ID | Case | Oracle | Evidence | Status |
 | --- | --- | --- | --- | --- |
-| PE-1a | Golden run: bootstrap, head, step, result, warning, inputs, end | doctor passes; first stdout line is `run` at `seq: 0`; `end` last on stdout and receipt with the final `seq` | `golden run conforms line by line` | planned |
-| PE-1b | A tool-owned result validates against the schema the tool declares | ajv over the declared schema accepts the stdout copy | `tool-owned result validates against its declared schema` | planned |
-| PE-2a | Same inputs, two runs | equal `inv` in both `receipt.inputs` lines | `inv is stable across reruns` | planned |
-| PE-2b | Edit one input byte | `inv` differs | `inv changes when an input changes` | planned |
-| PE-2c | No declared inputs | `inv` on the bootstrap line and the head | `inv is known at bootstrap when nothing is declared` | planned |
-| PE-2d | Declared file inputs | bootstrap and head carry no `inv`; `receipt.inputs` carries digests and `inv` before `end` | `inv arrives in receipt.inputs when inputs are declared` | planned |
-| PE-2e | A declared input is missing | its descriptor carries `error: input.unreadable`, no `sha256`; no `inv` anywhere; the run still ends | `a missing input is recorded and inv is omitted` | planned |
-| PE-2f | A declared secret differs between two runs | same `inv` | `inv excludes declared secrets` | planned |
-| PE-3a | Handler observes the streams when it starts | bootstrap already written; receipt file exists at the announced absolute path | `bootstrap precedes work and the receipt exists` | planned |
-| PE-4a | Handler throws | stderr and receipt carry one `error` with code `uncaught.exception`; `end.status` 2; return 2; doctor passes | `an uncaught throw becomes an error line and a complete failed receipt` | planned |
-| PE-4b | Handler reports an error and returns | `end.status` 2 | `a reported error closes the run with status 2` | planned |
-| PE-5a | Retention count 3, five runs | two oldest bundles gone, three remain, the current run among them; a `receipt.step` records the deletion | `retention by count deletes the oldest bundles` | planned |
-| PE-5b | Dry run over the limit | nothing deleted; bootstrap and head carry `dry_run: true` | `a dry run deletes nothing and says so` | planned |
-| PE-6a | Fresh directory | `.parley/.gitignore` exists and contains a line `*` | `first write creates the ignore file` | planned |
-| PE-6b | Existing ignore file with `*` and other lines | bytes unchanged | `an existing ignore file is never overwritten` | planned |
-| PE-6c | Existing ignore file without `*` | receipt under the state directory; a `warning` on stderr names why | `a user's ignore file sends the receipt to the fallback` | planned |
-| PE-6d | Eight concurrent runs in one directory | eight distinct receipts, each conforms, ignore file intact | `concurrent runs do not collide` | planned |
-| PE-7a | `--token abc`, `--token=abc`, `TOKEN` in env, a declared source present | head: `[redacted]`, `--token=[redacted]`, `redacted.argv`, `redacted.env`, `redacted.resolved` pointers, `redacted.sources`; the value appears on no stream | `declared secrets are redacted in the head` | planned |
-| PE-7b | The value surfaces in a later step's detail | replaced; a `redaction` event follows naming the line and pointer; `end.redacted` true | `a secret in a later record is replaced and recorded` | planned |
-| PE-7c | No secret supplied | head has no `redacted`; `end.redacted` false | `no redaction field when nothing was redacted` | planned |
-| PE-8a | Working directory read-only, state directory writable | receipt under the state directory, run conforms | `a read-only working directory falls back to the state directory` | planned |
-| PE-8b | Both unwritable | one `startup.failed` line on stderr, nothing on stdout, return 3 | `no writable location is a startup failure` | planned |
-| PE-9a | stdout sink throws on the result | an `error` line on stderr and in the receipt; `end.status` 4; return 4 | `a sink failure before end is reported and exits 4` | planned |
-| PE-9b | Emit after `end` | refused; no line appears after `end` | `nothing follows end` | planned |
-| PE-10a | `--schema` | a run: bootstrap, one `command` per command, one `schema` per emitted type, `end`; doctor passes | `--schema is a run` | planned |
-| PE-10b | `<command> --help` | the `command` line, a `schema` for its result and one per error type | `--help describes one command` | planned |
-| PE-11a | Receipt copy of a result over 65,536 bytes | `sidecar` event in its place; file exists; `bytes` and `sha256` match the stored bytes; stdout copy intact | `a large record is stored as a sidecar` | planned |
-| PE-12a | 300 random records with control characters, newlines and unicode | every line on every stream parses; records round-trip | `every line on every stream is one JSON object` | planned |
-| PE-12b | A library calls `console.log` and `console.error` during the run | stdout and stderr carry only protocol lines; the receipt records the captured text | `library console output is captured` | planned |
-| PE-12c | `--human` | stdout is prose; the receipt still conforms | `--human renders prose and keeps the receipt` | planned |
-| PE-13a | `src/schemas.ts` against `schemas/` | every digest matches; the commit is an ancestor of HEAD | `shipped schemas match the drafts` | planned |
+| PE-1a | Golden run: bootstrap, head, step, result, warning, inputs, end | doctor passes; first stdout line is `run` at `seq: 0`; `end` last on stdout and receipt with the final `seq` | `golden run conforms line by line` | implemented |
+| PE-1b | A tool-owned result validates against the schema the tool declares | ajv over the declared schema accepts the stdout copy | `tool-owned result validates against its declared schema` | implemented |
+| PE-2a | Same inputs, two runs | equal `inv` in both `receipt.inputs` lines | `inv is stable across reruns` | implemented |
+| PE-2b | Edit one input byte | `inv` differs | `inv changes when an input changes` | implemented |
+| PE-2c | No declared inputs | `inv` on the bootstrap line and the head | `inv is known at bootstrap when nothing is declared` | implemented |
+| PE-2d | Declared file inputs | bootstrap and head carry no `inv`; `receipt.inputs` carries digests and `inv` before `end` | `inv arrives in receipt.inputs when inputs are declared` | implemented |
+| PE-2e | A declared input is missing | its descriptor carries `error: input.unreadable`, no `sha256`; no `inv` anywhere; the run still ends | `a missing input is recorded and inv is omitted` | implemented |
+| PE-2f | A declared secret differs between two runs | same `inv` | `inv excludes declared secrets` | implemented |
+| PE-3a | Handler observes the streams when it starts | bootstrap already written; receipt file exists at the announced absolute path | `bootstrap precedes work and the receipt exists` | implemented |
+| PE-4a | Handler throws | stderr and receipt carry one `error` with code `uncaught.exception`; `end.status` 2; return 2; doctor passes | `an uncaught throw becomes an error line and a complete failed receipt` | implemented |
+| PE-4b | Handler reports an error and returns | `end.status` 2 | `a reported error closes the run with status 2` | implemented |
+| PE-5a | Retention count 3, five runs | two oldest bundles gone, three remain, the current run among them; a `receipt.step` records the deletion | `retention by count deletes the oldest bundles` | implemented |
+| PE-5b | Dry run over the limit | nothing deleted; bootstrap and head carry `dry_run: true` | `a dry run deletes nothing and says so` | implemented |
+| PE-6a | Fresh directory | `.parley/.gitignore` exists and contains a line `*` | `first write creates the ignore file` | implemented |
+| PE-6b | Existing ignore file with `*` and other lines | bytes unchanged | `an existing ignore file is never overwritten` | implemented |
+| PE-6c | Existing ignore file without `*` | receipt under the state directory; a `warning` on stderr names why | `a user's ignore file sends the receipt to the fallback` | implemented |
+| PE-6d | Eight concurrent runs in one directory | eight distinct receipts, each conforms, ignore file intact | `concurrent runs do not collide` | implemented |
+| PE-7a | `--token abc`, `--token=abc`, `TOKEN` in env, a declared source present | head: `[redacted]`, `--token=[redacted]`, `redacted.argv`, `redacted.env`, `redacted.resolved` pointers, `redacted.sources`; the value appears on no stream | `declared secrets are redacted in the head` | implemented |
+| PE-7b | The value surfaces in a later step's detail | replaced; a `redaction` event follows naming the line and pointer; `end.redacted` true | `a secret in a later record is replaced and recorded` | implemented |
+| PE-7c | No secret supplied | head has no `redacted`; `end.redacted` false | `no redaction field when nothing was redacted` | implemented |
+| PE-8a | Working directory read-only, state directory writable | receipt under the state directory, run conforms | `a read-only working directory falls back to the state directory` | implemented |
+| PE-8b | Both unwritable | one `startup.failed` line on stderr, nothing on stdout, return 3 | `no writable location is a startup failure` | implemented |
+| PE-9a | stdout sink throws on the result | an `error` line on stderr and in the receipt; `end.status` 4; return 4 | `a sink failure before end is reported and exits 4` | implemented |
+| PE-9b | Emit after `end` | refused; no line appears after `end` | `nothing follows end` | implemented |
+| PE-10a | `--schema` | a run: bootstrap, one `command` per command, one `schema` per emitted type, `end`; doctor passes | `--schema is a run` | implemented |
+| PE-10b | `<command> --help` | the `command` line, a `schema` for its result and one per error type | `--help describes one command` | implemented |
+| PE-11a | Receipt copy of a result over 65,536 bytes | `sidecar` event in its place; file exists; `bytes` and `sha256` match the stored bytes; stdout copy intact | `a large record is stored as a sidecar` | implemented |
+| PE-12a | 300 random records with control characters, newlines and unicode | every line on every stream parses; records round-trip | `every line on every stream is one JSON object` | implemented |
+| PE-12b | A library calls `console.log` and `console.error` during the run | stdout and stderr carry only protocol lines; the receipt records the captured text | `library console output is captured` | implemented |
+| PE-12c | `--human` | stdout is prose; the receipt still conforms | `--human renders prose and keeps the receipt` | implemented |
+| PE-13a | `src/schemas.ts` against `schemas/` | every digest matches; the commit is recorded | `shipped schemas match the drafts` | implemented |
+
+Also implemented, outside the numbered requirements: `run ids are ULIDs, unique and sortable`.

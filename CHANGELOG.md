@@ -5,6 +5,13 @@ The spec and each message schema are versioned separately from this package.
 
 ## [Unreleased]
 
+### Added
+
+- `packages/parley-emit`: the writer library `@flyingrobots/parley-emit` 0.1.0, a Bun workspace
+  package. A tool conforms by constructing a writer and emitting through it. Its own changelog
+  lives beside it; the repository's `bun test` runs its suite, every case using the doctor as the
+  oracle, and `bun run typecheck` checks it strictly. (flyingrobots/parley#1)
+
 ### Changed
 
 - Follow-ups from the review of the lifecycle stack (flyingrobots/parley#40): §5's head carries a

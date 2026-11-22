@@ -117,6 +117,8 @@ describe("schemas/", () => {
       expect(error({ ...okError, code: "fs.not_found" })).toBe(true);
       expect(error({ ...okError, code: "ENOENT" })).toBe(false);
       expect(error({ ...okError, code: "Contrast.Unsatisfiable" })).toBe(false);
+      expect(error({ ...okError, code: "contrast.Unsatisfiable" })).toBe(false);
+      expect(error({ ...okError, code: "Contrast.unsatisfiable" })).toBe(false);
       expect(error({ ...okError, code: "contrast-unsatisfiable" })).toBe(false);
       expect(error({ ...okError, code: "a.b." })).toBe(false);
     });
@@ -138,6 +140,8 @@ describe("schemas/", () => {
       expect(head({ ...okHead, redacted: { resolved: ["token"] } })).toBe(false);
       expect(head({ ...okHead, redacted: { resolved: ["/auth/token"], inputs: [0] } })).toBe(true);
       expect(head({ ...okHead, redacted: "argv" })).toBe(false);
+      expect(head({ ...okHead, redacted: { inputs: ["0"] } })).toBe(false);
+      expect(head({ ...okHead, redacted: { inputs: [-1] } })).toBe(false);
     });
   });
 

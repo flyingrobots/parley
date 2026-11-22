@@ -350,8 +350,8 @@ collide unless the program redacts. Privacy wins:
 
 A schema checks the shape of `redacted`, not its truth. Whether an indexed element contains
 `[redacted]`,
-whether a pointer resolves, and whether a `[redacted]` marker has a matching entry are a reader's
-checks, and a reader that performs them **SHOULD** report a mismatch as a defect in the writer.
+whether a pointer resolves, and whether a `[redacted]` marker in the head has a matching entry
+while `redacted` is present are a reader's checks, and a reader that performs them **SHOULD** report a mismatch as a defect in the writer.
 
 ---
 

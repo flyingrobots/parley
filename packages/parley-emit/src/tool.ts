@@ -3,7 +3,7 @@
 import { closeSync, openSync, readSync, readdirSync, rmSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { historyBookkeeping, historyDays, isHistoryFailure, openHistory, resolveHistory, retainHistory, type HistoryPlan, type HistorySink } from "./history.ts";
+import { historyBookkeeping, historyDays, historyProjection, isHistoryFailure, isHistorySink, openHistory, resolveHistory, retainHistory, type HistoryConfig, type HistoryPlan, type HistoryProjection, type HistorySink } from "./history.ts";
 import { computeInv, type InputDecl } from "./inv.ts";
 import { bookkeepingFor, chooseLocation, isLocationFailure, type Bookkeeping } from "./location.ts";
 import { carriesSecret, classifySecrets, collectSecretValues, redactArgv, scrub } from "./redact.ts";
@@ -60,8 +60,14 @@ export interface MainOptions {
   inputs?: (args: string[], command: string) => InputDecl[] | Promise<InputDecl[]>;
   /** The resolved interpretation after defaults (§5): order-normalised and free of volatile values, since it enters inv. The default records the command and its arguments. */
   resolved?: (args: string[], command: string) => Record<string, unknown> | Promise<Record<string, unknown>>;
-  /** The shared history stream (§8). The default resolves it from the environment; `null` is no stream. */
-  history?: HistorySink | null;
+  /**
+   * The shared history stream (§8). The default resolves it from the environment; `null` is no
+   * stream. The long form, `{ sink?, transform?, name? }`, also configures the projection applied
+   * to the stream copy: `{ history: { transform } }` keeps the sink the environment chose and
+   * narrows what reaches it. A transform is configured in code and never by an environment
+   * variable naming a module to execute.
+   */
+  history?: HistorySink | null | HistoryConfig;
 }
 
 /**
@@ -148,7 +154,8 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
   let history: HistorySink | undefined;
   let historyPlan: HistoryPlan | null = null;
   let historyWarning: { code: string; problem: string; remedy: string } | undefined;
-  if (opts.history !== undefined) history = opts.history ?? undefined;
+  const historyConfig: HistoryConfig = opts.history === undefined ? {} : opts.history === null ? { sink: null } : isHistorySink(opts.history) ? { sink: opts.history } : opts.history;
+  if (historyConfig.sink !== undefined) history = historyConfig.sink ?? undefined;
   else {
     historyPlan = resolveHistory(env, opts.home ?? homedir(), now());
     if (historyPlan) {
@@ -187,12 +194,20 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
   const headRedacted = Object.keys(redacted).length > 0;
   const inv = inputs.length === 0 && command ? computeInv({ tool: spec.name, v: spec.version, command: commandName!, resolved, inputs: [] }) : undefined;
 
+  // The projection of §8 exists only when there is both a stream to narrow and a transform to
+  // narrow it with: a transform with no stream configured changes nothing, as the stream itself
+  // changes nothing when it is not configured.
+  const projection: HistoryProjection | undefined = history !== undefined && historyConfig.transform !== undefined
+    ? historyProjection({ transform: historyConfig.transform, name: historyConfig.name }, declaredSchemas(spec))
+    : undefined;
+
   const run = new Run({
     tool: spec.name, v: spec.version, id, session, dryRun, stdout, stderr, receiptFd: location.fd, receiptPath: location.receiptPath, receiptDir: location.receiptDir,
-    secretValues, now, cwd, command: commandName ?? discovery!, resolved, inputs, headRedacted, human: human ? spec.human ?? (() => null) : undefined, history,
+    secretValues, now, cwd, command: commandName ?? discovery!, resolved, inputs, headRedacted, human: human ? spec.human ?? (() => null) : undefined, history, projection,
   });
 
   run.bootstrap(inv);
+  run.declareProjection();
   const bookkeeping = [...bookkeepingFor(cwd, env, opts.home), ...(history ? historyBookkeeping(history) : [])];
   run.head({
     tool: spec.name, v: spec.version, ...(inv ? { inv } : {}), ...(session ? { session } : {}),
@@ -205,6 +220,7 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
   if (run.sinkFailed) { release(); return run.end(); }
   if (location.warning) run.writerWarning(location.warning);
   if (historyWarning) run.writerWarning(historyWarning);
+  run.noteProjection();
 
   retain(run, location.receiptDir, spec.retention.count, dryRun, now());
   if (history) retainStream(run, history.dir, historyPlan?.days ?? historyDays(env), dryRun, now());
@@ -228,6 +244,21 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
     release();
   }
   return run.ended ? run.status ?? 4 : run.end();
+}
+
+/**
+ * Every schema document this writer can re-validate a projected line against, by `id@version`:
+ * the drafts the package ships (spec §4.5) and the schemas the tool declared on its own emitted
+ * and error types (§4.2). A pair outside this map cannot be re-validated, and the stream is not
+ * where an unchecked projection goes.
+ */
+function declaredSchemas(spec: ToolSpec): Map<string, Record<string, unknown>> {
+  const out = new Map<string, Record<string, unknown>>();
+  for (const s of SCHEMAS) out.set(`${s.id}@${s.version}`, s.schema);
+  for (const c of Object.values(spec.commands)) {
+    for (const t of [...c.emits, ...(c.errors ?? [])]) if (t.schema) out.set(`${t.id}@${t.version}`, t.schema);
+  }
+  return out;
 }
 
 function discover(run: Run, spec: ToolSpec, discovery: "schema" | "help", commandName: string | undefined, bookkeeping: Bookkeeping[]): void {

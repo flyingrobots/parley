@@ -4,9 +4,10 @@
 // and is never scrubbed: the run id and the receipt path were chosen secret-free at startup.
 import { closeSync, mkdirSync, openSync, writeSync } from "node:fs";
 import { join } from "node:path";
-import type { HistorySink } from "./history.ts";
+import { checkRecord } from "./check.ts";
+import type { HistoryProjection, HistorySink } from "./history.ts";
 import { computeInv, digestInput, sha256, type InputDecl, type InputDescriptor } from "./inv.ts";
-import { scrub } from "./redact.ts";
+import { carriesSecret, scrub } from "./redact.ts";
 
 export interface Sink { write(line: string): void }
 export const SIDECAR_THRESHOLD = 65_536;
@@ -40,6 +41,7 @@ export const SCHEMA_IDS = {
   command: { id: "parley.command", version: "1.0.0" },
   schema: { id: "parley.schema", version: "1.0.0" },
   page: { id: "parley.page", version: "1.0.0" },
+  historyTransform: { id: "parley.history.transform", version: "1.0.0" },
 } as const;
 
 export type SchemaRef = { readonly id: string; readonly version: string };
@@ -62,6 +64,8 @@ export interface RunInit {
   headRedacted: boolean; human?: (line: Record_) => string | null;
   /** The shared history stream of §8, when one is configured: it receives the receipt's bytes. */
   history?: HistorySink;
+  /** The projection applied to the stream copy, when a transform is configured (§8, informative). */
+  projection?: HistoryProjection;
 }
 
 type SinkName = "stdout" | "stderr" | "receipt";
@@ -78,6 +82,12 @@ export class Run {
   private failedSinks = new Set<SinkName>();
   private sidecarFailed = false;
   private historyFailed = false;
+  private projectionSeq: number | null = null;
+  private projectionWarning: Diagnostic | null = null;
+  private withheldWarnings: Diagnostic[] = [];
+  private projecting = 0;
+  private flushingWithheld = false;
+  private withheld = 0;
   private deferred: { sink: SinkName; error: unknown }[] = [];
   private inputsSettled = false;
   private supplied = new Map<string, Uint8Array>();
@@ -144,11 +154,26 @@ export class Run {
    * opt-in extra and the dependency runs one way, so a failure is one `warning` and nothing
    * else: not an error, not a sink failure, no change to the exit status. The stream is dropped
    * at the first failure, so a broken stream is reported once and the run carries on.
+   *
+   * With a transform configured the stream copy is a projection of those bytes rather than the
+   * bytes themselves, and the writer enforces the contract around it: see `project`. Withholding
+   * leaves a `seq` gap on the stream and nowhere else.
    */
   private mirrorToHistory(text: string): void {
     const h = this.init.history;
     if (h === undefined || this.historyFailed) return;
-    try { h.append(text); } catch (e) {
+    const p = this.init.projection;
+    let line: string | null = text;
+    if (p !== undefined) {
+      this.projecting += 1;
+      try { line = this.project(text, p); } finally { this.projecting -= 1; }
+    }
+    if (line !== null) this.appendToHistory(h, line);
+    if (this.projecting === 0) this.flushWithheld();
+  }
+
+  private appendToHistory(h: HistorySink, line: string): void {
+    try { h.append(line); } catch (e) {
       this.historyFailed = true;
       try { h.close(); } catch { /* already closed */ }
       if (this.closed) return;
@@ -158,6 +183,90 @@ export class Run {
       } catch { /* the run ended between the write and the warning */ }
     }
   }
+
+  /**
+   * One receipt line through the configured transform, with the four rules the writer enforces
+   * around it (flyingrobots#57). Returns the line to append, or `null` to withhold it.
+   *
+   *   1. The transform is handed the parsed record the receipt already holds, so it sees the
+   *      redacted payload of §5.3 and never the raw one.
+   *   2. Nothing is the transform's envelope to change: `event`, `t`, `seq`, `run` and `_schema`
+   *      are taken off whatever it returns and the receipt line's are put back, so the two
+   *      copies of one event agree on all five (§1.3).
+   *   3. The returned body is re-validated against the schema for its **exact** advertised pair
+   *      (§4.5) and withheld when it no longer validates. A pair no schema document is held for
+   *      cannot be re-validated, so it is withheld too: an unchecked projection is never passed
+   *      off as a checked one.
+   *   4. Anything that goes wrong withholds the line and warns, naming the `seq`; a warning is
+   *      never an error and never changes the exit status (§6.1).
+   */
+  private project(text: string, p: HistoryProjection): string | null {
+    let rec: Record_;
+    try { rec = JSON.parse(text) as Record_; } catch { return null; }
+    const seq = typeof rec.seq === "number" ? rec.seq : -1;
+    const stamp = rec._schema as { id?: unknown; version?: unknown } | undefined;
+    const pair = `${typeof stamp?.id === "string" ? stamp.id : "?"}@${typeof stamp?.version === "string" ? stamp.version : "?"}`;
+    let returned: unknown;
+    try { returned = p.fn(rec); } catch (e) {
+      const msg = e instanceof Error ? e.message || e.name : String(e);
+      this.withhold({ code: "history.transform_failed", problem: `the history transform ${p.name} threw on seq ${seq}: ${msg}; that line is not on the shared stream and the receipt is unaffected`, remedy: "fix the transform or remove it; the stream copy has a gap at that seq and names the projection on its opening line" });
+      return null;
+    }
+    // Nothing returned is the configured way to withhold a line: a gap, not a defect.
+    if (returned === undefined || returned === null) return null;
+    if (typeof returned !== "object" || Array.isArray(returned)) {
+      this.withhold({ code: "history.transform_invalid", problem: `the history transform ${p.name} returned ${Array.isArray(returned) ? "an array" : typeof returned} for seq ${seq}, which is neither a record nor nothing; that line is not on the shared stream`, remedy: "return the record, a projection of it, or nothing to withhold the line" });
+      return null;
+    }
+    const { event: _event, t: _t, seq: _seq, run: _run, _schema: _stamp, ...body } = returned as Record_;
+    if (this.init.secretValues.size > 0 && carriesSecret(JSON.stringify(body), this.init.secretValues)) {
+      this.withhold({ code: "history.transform_unredacted", problem: `the history transform ${p.name} returned a body for seq ${seq} carrying a declared secret value the writer had already replaced; that line is not on the shared stream`, remedy: "a transform narrows a record; it never restores a value §5.3 replaced" });
+      return null;
+    }
+    const doc = p.schemas.get(pair);
+    if (doc === undefined) {
+      this.withhold({ code: "history.transform_uncheckable", problem: `seq ${seq} advertises ${pair}, which this writer holds no schema document for, so the projection by ${p.name} could not be re-validated and that line is not on the shared stream`, remedy: "declare the schema on the command's emitted type (spec §4.2) so a projection of it can be checked, or remove the transform" });
+      return null;
+    }
+    const out: Record_ = { event: rec.event, t: rec.t, seq: rec.seq, run: rec.run, ...body, _schema: rec._schema };
+    const verdict = checkRecord(out, doc);
+    if (!verdict.ok) {
+      if ("unsupported" in verdict) {
+        this.withhold({ code: "history.transform_uncheckable", problem: `the schema for ${pair} uses ${verdict.unsupported}, which this writer's re-validation does not implement, so the projection of seq ${seq} by ${p.name} could not be checked and that line is not on the shared stream`, remedy: "state the type's schema within the subset the writer can check, or remove the transform" });
+        return null;
+      }
+      this.withhold({ code: "history.transform_invalid", problem: `the body the history transform ${p.name} returned for seq ${seq} no longer validates against ${pair}: ${verdict.errors.slice(0, 3).join("; ")}; that line is not on the shared stream`, remedy: "project within the message's schema, or withhold the line by returning nothing" });
+      return null;
+    }
+    return JSON.stringify(out) + "\n";
+  }
+
+  /**
+   * A withheld line, held until the current mirror is finished: the warning is itself a record,
+   * and a record goes through the transform too. A projection that fails on a warning line
+   * withholds it and does not warn again, so one failure cannot generate another for ever; the
+   * stream's gaps, not the warning count, are the ground truth for what it is missing.
+   */
+  private withhold(d: Diagnostic): void {
+    this.withheld += 1;
+    if (this.flushingWithheld || this.closed) return;
+    this.withheldWarnings.push(d);
+  }
+
+  private flushWithheld(): void {
+    if (this.flushingWithheld || this.withheldWarnings.length === 0) return;
+    this.flushingWithheld = true;
+    try {
+      while (this.withheldWarnings.length > 0 && !this.closed) {
+        const d = this.withheldWarnings.shift()!;
+        try { this.writerWarning(d); } catch { /* the run ended between the withhold and the warning */ }
+      }
+      this.withheldWarnings = [];
+    } finally { this.flushingWithheld = false; }
+  }
+
+  /** How many lines the configured transform kept off the stream, warnings about them included. */
+  get withheldFromHistory(): number { return this.withheld; }
 
   /** Internal: report sink failures held back during the bootstrap write, now that the head is in place (§5: the head is the receipt's first line). */
   flushDeferredFailures(): void {
@@ -258,6 +367,38 @@ export class Run {
     const paths: Record_ = { receipt: this.receiptPath, ...(this.init.history ? { history: this.init.history.path } : {}) };
     const rec: Record_ = { event: "run", tool: this.tool, v: this.v, ...(inv ? { inv } : {}), ...(this.session ? { session: this.session } : {}), paths, ...(this.dryRun ? { dry_run: true } : {}) };
     this.emit({ to: { stdout: true }, writer: true, deferFailures: true }, rec, SCHEMA_IDS.bootstrap);
+  }
+
+  /**
+   * Internal: the opening line of a projected stream copy (§8), stream only and before the head,
+   * so a reader of the shared timeline meets the projection before any projected line of the run.
+   * It takes a `seq` of its own and reaches no other sink, which is why the receipt has no line
+   * at that `seq`; `noteProjection` records that in the receipt once the head is in place. A
+   * failure to append it is held back for the same reason the bootstrap line's is.
+   */
+  declareProjection(): void {
+    const h = this.init.history, p = this.init.projection;
+    if (h === undefined || p === undefined || this.historyFailed) return;
+    const at = this.next();
+    this.projectionSeq = at.seq;
+    const rec = this.envelope(this.scrubPayload({ event: "history.transform", name: p.name, sha256: p.sha256 }, [], true), SCHEMA_IDS.historyTransform, at);
+    try { h.append(JSON.stringify(rec) + "\n"); }
+    catch (e) {
+      this.historyFailed = true;
+      this.projectionSeq = null;
+      try { h.close(); } catch { /* already closed */ }
+      const msg = e instanceof Error ? e.message : String(e);
+      this.projectionWarning = { code: "history.write_failed", problem: `appending the projection's opening line to the shared history stream at ${h.path} failed: ${msg}; this run is not in the stream and the receipt is unaffected`, remedy: `free space or fix permissions on ${h.dir}, or set PARLEY_HISTORY=off; the receipt is the record and the stream is a convenience` };
+    }
+  }
+
+  /** Internal: after the head, the warning the opening line could not raise, and the decision that accounts for the `seq` it took (§5). */
+  noteProjection(): void {
+    const p = this.init.projection;
+    if (p === undefined) return;
+    if (this.projectionWarning !== null) { const d = this.projectionWarning; this.projectionWarning = null; this.writerWarning(d); }
+    if (this.projectionSeq === null) return;
+    this.step(`the shared stream's copy of this run is a projection by ${p.name}`, `a history transform is configured, so the stream copy is narrowed and says so: seq ${this.projectionSeq} is its parley.history.transform line, which reaches the stream alone and is why this receipt has no line at that seq. The transform's source digests to ${p.sha256}. The receipt is never projected (§8, informative)`);
   }
 
   /** Internal: the receipt head, receipt only, never a sidecar (§5). */

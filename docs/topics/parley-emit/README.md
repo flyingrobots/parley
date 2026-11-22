@@ -13,10 +13,12 @@ it. This page is the reference for what the package does on `main`; the package
 | `defineTool(spec)` | Checks a tool's declaration for the things the writer needs: a non-empty name and version, at least one command, an intent per command, a SemVer version on every emitted type, and a positive retention count. Effects, secrets, error types, source resolvers and the `--human` renderer are carried as declared |
 | `main(spec, argv, handler, options)` | Parses the writer-owned flags (`--human`, `--humanize`, `--dry-run`, `--schema`, `--help`), chooses the receipt location, opens the shared history stream when one is configured, resolves declared sources, redacts, bootstraps, writes the head, enforces retention, runs the handler under the top-level handler, closes with `end`, returns the exit status |
 | `Run` | `result`, `page`, `step`, `warning`, `error`, `input`, `finaliseInputs`, `end`; `receiptPath`, `cwd`, `dryRun`, `ended`, `status` |
-| `SCHEMAS`, `SCHEMA_SOURCE` | The sixteen draft schemas the package ships, with the commit and digest of each |
+| `SCHEMAS`, `SCHEMA_SOURCE` | The seventeen draft schemas the package ships, with the commit and digest of each |
 | `computeInv`, `canonical`, `digestTree`, `sha256` | The documented `inv` derivation and its parts |
 | `chooseLocation`, `repoRoot`, `stateBase`, `bookkeepingFor` | Receipt placement and the bookkeeping a run declares |
 | `resolveHistory`, `openHistory`, `isHistoryFailure`, `writeWholeLine`, `retainHistory`, `historyBookkeeping`, `segmentName`, `historyDays` | The shared history stream of spec §8: where it is, opening a segment, the whole-line append, segment retention, and the bookkeeping a run with a stream declares |
+| `historyProjection`, `transformDigest`, `transformName`, `isHistorySink` | The projection a configured transform applies to the stream copy: its name, the digest of its source, and which form `MainOptions.history` was given |
+| `checkRecord` | The bounded JSON Schema check the writer re-validates a projected line with, in a package with no runtime dependencies |
 | `classifySecrets`, `collectSecretValues`, `redactArgv`, `scrub` | Redaction |
 | `ulid` | Run ids |
 
@@ -81,7 +83,8 @@ stream configured is the program that existed before the sink did.
 | Retention | `PARLEY_HISTORY_DAYS` daily segments, today's included, default 14; older segments are unlinked whole and the deletion is a `receipt.step`. Never on `--dry-run`, which records what it would delete |
 | Appending | `O_APPEND`, one whole line per write, so concurrent writers cannot split each other's lines. A short write is abandoned rather than continued and the stream is dropped for the rest of the run |
 | Failing | An unopenable path is one `history.unavailable` warning; a failed append is one `history.write_failed` warning. Neither is an error, a sink failure or a change of exit status |
-| Injecting | `MainOptions.history` takes a sink or `null`, beside `stdout`, `stderr`, `now` and `home` |
+| Injecting | `MainOptions.history` takes a sink, `null`, or `{ sink?, transform?, name? }`, beside `stdout`, `stderr`, `now` and `home` |
+| Projecting | `{ history: { transform } }` narrows the stream copy and nothing else; see below |
 
 Two decisions the issue (flyingrobots/parley#3) left to the owner are implemented behind a
 recommendation, stated in the package
@@ -91,8 +94,52 @@ redaction (none of the stream's own, because the stream is the receipt's bytes a
 cannot reach it that did not reach the receipt; owner-only permissions, no sidecar bodies and no
 network instead).
 
+### A user-defined transform on the stream copy
+
+A sink is an observer with its own aperture. The receipt sink has the identity projection; the
+shared timeline may need a narrower one, because a path, a hostname or a repository name that is
+fine in a local receipt can be wrong on a stream other people and tools read. The transform is
+that aperture, configured in code and never by an environment variable naming a module to
+execute:
+
+```ts
+const status = await main(tool, argv, handler, {
+  history: { transform: (rec) => (rec.event === "receipt.step" ? { ...rec, detail: undefined } : rec) },
+});
+```
+
+It is handed the parsed record the receipt already holds and returns a record to put on the
+stream, or nothing to withhold the line. The writer enforces the contract around it, so nothing
+it does can put an invalid line or a changed envelope on the shared timeline:
+
+| Rule | Behaviour |
+| --- | --- |
+| The envelope is the writer's | `event`, `t`, `seq`, `run` and `_schema` are taken off whatever the transform returns and the receipt line's are put back, so the two copies of one event agree on all five (§1.3) |
+| The body is re-validated | Against the schema for its **exact** advertised pair (§4.5): this package's drafts, plus the schema the tool declared on the emitted or error type (§4.2) |
+| An unverifiable line is withheld | A pair no schema document is held for, or one whose schema uses a construct `checkRecord` does not implement, is `history.transform_uncheckable`: an unchecked projection is never passed off as a checked one |
+| Failure is a warning, never an error | A throw is `history.transform_failed`, a body that no longer validates is `history.transform_invalid`, a body that restored a value §5.3 had replaced is `history.transform_unredacted`. Each names the withheld `seq`, goes to stderr and the receipt, and leaves the exit status alone (§6.1) |
+
+The stream copy of a projected run **opens with a `parley.history.transform` line** naming the
+projection and the SHA-256 of the transform's source text as the runtime renders it, so a reader
+can tell a projected copy from a whole one and by what:
+
+```jsonl
+{"event":"history.transform","t":1795386946089,"seq":1,"run":"01M82PDCH4QHRWVEWYJK07T512","name":"drop-step-detail","sha256":"8f7a2e4c1b5d0937e6a4c8fb21d3059ae7c64b18df2a905c3e7b14682fd9c0a5","_schema":{"id":"parley.history.transform","version":"1.0.0"}}
+```
+
+That line reaches the stream and no other sink, so it takes a `seq` the receipt has no line at,
+and the receipt records the gap as a `receipt.step` naming the projection and its digest. The
+receipt copy is never projected and never carries the line. Withholding likewise leaves a `seq`
+gap on the stream alone. With no transform configured there is no opening line, no step, no
+projection and no difference in any byte.
+
+`bun run doctor --history SEGMENT.jsonl` reads a segment rather than a run and reports each run's
+projection by name and digest and every `seq` its copy does not carry; see
+[conformance](../conformance/README.md#reading-a-segment-of-the-shared-stream).
+
 The dependency runs one way. The stream consumes the format; the format never requires the
-stream. Querying it is flyingrobots/parley#2 and syncing it between machines is nobody's yet.
+stream. Querying it is flyingrobots/parley#2, the reader's preference for the least-projected
+copy is flyingrobots/parley#58, and syncing it between machines is nobody's yet.
 
 ## What it does not do
 

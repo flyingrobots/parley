@@ -806,6 +806,15 @@ cross-repository, cross-agent timeline; absent, the program writes locally and n
 **The dependency runs one way.** The stream consumes the format. The format never requires the
 stream.
 
+A copy of a run on the shared stream may also be a **projection** of the receipt copy rather than
+the whole of it: a path, a hostname or a repository name that is fine in a local receipt can be
+wrong on a timeline other people and tools read, so the intent is that a program may narrow what
+reaches the stream, that such a copy says so by naming the projection that wrote it, and that
+nothing a projection does changes the envelope or puts a line on the stream that no longer
+validates against its own schema. A reader that finds the same record in more than one copy
+should then prefer the least-projected one, because the receipt copy is the record and a
+projection is a view of it.
+
 Unlike a repository-scoped activity log, the shared stream spans tools, repositories, agents and
 people, so a session can see that one agent was working here while another worked there, on one
 timeline.

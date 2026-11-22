@@ -1219,7 +1219,7 @@ async function projected(transform: HistoryTransform, body: (run: Run) => void, 
 
 describe("PE-23 the history sink's transform", () => {
   test("a transform projects the stream copy and never the receipt", async () => {
-    const dropDetail: HistoryTransform = (rec) => { if (rec.event !== "receipt.step") return rec; const { detail: _d, ...rest } = rec; return rest; };
+    const dropDetail: HistoryTransform = (rec) => { if (rec.decision !== "counted the things") return rec; const { detail: _d, ...rest } = rec; return rest; };
     const r = await projected(dropDetail, (run) => {
       run.step("counted the things", "the stream need not carry the rows", { names: ["a.txt", "b.txt"] });
       run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" });
@@ -1248,14 +1248,14 @@ describe("PE-23 the history sink's transform", () => {
   });
 
   test("an invalid body is withheld and warned by seq", async () => {
-    const strip: HistoryTransform = (rec) => { if (rec.event !== "receipt.step") return rec; const { because: _b, ...rest } = rec; return rest; };
+    const strip: HistoryTransform = (rec) => { if (rec.decision !== "counted the things") return rec; const { because: _b, ...rest } = rec; return rest; };
     const r = await projected(strip, (run) => {
       run.step("counted the things", "a step without a reason is not a step");
       run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" });
     });
     expect(r.violations).toEqual([]);
     expect(r.status).toBe(0);
-    const stepSeq = r.receiptLines.find((o) => o.event === "receipt.step")!.seq as number;
+    const stepSeq = r.receiptLines.find((o) => o.decision === "counted the things")!.seq as number;
     const warns = warningsOf(r, "history.transform_invalid");
     expect(warns.length).toBe(1);
     expect(String(warns[0]!.problem)).toContain(`seq ${stepSeq}`);
@@ -1265,14 +1265,14 @@ describe("PE-23 the history sink's transform", () => {
   });
 
   test("a throwing transform withholds the line and leaves the status alone", async () => {
-    const boom: HistoryTransform = (rec) => { if (rec.event === "receipt.step") throw new Error("the projection blew up"); return rec; };
+    const boom: HistoryTransform = (rec) => { if (rec.decision === "counted the things") throw new Error("the projection blew up"); return rec; };
     const r = await projected(boom, (run) => {
       run.step("counted the things", "a transform that throws withholds and warns");
       run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" });
     });
     expect(r.violations).toEqual([]);
     expect(r.status).toBe(0);
-    const stepSeq = r.receiptLines.find((o) => o.event === "receipt.step")!.seq as number;
+    const stepSeq = r.receiptLines.find((o) => o.decision === "counted the things")!.seq as number;
     const warns = warningsOf(r, "history.transform_failed");
     expect(warns.length).toBe(1);
     expect(String(warns[0]!.problem)).toContain(`seq ${stepSeq}`);
@@ -1412,7 +1412,7 @@ describe("PE-23 the history sink's transform", () => {
   test("a transform cannot see or restore a declared secret", async () => {
     const secret = "sk-live-9c1f2a";
     const seen: string[] = [];
-    const restore: HistoryTransform = (rec) => { seen.push(JSON.stringify(rec)); return rec.event === "receipt.step" ? { ...rec, detail: { url: `https://api/${secret}` } } : rec; };
+    const restore: HistoryTransform = (rec) => { seen.push(JSON.stringify(rec)); return rec.decision === "called the api" ? { ...rec, detail: { url: `https://api/${secret}` } } : rec; };
     const { dir, env, hist } = historyScratch();
     const r = await runCount(dir, { ...env, PARLEY_HISTORY: hist }, ["count", "--token", secret], (run) => {
       run.step("called the api", "the step surfaces the token", { url: `https://api/${secret}` });
@@ -1454,7 +1454,7 @@ describe("PE-23 the history sink's transform", () => {
   });
 
   test("the doctor reports a segment's projection and its withheld gaps", async () => {
-    const dropSteps: HistoryTransform = (rec) => (rec.event === "receipt.step" ? undefined : rec);
+    const dropSteps: HistoryTransform = (rec) => (rec.decision === "counted the things" ? undefined : rec);
     const r = await projected(dropSteps, (run) => {
       run.step("counted the things", "steps stay local");
       run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" });

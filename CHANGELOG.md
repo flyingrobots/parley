@@ -7,6 +7,21 @@ The spec and each message schema are versioned separately from this package.
 
 ### Changed
 
+- §2.1, §2.2: `inv` is SHOULD and tool-defined in v0.2; a program that supplies it documents its
+  derivation and scope, omits it when unavailable (never a placeholder), and keeps declared
+  secrets out of it. A shared derivation is targeted for v0.3 from a real implementation. The
+  bootstrap line never waits on a directory scan or stdin EOF; late input digests and `inv` are
+  carried by a `receipt.inputs` finalisation record (schema in flyingrobots/parley#10); an
+  unreadable input is recorded with an error code and no digest. `inv` and `inputs[].sha256` are
+  optional in the draft bootstrap and receipt-head schemas; `inputs[]` gains `role` and `error`.
+  (flyingrobots/parley#11)
+- §2.2, §5.3: a credential file is a secret source, never a declared input; its contents never
+  contribute to any input digest or to `inv`, directly or through a directory digest, archive,
+  manifest or derived value; a program that cannot establish that omits `inv`.
+  (flyingrobots/parley#31)
+- §2.3: "same `inv`, different result" is divergence under the recorded boundary, not proof of a
+  determinism defect; replay is a MAY subject to eligibility. (flyingrobots/parley#11)
+
 - §4.3: `effects.writes` means subject-matter writes only; evidence writes (receipt, sidecars,
   ignore file, retention) are declared in `effects.bookkeeping` with an operation and scope;
   `secrets` also names credential files; `--dry-run` emits bootstrap and receipt, performs no

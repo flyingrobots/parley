@@ -11,7 +11,6 @@
     "run",
     "tool",
     "v",
-    "inv",
     "argv",
     "resolved",
     "inputs",
@@ -49,7 +48,7 @@
     "inv": {
       "type": "string",
       "minLength": 1,
-      "description": "Content-addressed identity of the question (spec \u00a72.2); never includes a declared secret."
+      "description": "Content-addressed identity of the question (spec \u00a72.2); never includes a declared secret. Optional in v0.2: supplied when the tool documents its derivation and the identity is known at this point; never a placeholder (spec \u00a72.2)."
     },
     "session": {
       "type": "string",
@@ -68,20 +67,29 @@
     },
     "inputs": {
       "type": "array",
-      "description": "Every declared input, digested by content. inv is computed over these bytes, never over paths.",
+      "description": "Every declared input as a descriptor: its path, its role when the tool distinguishes roles, and a content digest once read. A digest that arrives later is carried by receipt.inputs (spec \u00a72.2). Credential files are never inputs (\u00a72.2).",
       "items": {
         "type": "object",
         "required": [
-          "path",
-          "sha256"
+          "path"
         ],
         "properties": {
           "path": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1
+          },
+          "role": {
+            "type": "string",
+            "minLength": 1
           },
           "sha256": {
             "type": "string",
             "pattern": "^[0-9a-f]{64}$"
+          },
+          "error": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]+(\\.[a-z0-9_]+)+$",
+            "description": "Why the input could not be read; no digest then."
           }
         }
       }

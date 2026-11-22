@@ -10,7 +10,6 @@
     "seq",
     "tool",
     "v",
-    "inv",
     "run",
     "paths",
     "_schema"
@@ -39,7 +38,7 @@
     },
     "inv": {
       "type": "string",
-      "description": "Content-addressed identity of the question: tool, version, normalised args, and the bytes of every declared input; never a declared secret (spec \u00a72.2, \u00a75.3).",
+      "description": "Content-addressed identity of the question: tool, version, normalised args, and the bytes of every declared input; never a declared secret (spec \u00a72.2, \u00a75.3). Optional in v0.2: supplied when the tool documents its derivation and the identity is known at this point; never a placeholder (spec \u00a72.2).",
       "minLength": 1
     },
     "run": {

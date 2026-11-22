@@ -145,6 +145,14 @@ describe("schemas/", () => {
       expect(head(noTool)).toBe(false);
       expect(head(noV)).toBe(false);
     });
+    test("inv is optional in v0.2 and inputs may lack a digest", () => {
+      const { inv, ...noInv } = okHead;
+      expect(head(noInv)).toBe(true);
+      const { inv: _b, ...bootNoInv } = okBoot;
+      expect(boot(bootNoInv)).toBe(true);
+      expect(head({ ...okHead, inputs: [{ path: "vendor/", role: "tree", error: "input.unreadable" }] })).toBe(true);
+      expect(head({ ...okHead, inputs: [{ role: "tree" }] })).toBe(false);
+    });
     test("redacted marker shape", () => {
       expect(head({ ...okHead, redacted: { argv: [5], resolved: ["/token"], env: ["GITHUB_TOKEN"] } })).toBe(true);
       expect(head({ ...okHead, redacted: { argv: [-1] } })).toBe(false);

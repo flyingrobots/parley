@@ -4,5 +4,5 @@ export { REDACTED } from "./redact.ts";
 export { SCHEMAS, SCHEMA_SOURCE } from "./schemas.ts";
 export { ulid } from "./ulid.ts";
 export { canonical, computeInv, digestTree, sha256, type InputDescriptor } from "./inv.ts";
-export { chooseLocation, repoRoot, stateBase, bookkeepingFor } from "./location.ts";
-export { classifySecrets, collectSecretValues, redactArgv, scrub } from "./redact.ts";
+export { chooseLocation, isLocationFailure, repoRoot, stateBase, bookkeepingFor } from "./location.ts";
+export { carriesSecret, classifySecrets, collectSecretValues, redactArgv, scrub } from "./redact.ts";

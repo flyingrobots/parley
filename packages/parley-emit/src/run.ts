@@ -1,14 +1,18 @@
 // One run (spec §3): a single sequence across stdout, stderr and the receipt; the bootstrap line
-// first, the head next, the `end` event last and immutable; every record scrubbed of declared
-// secrets before any copy leaves the process.
+// first, the head next, the `end` event last and immutable; every record's payload scrubbed of
+// declared secrets before any copy leaves the process. The envelope is applied after scrubbing
+// and is never scrubbed: the run id and the receipt path were chosen secret-free at startup.
 import { closeSync, mkdirSync, openSync, writeSync } from "node:fs";
 import { join } from "node:path";
-import { computeInv, digestInput, sha256, type InputDescriptor } from "./inv.ts";
-import { REDACTED, scrub } from "./redact.ts";
+import { computeInv, digestInput, sha256, type InputDecl, type InputDescriptor } from "./inv.ts";
+import { scrub } from "./redact.ts";
 
 export interface Sink { write(line: string): void }
 export const SIDECAR_THRESHOLD = 65_536;
 export const CODE = /^[a-z0-9_]+(\.[a-z0-9_]+)+$/;
+const ENVELOPE_KEYS = ["t", "seq", "run", "_schema"] as const;
+/** Writer digests; a secret cannot occur in one except by hex coincidence, and replacing it would corrupt the digest. */
+const DIGEST_KEYS = new Set(["sha256", "inv"]);
 
 export const SCHEMA_IDS = {
   bootstrap: { id: "parley.run.bootstrap", version: "1.1.1" },
@@ -42,9 +46,12 @@ export interface RunInit {
   tool: string; v: string; id: string; session?: string; dryRun: boolean;
   stdout: Sink; stderr: Sink; receiptFd: number; receiptPath: string; receiptDir: string;
   secretValues: Set<string>; now: () => number; cwd: string;
-  command: string; resolved: unknown; inputs: { path: string; role?: string }[];
+  command: string; resolved: unknown; inputs: InputDecl[];
   headRedacted: boolean; human?: (line: Record_) => string | null;
 }
+
+type SinkName = "stdout" | "stderr" | "receipt";
+interface Emit { to: { stdout?: boolean; stderr?: boolean; receipt?: boolean }; writer?: boolean; noSidecar?: boolean; deferFailures?: boolean }
 
 export class Run {
   readonly id: string; readonly tool: string; readonly v: string; readonly session?: string;
@@ -54,7 +61,9 @@ export class Run {
   private receiptOpen = true;
   private errorReported = false;
   private redactedAny: boolean;
-  private failedSinks = new Set<"stdout" | "stderr" | "receipt">();
+  private failedSinks = new Set<SinkName>();
+  private sidecarFailed = false;
+  private deferred: { sink: SinkName; error: unknown }[] = [];
   private inputsSettled = false;
   private supplied = new Map<string, Uint8Array>();
   private finalStatus: number | null = null;
@@ -71,18 +80,24 @@ export class Run {
   get ended(): boolean { return this.closed; }
   /** The exit status `end` carried, once ended. */
   get status(): number | null { return this.finalStatus; }
-  get sinkFailed(): boolean { return this.failedSinks.size > 0; }
+  /** True when any stream, the receipt or a sidecar could not be written: the run closes with 4. */
+  get sinkFailed(): boolean { return this.failedSinks.size > 0 || this.sidecarFailed; }
 
   // ---- emission -------------------------------------------------------------------------
 
   private next(): { seq: number; t: number } { this.seq += 1; return { seq: this.seq, t: this.init.now() }; }
 
-  private envelope(record: Record_, schema: SchemaRef, at: { seq: number; t: number }): Record_ {
-    const { event, ...rest } = record;
+  private envelope(payload: Record_, schema: SchemaRef, at: { seq: number; t: number }): Record_ {
+    const { event, ...rest } = payload;
     return { event, t: at.t, seq: at.seq, run: this.id, ...rest, _schema: { id: schema.id, version: schema.version } };
   }
 
-  private write(sink: "stdout" | "stderr" | "receipt", text: string): boolean {
+  private refuseEnvelopeKeys(obj: Record_ | undefined, what: string): void {
+    if (!obj) return;
+    for (const k of ENVELOPE_KEYS) if (k in obj) throw new TypeError(`${what} must not carry ${k}; the writer owns the envelope (spec §1.3)`);
+  }
+
+  private write(sink: SinkName, text: string, defer = false): boolean {
     if (this.failedSinks.has(sink)) return false;
     try {
       if (sink === "receipt") { if (!this.receiptOpen) return false; writeSync(this.init.receiptFd, text); }
@@ -90,23 +105,31 @@ export class Run {
       return true;
     } catch (e) {
       this.failedSinks.add(sink);
-      if (!this.closed) this.reportSinkFailure(sink, e);
+      if (defer) this.deferred.push({ sink, error: e });
+      else if (!this.closed) this.reportSinkFailure(sink, e);
       return false;
     }
   }
 
+  /** An empty prose rendering means "say nothing here"; a write of nothing is not a sink failure. */
+  private writeOrSkip(sink: "stdout" | "stderr", text: string, defer = false): boolean { return text === "" ? true : this.write(sink, text, defer); }
+
   private reportSinkFailure(sink: string, e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
-    this.emit({ stderr: sink !== "stderr", receipt: sink !== "receipt" }, { event: "error", code: "sink.write_failed", problem: `writing to ${sink} failed: ${msg}`, remedy: "the run will close with status 4; whatever other sinks received is preserved" }, SCHEMA_IDS.error);
+    this.emit({ to: { stderr: sink !== "stderr", receipt: sink !== "receipt" }, writer: true }, { event: "error", code: sink === "sidecar" ? "sink.sidecar_failed" : "sink.write_failed", problem: `writing to ${sink} failed: ${msg}`, remedy: "the run will close with status 4; whatever other sinks received is preserved" }, SCHEMA_IDS.error);
+  }
+
+  /** Internal: report sink failures held back during the bootstrap write, now that the head is in place (§5: the head is the receipt's first line). */
+  flushDeferredFailures(): void {
+    const held = this.deferred; this.deferred = [];
+    for (const { sink, error } of held) if (!this.closed) this.reportSinkFailure(sink, error);
   }
 
   private line(obj: Record_): string { return JSON.stringify(obj) + "\n"; }
 
-  /** An empty prose rendering means "say nothing here"; a write of nothing is not a sink failure. */
-  private writeOrSkip(sink: "stdout" | "stderr", text: string): boolean { return text === "" ? true : this.write(sink, text); }
-
   private prose(obj: Record_): string {
-    const custom = this.init.human?.(obj);
+    let custom: string | null = null;
+    try { custom = this.init.human?.(obj) ?? null; } catch { custom = null; }
     if (typeof custom === "string") return custom.endsWith("\n") ? custom : custom + "\n";
     switch (obj.event) {
       // Prose is for a person or a pipe into something like a pull-request comment; the bootstrap
@@ -119,24 +142,33 @@ export class Run {
     }
   }
 
+  /** Scrub a payload's values; `event` is envelope, named by the writer or the tool's schema, and is never a secret. */
+  private scrubPayload(payload: Record_, found: string[], writer: boolean): Record_ {
+    const { event, ...rest } = payload;
+    const scrubbed = scrub(rest, this.init.secretValues, "", found, writer ? { skipKeys: DIGEST_KEYS } : {}) as Record_;
+    return event === undefined ? scrubbed : { event, ...scrubbed };
+  }
+
   /**
    * Emit one event to the named streams as copies sharing seq, t and event. The receipt copy may
    * carry `receiptExtra` fields the stream copy omits (§1.3). Returns the event's seq.
    */
-  private emit(to: { stdout?: boolean; stderr?: boolean; receipt?: boolean }, record: Record_, schema: SchemaRef, receiptExtra?: Record_): number {
+  private emit(how: Emit, payload: Record_, schema: SchemaRef, receiptExtra?: Record_): number {
     if (this.closed) throw new ParleyClosed();
-    const at = this.next();
+    this.refuseEnvelopeKeys(payload, "a record"); this.refuseEnvelopeKeys(receiptExtra, "receiptExtra");
     const found: string[] = [];
-    const scrubbed = scrub(this.envelope(record, schema, at), this.init.secretValues, "", found) as Record_;
+    const scrubbed = this.scrubPayload(payload, found, how.writer === true);
     const extraFound: string[] = [];
-    const extra = receiptExtra ? (scrub(receiptExtra, this.init.secretValues, "", extraFound) as Record_) : undefined;
+    const extra = receiptExtra ? this.scrubPayload(receiptExtra, extraFound, how.writer === true) : undefined;
+    const at = this.next();
+    const rec = this.envelope(scrubbed, schema, at);
     const human = this.init.human !== undefined;
-    if (to.stdout) this.writeOrSkip("stdout", human ? this.prose(scrubbed) : this.line(scrubbed));
-    if (to.stderr) this.writeOrSkip("stderr", human ? this.prose(scrubbed) : this.line(scrubbed));
-    if (to.receipt) {
-      const full = extra ? { ...scrubbed, ...extra, _schema: scrubbed._schema } : scrubbed;
+    if (how.to.stdout) this.writeOrSkip("stdout", human ? this.prose(rec) : this.line(rec), how.deferFailures);
+    if (how.to.stderr) this.writeOrSkip("stderr", human ? this.prose(rec) : this.line(rec), how.deferFailures);
+    if (how.to.receipt) {
+      const full = extra ? this.envelope({ ...scrubbed, ...extra, event: scrubbed.event }, schema, at) : rec;
       const text = JSON.stringify(full);
-      if (Buffer.byteLength(text, "utf8") > SIDECAR_THRESHOLD) this.sidecar(at.seq, text);
+      if (!how.noSidecar && Buffer.byteLength(text, "utf8") > SIDECAR_THRESHOLD) this.sidecar(at.seq, text);
       else this.write("receipt", text + "\n");
     }
     for (const at_ of [...found, ...extraFound]) this.redaction(at.seq, at_);
@@ -151,8 +183,9 @@ export class Run {
       const fd = openSync(join(this.receiptDir, rel), "wx");
       try { writeSync(fd, bytes); } finally { closeSync(fd); }
     } catch (e) {
-      this.failedSinks.add("receipt");
-      if (!this.closed) this.reportSinkFailure("receipt", e);
+      // The receipt file itself is fine; only the stored record is lost. Say so and keep going.
+      this.sidecarFailed = true;
+      this.reportSinkFailure("sidecar", e);
       return;
     }
     const at = this.next();
@@ -167,38 +200,38 @@ export class Run {
 
   // ---- the public surface --------------------------------------------------------------
 
-  /** Internal: the bootstrap line, stdout only, seq 0 (§3.1). */
+  /** Internal: the bootstrap line, stdout only, seq 0 (§3.1). A stdout failure here is reported after the head. */
   bootstrap(inv: string | undefined): void {
-    const rec: Record_ = { event: "run", tool: this.tool, v: this.v, ...(inv ? { inv } : {}), run: this.id, ...(this.session ? { session: this.session } : {}), paths: { receipt: this.receiptPath }, ...(this.dryRun ? { dry_run: true } : {}) };
-    this.emit({ stdout: true }, rec, SCHEMA_IDS.bootstrap);
+    const rec: Record_ = { event: "run", tool: this.tool, v: this.v, ...(inv ? { inv } : {}), ...(this.session ? { session: this.session } : {}), paths: { receipt: this.receiptPath }, ...(this.dryRun ? { dry_run: true } : {}) };
+    this.emit({ to: { stdout: true }, writer: true, deferFailures: true }, rec, SCHEMA_IDS.bootstrap);
   }
 
-  /** Internal: the receipt head, receipt only (§5). */
-  head(fields: Record_): void { this.emit({ receipt: true }, { event: "receipt.head", ...fields }, SCHEMA_IDS.head); }
+  /** Internal: the receipt head, receipt only, never a sidecar (§5). */
+  head(fields: Record_): void { this.emit({ to: { receipt: true }, writer: true, noSidecar: true }, { event: "receipt.head", ...fields }, SCHEMA_IDS.head); }
 
   /** A result: to stdout and the receipt. `receiptExtra` goes to the receipt copy only. */
   result(record: Record_, schema: SchemaRef, receiptExtra?: Record_): number {
     if (typeof record.event !== "string" || !record.event) throw new TypeError("a result needs an event name");
-    return this.emit({ stdout: true, receipt: true }, record, schema, receiptExtra);
+    return this.emit({ to: { stdout: true, receipt: true } }, record, schema, receiptExtra);
   }
 
   /** One page of unbounded output (§7.2); rows belong in `receiptExtra` or in the stream copy as the tool documents. */
   page(cursor: string | null, hasMore: boolean, record: Record_ = {}, receiptExtra?: Record_): number {
-    if (hasMore && !cursor) throw new TypeError("a page with has_more needs a cursor");
-    return this.emit({ stdout: true, receipt: true }, { event: "page", ...record, ...(cursor ? { cursor } : {}), has_more: hasMore }, SCHEMA_IDS.page, receiptExtra);
+    if (hasMore && !cursor) throw new TypeError("a page with has_more needs a cursor (spec §7.2)");
+    return this.emit({ to: { stdout: true, receipt: true } }, { event: "page", ...record, ...(cursor ? { cursor } : {}), has_more: hasMore }, SCHEMA_IDS.page, receiptExtra);
   }
 
   /** One decision and why, receipt only (§5). */
   step(decision: string, because: string, detail?: unknown): number {
-    return this.emit({ receipt: true }, { event: "receipt.step", decision, because, ...(detail === undefined ? {} : { detail }) }, SCHEMA_IDS.step);
+    return this.emit({ to: { receipt: true } }, { event: "receipt.step", decision, because, ...(detail === undefined ? {} : { detail }) }, SCHEMA_IDS.step);
   }
 
-  warning(d: Diagnostic): number { return this.emit({ stderr: true, receipt: true }, { event: "warning", ...this.diagnostic(d) }, SCHEMA_IDS.warning); }
+  warning(d: Diagnostic): number { return this.emit({ to: { stderr: true, receipt: true } }, { event: "warning", ...this.diagnostic(d) }, SCHEMA_IDS.warning); }
 
-  /** A structured error (§6). The run then closes with status 2 unless `end` is given another. */
+  /** A structured error (§6). The run then closes with status 2 unless `end` is given another non-zero status. */
   error(d: Diagnostic): number {
     this.errorReported = true;
-    return this.emit({ stderr: true, receipt: true }, { event: "error", ...this.diagnostic(d) }, SCHEMA_IDS.error);
+    return this.emit({ to: { stderr: true, receipt: true } }, { event: "error", ...this.diagnostic(d) }, SCHEMA_IDS.error);
   }
 
   private diagnostic(d: Diagnostic): Record_ {
@@ -218,9 +251,11 @@ export class Run {
   finaliseInputs(): InputDescriptor[] {
     if (this.inputsSettled || this.init.inputs.length === 0) { this.inputsSettled = true; return []; }
     this.inputsSettled = true;
-    const inputs = this.init.inputs.map((i) => digestInput(this.cwd, i, this.supplied.get(i.path)));
+    const raw = this.init.inputs.map((i) => digestInput(this.cwd, i, this.supplied.get(i.path)));
+    // The preimage and the record both take the redacted descriptors (§2.2: no secret value in inv).
+    const inputs = scrub(raw, this.init.secretValues, "", [], { skipKeys: DIGEST_KEYS }) as InputDescriptor[];
     const inv = computeInv({ tool: this.tool, v: this.v, command: this.init.command, resolved: this.init.resolved, inputs });
-    this.emit({ receipt: true }, { event: "receipt.inputs", inputs, ...(inv ? { inv } : {}) }, SCHEMA_IDS.inputs);
+    this.emit({ to: { receipt: true }, writer: true }, { event: "receipt.inputs", inputs, ...(inv ? { inv } : {}) }, SCHEMA_IDS.inputs);
     return inputs;
   }
 
@@ -231,11 +266,12 @@ export class Run {
   end(status?: number): number {
     if (this.closed) return this.finalStatus ?? 4;
     if (status !== undefined && (!Number.isInteger(status) || status < 0 || status > 255 || status === 3)) throw new TypeError("end status is an integer 0-255 other than 3 (spec §3.4)");
+    if (status === 0 && this.errorReported) throw new TypeError("a run that reported an error cannot end with status 0 (spec §3.4); a recovered condition is a warning");
     try { this.finaliseInputs(); } catch { /* an unreadable input is already recorded; nothing else can fail here */ }
     let s = status ?? (this.errorReported ? 2 : 0);
     if (this.sinkFailed) s = 4;
     const at = this.next();
-    const rec = this.envelope({ event: "end", status: s, receipt: this.receiptPath, redacted: this.redactedAny }, SCHEMA_IDS.end, at);
+    const rec = this.envelope(this.scrubPayload({ event: "end", status: s, receipt: this.receiptPath, redacted: this.redactedAny }, [], true), SCHEMA_IDS.end, at);
     this.closed = true;
     const okOut = this.writeOrSkip("stdout", this.init.human ? this.prose(rec) : this.line(rec));
     const okRec = this.write("receipt", this.line(rec));
@@ -246,4 +282,3 @@ export class Run {
     return this.finalStatus;
   }
 }
-

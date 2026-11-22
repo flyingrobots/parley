@@ -1,11 +1,11 @@
 // A tool: its commands, their declarations, and the entry point that turns argv and a handler
 // into a conforming run (spec §3, §4, §6).
-import { readdirSync, rmSync, statSync, writeSync } from "node:fs";
+import { closeSync, openSync, readSync, readdirSync, rmSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { computeInv } from "./inv.ts";
-import { bookkeepingFor, chooseLocation, type Bookkeeping } from "./location.ts";
-import { classifySecrets, collectSecretValues, redactArgv, scrub } from "./redact.ts";
+import { computeInv, type InputDecl } from "./inv.ts";
+import { bookkeepingFor, chooseLocation, isLocationFailure, type Bookkeeping } from "./location.ts";
+import { carriesSecret, classifySecrets, collectSecretValues, redactArgv, scrub } from "./redact.ts";
 import { Run, SCHEMA_IDS, type Record_, type SchemaRef, type Sink } from "./run.ts";
 import { SCHEMAS } from "./schemas.ts";
 import { ulid } from "./ulid.ts";
@@ -26,7 +26,7 @@ export interface ToolSpec {
   readonly name: string;
   readonly version: string;
   readonly commands: Readonly<Record<string, CommandSpec>>;
-  /** §5.1: a stated policy. Receipts beyond `count` in a location are deleted, oldest first. */
+  /** §5.1: a stated policy. Completed receipts beyond `count` in a location are deleted, oldest first. */
   readonly retention: { readonly count: number };
   /** Resolvers for declared credential sources, called before the head is written (§5.3). */
   readonly sources?: Readonly<Record<string, () => boolean | Promise<boolean>>>;
@@ -46,7 +46,7 @@ export function defineTool(spec: ToolSpec): ToolSpec {
   return spec;
 }
 
-export interface InputDecl { path: string; role?: string }
+export type { InputDecl };
 export interface MainOptions {
   cwd?: string;
   env?: Record<string, string | undefined>;
@@ -56,14 +56,16 @@ export interface MainOptions {
   session?: string;
   now?: () => number;
   /** The declared inputs of this invocation, from the command's arguments. */
-  inputs?: (args: string[], command: string) => InputDecl[];
-  /** The resolved interpretation after defaults (§5); the default records the command and its arguments. */
-  resolved?: (args: string[], command: string) => Record<string, unknown>;
+  inputs?: (args: string[], command: string) => InputDecl[] | Promise<InputDecl[]>;
+  /** The resolved interpretation after defaults (§5): order-normalised and free of volatile values, since it enters inv. The default records the command and its arguments. */
+  resolved?: (args: string[], command: string) => Record<string, unknown> | Promise<Record<string, unknown>>;
 }
 
 const fdSink = (fd: number): Sink => ({ write(line) { writeSync(fd, line); } });
-const OWN_FLAGS = new Set(["--human", "--humanize", "--dry-run"]);
+const OWN_FLAGS = new Set(["--human", "--humanize", "--dry-run", "--schema", "--help", "-h"]);
 const WRITER_SCHEMAS: SchemaRef[] = Object.values(SCHEMA_IDS);
+/** Incomplete receipts (no end line) older than this are deletable by retention; younger ones may still be in flight. */
+const INCOMPLETE_GRACE_MS = 24 * 60 * 60 * 1000;
 
 export type Handler = (run: Run, args: string[]) => void | Promise<void>;
 
@@ -76,41 +78,57 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
   const cwd = resolve(opts.cwd ?? process.cwd());
   const stdout = opts.stdout ?? fdSink(1), stderr = opts.stderr ?? fdSink(2);
   const now = opts.now ?? Date.now;
-  const id = ulid(now());
   const rawArgs = argv.slice(1);
   const human = rawArgs.some((a) => a === "--human" || a === "--humanize");
   const dryRun = rawArgs.includes("--dry-run");
   const discovery = rawArgs.includes("--schema") ? "schema" : rawArgs.includes("--help") || rawArgs.includes("-h") ? "help" : null;
-  const args = rawArgs.filter((a) => !OWN_FLAGS.has(a) && a !== "--schema" && a !== "--help" && a !== "-h");
+  const args = rawArgs.filter((a) => !OWN_FLAGS.has(a));
   const names = Object.keys(spec.commands);
-  const commandName = args.find((a) => !a.startsWith("-") && a in spec.commands) ?? (names.length === 1 ? names[0]! : undefined);
+  const commandName = args.find((a) => !a.startsWith("-") && Object.hasOwn(spec.commands, a)) ?? (names.length === 1 ? names[0]! : undefined);
+  const command = commandName ? spec.commands[commandName]! : undefined;
+
+  // Declared secrets of every command: a value passed to the wrong command is still a secret (§5.3).
+  const allNames = classifySecrets(names.flatMap((n) => spec.commands[n]!.secrets ?? []));
+  const secretValues = collectSecretValues(argv, allNames, env);
+  const ownNames = classifySecrets(command?.secrets ?? []);
+
+  let id = ulid(now());
+  for (let i = 0; i < 16 && carriesSecret(id, secretValues); i++) id = ulid(now());
 
   const startupFailed = (code: string, problem: string, remedy: string): number => {
-    const line = { event: "startup.failed", t: now(), seq: 0, run: id, tool: spec.name, v: spec.version, code, problem, remedy, _schema: SCHEMA_IDS.startupFailed };
-    try { stderr.write(human ? `startup failed ${code}: ${problem} (${remedy})\n` : JSON.stringify(line) + "\n"); } catch { /* nothing else can be said */ }
+    const line = { event: "startup.failed", t: now(), seq: 0, run: id, tool: spec.name, v: spec.version, code, problem: scrubText(problem, secretValues), remedy, _schema: SCHEMA_IDS.startupFailed };
+    try { stderr.write(human ? `startup failed ${code}: ${line.problem} (${remedy})\n` : JSON.stringify(line) + "\n"); } catch { /* nothing else can be said */ }
     return 3;
   };
 
-  if (!commandName && discovery !== "schema" && discovery !== "help") return startupFailed("startup.unknown_command", `no command named in ${JSON.stringify(args)}; commands are ${names.join(", ")}`, `name one of: ${names.join(", ")}`);
-  const command = commandName ? spec.commands[commandName]! : undefined;
+  if (carriesSecret(id, secretValues)) return startupFailed("startup.secret_in_path", "no run id free of a declared secret value could be chosen", "do not pass a value this short as a declared secret");
+  if (!commandName && discovery === null) return startupFailed("startup.unknown_command", `no command named; commands are ${names.join(", ")}`, `name one of: ${names.join(", ")}`);
 
-  // Declared secrets and sources, resolved before the head (§5.3).
-  const secretNames = classifySecrets(command?.secrets ?? []);
-  const secretValues = collectSecretValues(argv, secretNames, env);
+  // Declared credential sources, resolved before the head (§5.3); a throwing resolver means "not present".
   const presentSources: string[] = [];
-  for (const s of secretNames.sources) { try { if (await spec.sources?.[s]?.()) presentSources.push(s); } catch { /* an unresolvable source is not present */ } }
-  const presentEnv = secretNames.env.filter((n) => env[n] !== undefined);
+  for (const s of ownNames.sources) { try { if (await spec.sources?.[s]?.()) presentSources.push(s); } catch { /* not present */ } }
+  const presentEnv = allNames.env.filter((n) => env[n] !== undefined);
 
-  const location = chooseLocation({ cwd, run: id, env, home: opts.home ?? homedir() });
-  if (!location) return startupFailed("startup.receipt_unwritable", `No writable receipt location: ${join(cwd, ".parley")} is not usable and the state directory is not writable`, "make .parley writable or set XDG_STATE_HOME to a writable absolute path");
+  const location = chooseLocation({ cwd, run: id, env, home: opts.home ?? homedir(), secrets: secretValues });
+  if (isLocationFailure(location)) return startupFailed(location.code, location.problem, location.remedy);
+
+  // Everything the tool supplies before the bootstrap line can throw; a throw here is a startup failure (§3.2), not a stack trace.
+  let resolvedRaw: Record<string, unknown>, inputs: InputDecl[];
+  try {
+    const rest = args.filter((a) => a !== commandName);
+    resolvedRaw = discovery ? { discovery, command: commandName } : await (opts.resolved ?? ((a, c) => ({ command: c, args: a })))(rest, commandName!);
+    inputs = discovery || !command ? [] : await (opts.inputs ?? (() => []))(rest, commandName!);
+  } catch (e) {
+    try { closeSync(location.fd); unlinkSync(location.receiptPath); } catch { /* the reservation is gone either way */ }
+    const err = e instanceof Error ? e : new Error(String(e));
+    return startupFailed("startup.arguments_invalid", `the arguments could not be interpreted: ${err.message || err.name}`, "fix the arguments; see the command's --help");
+  }
 
   const sessionRaw = opts.session ?? env.PARLEY_SESSION;
   const session = sessionRaw ? sessionRaw : undefined;
-  const resolvedRaw = discovery ? { discovery, command: commandName } : (opts.resolved ?? ((a, c) => ({ command: c, args: a })))(args.filter((a) => a !== commandName), commandName!);
   const resolvedPointers: string[] = [];
   const resolved = scrub(resolvedRaw, secretValues, "", resolvedPointers);
-  const { argv: argvRedacted, indexes: argvIndexes } = redactArgv(argv, secretValues);
-  const inputs = discovery || !command ? [] : (opts.inputs ?? (() => []))(args.filter((a) => a !== commandName), commandName!);
+  const { argv: argvRedacted, indexes: argvIndexes } = redactArgv(argv, secretValues, allNames.flags);
   const inputPointers: string[] = [];
   const inputDescriptors = scrub(inputs.map((i) => ({ path: i.path, ...(i.role ? { role: i.role } : {}) })), secretValues, "", inputPointers) as { path: string; role?: string }[];
   const inputIndexes = inputPointers.map((p) => Number(p.split("/")[1]));
@@ -136,10 +154,11 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
     effects: command ? { ...command.effects, bookkeeping } : { reads: [], writes: [], network: false, idempotent: true, bookkeeping },
     ...(dryRun ? { dry_run: true } : {}),
   });
+  run.flushDeferredFailures();
   if (run.sinkFailed) return run.end();
   if (location.warning) run.warning(location.warning);
 
-  retain(run, location.receiptDir, spec.retention.count, dryRun);
+  retain(run, location.receiptDir, spec.retention.count, dryRun, now());
 
   if (discovery) {
     const which = discovery === "help" && commandName ? [commandName] : names;
@@ -159,46 +178,99 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
     return run.end(0);
   }
 
-  const restore = captureConsole(run);
+  const release = captureConsole(run);
   try {
     await handler(run, args.filter((a) => a !== commandName));
   } catch (e) {
-    if (run.ended) { restore(); return 4; }
+    if (run.ended) { release(); return 4; }
     const err = e instanceof Error ? e : new Error(String(e));
     run.error({ code: "uncaught.exception", problem: `uncaught ${err.name}: ${err.message || "(no message)"}`, remedy: "this is a defect in the tool; report it with the receipt", detail: { stack: err.stack } });
   } finally {
-    restore();
+    release();
   }
   return run.ended ? run.status ?? 4 : run.end();
 }
 
-/** §5.1: delete the oldest bundles beyond `count` in this location; never on a dry run; recorded as a decision. */
-function retain(run: Run, receiptDir: string, count: number, dryRun: boolean): void {
+function scrubText(s: string, values: ReadonlySet<string>): string { return scrub(s, values) as string; }
+
+/** True when the receipt's final line is a newline-terminated `end` (§5.4), read from its tail. */
+function hasEnded(path: string): boolean {
+  let fd: number | null = null;
+  try {
+    const size = statSync(path).size;
+    if (size === 0) return false;
+    fd = openSync(path, "r");
+    const len = Math.min(size, 8192);
+    const buf = Buffer.alloc(len);
+    readSync(fd, buf, 0, len, size - len);
+    const text = buf.toString("utf8");
+    if (!text.endsWith("\n")) return false;
+    const last = text.slice(0, -1).split("\n").pop() ?? "";
+    const obj = JSON.parse(last) as { event?: string };
+    return obj.event === "end";
+  } catch { return false; } finally { if (fd !== null) closeSync(fd); }
+}
+
+/** §5.1: delete the oldest completed bundles beyond `count` in this location; never a receipt still in flight; never on a dry run; recorded as a decision. */
+function retain(run: Run, receiptDir: string, count: number, dryRun: boolean, at: number): void {
   let files: { name: string; mtime: number }[];
   try { files = readdirSync(receiptDir).filter((f) => f.endsWith(".jsonl")).map((name) => ({ name, mtime: statSync(join(receiptDir, name)).mtimeMs })); } catch { return; }
   const excess = files.length - count;
   if (excess <= 0) return;
-  const victims = files.filter((f) => f.name !== `${run.id}.jsonl`).sort((a, b) => a.mtime - b.mtime || a.name.localeCompare(b.name)).slice(0, excess);
-  if (dryRun) { run.step(`retention: would delete ${victims.length} receipt bundle(s)`, `${files.length} receipts exceed the retention count of ${count}; a dry run performs no retention deletion (§4.3)`, { receipts: victims.map((v) => v.name) }); return; }
-  const deleted: string[] = [];
-  for (const v of victims) {
-    const base = v.name.slice(0, -".jsonl".length);
-    try { rmSync(join(receiptDir, v.name), { force: true }); rmSync(join(receiptDir, base), { recursive: true, force: true }); deleted.push(v.name); } catch { /* a bundle another run is deleting */ }
+  const candidates = files.filter((f) => f.name !== `${run.id}.jsonl`).sort((a, b) => a.mtime - b.mtime || a.name.localeCompare(b.name));
+  const victims: string[] = [];
+  for (const f of candidates) {
+    if (victims.length >= excess) break;
+    const p = join(receiptDir, f.name);
+    if (hasEnded(p) || at - f.mtime > INCOMPLETE_GRACE_MS) victims.push(f.name);
   }
-  run.step(`retention: deleted ${deleted.length} receipt bundle(s)`, `${files.length} receipts exceeded the retention count of ${count}; the oldest are deleted with their sidecars (§5.1)`, { receipts: deleted });
+  if (!victims.length) { run.step("retention: nothing to delete", `${files.length} receipts exceed the retention count of ${count}, but every excess receipt is still in flight (no end line yet); only completed bundles, or incomplete ones older than a day, are deleted (§5.1)`); return; }
+  if (dryRun) { run.step(`retention: would delete ${victims.length} receipt bundle(s)`, `${files.length} receipts exceed the retention count of ${count}; a dry run performs no retention deletion (§4.3)`, { receipts: victims }); return; }
+  const deleted: string[] = [];
+  for (const name of victims) {
+    const base = name.slice(0, -".jsonl".length);
+    try { rmSync(join(receiptDir, name), { force: true }); rmSync(join(receiptDir, base), { recursive: true, force: true }); deleted.push(name); } catch { /* a bundle another run is deleting */ }
+  }
+  run.step(`retention: deleted ${deleted.length} receipt bundle(s)`, `${files.length} receipts exceeded the retention count of ${count}; the oldest completed bundles are deleted with their sidecars (§5.1)`, { receipts: deleted });
 }
 
-/** §1.2: a library writing to the console must not reach a stream; route it into the receipt. */
+// ---- console capture (§1.2) --------------------------------------------------------------
+// One saved copy of the real console, taken the first time a run starts; a stack of active runs.
+// Every function on console is routed into the receipt of the most recent run still open. The
+// real console returns when the last active run releases. Direct writes to a file descriptor and
+// timers that fire after end are outside this net; the README names them as exceptions.
+
+type ConsoleFn = (...a: unknown[]) => unknown;
+const active: Run[] = [];
+let saved: Map<string, ConsoleFn> | null = null;
+
 function captureConsole(run: Run): () => void {
-  const methods = ["log", "info", "warn", "error", "debug", "trace"] as const;
-  const saved = Object.fromEntries(methods.map((m) => [m, console[m]])) as Record<(typeof methods)[number], (...a: unknown[]) => void>;
-  for (const m of methods) {
-    console[m] = (...a: unknown[]) => {
-      const text = a.map((x) => (typeof x === "string" ? x : safeJson(x))).join(" ");
-      if (!run.ended) run.step("captured console output", `a library called console.${m}; stdout and stderr carry only protocol lines (§1.2), so the text is kept here`, { method: m, text });
-    };
+  active.push(run);
+  if (saved === null) {
+    saved = new Map();
+    const c = console as unknown as Record<string, unknown>;
+    for (const key of Object.getOwnPropertyNames(console)) {
+      const fn = c[key];
+      if (typeof fn !== "function") continue;
+      saved.set(key, fn as ConsoleFn);
+      c[key] = (...a: unknown[]) => {
+        const target = [...active].reverse().find((r) => !r.ended);
+        if (!target) return;
+        const text = a.map((x) => (typeof x === "string" ? x : safeJson(x))).join(" ");
+        try { target.step("captured console output", `a library called console.${key}; stdout and stderr carry only protocol lines (§1.2), so the text is kept here`, { method: key, text }); } catch { /* the run ended between the check and the write */ }
+      };
+    }
   }
-  return () => { for (const m of methods) console[m] = saved[m]; };
+  let released = false;
+  return () => {
+    if (released) return; released = true;
+    const i = active.indexOf(run); if (i >= 0) active.splice(i, 1);
+    if (active.length === 0 && saved !== null) {
+      const c = console as unknown as Record<string, unknown>;
+      for (const [key, fn] of saved) c[key] = fn;
+      saved = null;
+    }
+  };
 }
 
 function safeJson(x: unknown): string { try { return JSON.stringify(x) ?? String(x); } catch { return String(x); } }

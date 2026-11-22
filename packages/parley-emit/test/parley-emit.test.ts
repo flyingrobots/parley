@@ -441,3 +441,289 @@ describe("PE-13 shipped schemas", () => {
     expect(a < b).toBe(true);
   });
 });
+
+// ---- cases added after the review of f59a7c7 (case parley-pr42-parley-emit-2026-11-22) ----
+
+const SECRET2 = "s3cret-pr42";
+
+function twoCommands(over: Partial<ToolSpec> = {}): ToolSpec {
+  return defineTool({
+    name: "t", version: "0.0.1",
+    commands: {
+      count: { intent: "count", effects: { reads: [], writes: [], network: false, idempotent: true }, secrets: ["--token"], emits: [{ id: "t.count", version: "1.0.0", schema: RESULT }] },
+      other: { intent: "other", effects: { reads: [], writes: [], network: false, idempotent: true }, secrets: ["--key"], emits: [{ id: "t.count", version: "1.0.0", schema: RESULT }] },
+    },
+    retention: { count: 100 }, ...over,
+  });
+}
+
+describe("PE-14 secrets never reach a stream (F-1, F-2, F-3)", () => {
+  test("no command selected: the startup line and nothing else, with no secret in it", async () => {
+    const { dir, env } = scratch();
+    const s = streams();
+    const status = await main(twoCommands(), ["t", "--token", SECRET2], async () => {}, { cwd: dir, env, ...s });
+    expect(status).toBe(3);
+    expect(s.stdout.lines).toEqual([]);
+    expect(s.stderr.objs.length).toBe(1);
+    expect(s.stderr.objs[0]!.event).toBe("startup.failed");
+    expect(s.stderr.text.includes(SECRET2)).toBe(false);
+    expect(existsSync(join(dir, ".parley", "receipts")) ? readdirSync(join(dir, ".parley", "receipts")).length : 0).toBe(0);
+  });
+
+  test("discovery with a secret on the command line redacts it in the head", async () => {
+    const { dir, env } = scratch();
+    const s = streams();
+    await main(twoCommands(), ["t", "--schema", "--key", SECRET2], async () => {}, { cwd: dir, env, ...s });
+    const { receipt, receiptLines } = check(dir, s);
+    expect(receipt.includes(SECRET2)).toBe(false);
+    expect((receiptLines[0] as { redacted: { argv: number[] } }).redacted.argv).toEqual([3]);
+  });
+
+  test("a secret that is a substring of the working directory relocates the receipt and never appears in clear", async () => {
+    const { dir, env, state } = scratch();
+    const zone = join(dir, "zone-x9"); mkdirSync(zone);
+    const s = streams();
+    const status = await main(tool(), ["t", "count", "--token", "zone-x9"], async (run) => { run.result({ event: "result", value: 1, note: "zone-x9 is in" }, { id: "t.count", version: "1.0.0" }); }, { cwd: zone, env, ...s });
+    expect(status).toBe(0);
+    const boot = s.stdout.objs[0] as { paths: { receipt: string }; event: string; _schema: { id: string } };
+    expect(boot.event).toBe("run"); expect(boot._schema.id).toBe("parley.run.bootstrap");
+    expect(boot.paths.receipt.startsWith(join(state, "parley"))).toBe(true);
+    const all = s.stdout.text + s.stderr.text + readFileSync(boot.paths.receipt, "utf8");
+    expect(all.includes("zone-x9")).toBe(false);
+    expect((s.stdout.objs.find((o) => o.event === "result") as { note: string }).note).toBe("[redacted] is in");
+    expect(s.stderr.objs.some((o) => o.event === "warning" && o.code === "receipt.relocated")).toBe(true);
+    expect(check(zone, s).violations).toEqual([]);
+  });
+
+  test("a secret that every receipt path would carry is a startup failure", async () => {
+    const { dir, env } = scratch();
+    const s = streams();
+    const status = await main(tool(), ["t", "count", "--token", "receipts"], async () => {}, { cwd: dir, env, ...s });
+    expect(status).toBe(3);
+    expect(s.stdout.lines).toEqual([]);
+    expect(s.stderr.objs).toEqual([expect.objectContaining({ event: "startup.failed", code: "startup.secret_in_path" })]);
+    expect(s.stderr.text.includes("receipts")).toBe(false);
+    expect(existsSync(join(dir, ".parley", "receipts")) ? readdirSync(join(dir, ".parley", "receipts")).length : 0).toBe(0);
+  });
+
+  test("a secret that collides with an envelope word redacts payload values only", async () => {
+    const { dir, env } = scratch();
+    const r = await runCount(dir, env, ["count", "--token", "run"], (run) => { run.step("a run of the mill", "because a run is a run", { word: "run" }); run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" }); });
+    for (const o of [...r.stdout.objs, ...r.receiptLines]) { expect(typeof o.event).toBe("string"); expect(o.run).toBe(r.stdout.objs[0]!.run); expect((o._schema as { id: string }).id.startsWith("parley.") || (o._schema as { id: string }).id === "t.count").toBe(true); }
+    expect(r.stdout.objs[0]!.event).toBe("run");
+    const step = r.receiptLines.find((o) => o.event === "receipt.step") as { decision: string; detail: { word: string } };
+    expect(step.decision).toBe("a [redacted] of the mill"); expect(step.detail.word).toBe("[redacted]");
+    expect(r.violations).toEqual([]);
+  });
+
+  test("a secret in a declared input path does not enter inv", async () => {
+    const { dir, env } = scratch();
+    for (const sec of ["alpha-secret", "beta-secret"]) { mkdirSync(join(dir, sec)); writeFileSync(join(dir, sec, "a.txt"), "same bytes"); }
+    const invOf = (r: { receiptLines: Record<string, unknown>[] }) => (r.receiptLines.find((o) => o.event === "receipt.inputs") as { inv?: string } | undefined)?.inv;
+    const a = await runCount(dir, env, ["count", "--token", "alpha-secret"], () => {}, {}, [{ path: "alpha-secret/a.txt" }]);
+    const b = await runCount(dir, env, ["count", "--token", "beta-secret"], () => {}, {}, [{ path: "beta-secret/a.txt" }]);
+    expect(invOf(a)).toMatch(/^[0-9a-f]{64}$/);
+    expect(invOf(a)).toBe(invOf(b));
+    expect(a.receipt.includes("alpha-secret")).toBe(false);
+  });
+});
+
+describe("PE-15 throws outside the handler (F-4)", () => {
+  test("a throwing resolved callback is a startup failure, exit 3, and leaves no receipt", async () => {
+    const { dir, env } = scratch();
+    const s = streams();
+    const status = await main(tool(), ["t", "count"], async () => {}, { cwd: dir, env, ...s, resolved: () => { throw new Error("bad flag"); } });
+    expect(status).toBe(3);
+    expect(s.stdout.lines).toEqual([]);
+    expect(s.stderr.objs).toEqual([expect.objectContaining({ event: "startup.failed", seq: 0, code: "startup.arguments_invalid" })]);
+    expect(s.stderr.objs[0]!.problem).toContain("bad flag");
+    expect(readdirSync(join(dir, ".parley", "receipts")).length).toBe(0);
+  });
+
+  test("a throwing human renderer falls back to the default rendering and the run completes", async () => {
+    const { dir, env } = scratch();
+    const s = streams();
+    const status = await main(tool({ human: () => { throw new Error("renderer broke"); } }), ["t", "count", "--human"], async (run) => { run.result({ event: "result", value: 2 }, { id: "t.count", version: "1.0.0" }); }, { cwd: dir, env, ...s });
+    expect(status).toBe(0);
+    expect(s.stdout.text).toContain("result:");
+    const file = readdirSync(join(dir, ".parley", "receipts")).find((f) => f.endsWith(".jsonl"))!;
+    const lines = readFileSync(join(dir, ".parley", "receipts", file), "utf8").trimEnd().split("\n").map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(lines.at(-1)).toMatchObject({ event: "end", status: 0 });
+  });
+});
+
+describe("PE-16 retention and in-flight runs (F-5)", () => {
+  test("retention never deletes a receipt that has not ended", async () => {
+    const { dir, env } = scratch();
+    let release!: () => void; const gate = new Promise<void>((r) => { release = r; });
+    const a = streams();
+    const first = main(tool({ retention: { count: 1 } }), ["t", "count"], async () => { await gate; }, { cwd: dir, env, ...a });
+    await new Promise((r) => setTimeout(r, 20));
+    const b = streams();
+    const second = await main(tool({ retention: { count: 1 } }), ["t", "count"], async () => {}, { cwd: dir, env, ...b });
+    expect(second).toBe(0);
+    release();
+    expect(await first).toBe(0);
+    const pathA = (a.stdout.objs[0] as { paths: { receipt: string } }).paths.receipt;
+    expect(existsSync(pathA)).toBe(true);
+    expect(check(dir, a).violations).toEqual([]);
+  });
+
+  test("retention deletes a bundle's sidecar directory with its receipt", async () => {
+    const { dir, env } = scratch();
+    const rows = Array.from({ length: 3000 }, (_, i) => ({ i, text: "x".repeat(30) }));
+    const big = await runCount(dir, env, ["count"], (run) => { run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" }, { rows }); }, { retention: { count: 1 } });
+    const sidecarDir = join(dir, ".parley", "receipts", (big.stdout.objs[0] as { run: string }).run);
+    expect(existsSync(sidecarDir)).toBe(true);
+    await runCount(dir, env, ["count"], () => {}, { retention: { count: 1 } });
+    expect(existsSync(big.path!)).toBe(false);
+    expect(existsSync(sidecarDir)).toBe(false);
+  });
+});
+
+describe("PE-17 the head is first and sinks fail gracefully (F-6, F-7, F-8)", () => {
+  test("a head over the sidecar threshold is still the receipt's first line", async () => {
+    const { dir, env } = scratch();
+    const s = streams();
+    await main(tool(), ["t", "count"], async () => {}, { cwd: dir, env, ...s, resolved: () => ({ command: "count", blob: "y".repeat(70_000) }) });
+    const { receiptLines, violations } = check(dir, s);
+    expect(receiptLines[0]!.event).toBe("receipt.head");
+    expect(receiptLines.some((o) => o.event === "sidecar")).toBe(false);
+    expect(violations).toEqual([]);
+  });
+
+  test("a stdout failure on the bootstrap write still puts the head first", async () => {
+    const { dir, env } = scratch();
+    const s = streams();
+    s.stdout.onWrite = (l) => { if (l.includes('"event":"run"')) throw new Error("EPIPE"); };
+    const status = await main(tool(), ["t", "count"], async () => {}, { cwd: dir, env, ...s });
+    expect(status).toBe(4);
+    const file = readdirSync(join(dir, ".parley", "receipts")).find((f) => f.endsWith(".jsonl"))!;
+    const { receiptLines } = check(dir, s, join(dir, ".parley", "receipts", file));
+    expect(receiptLines[0]!.event).toBe("receipt.head");
+    expect(receiptLines.some((o) => o.event === "error")).toBe(true);
+    expect(receiptLines.at(-1)).toMatchObject({ event: "end", status: 4 });
+  });
+
+  test("a sidecar write failure is an error line and the receipt still ends", async () => {
+    const { dir, env } = scratch();
+    const rows = Array.from({ length: 3000 }, (_, i) => ({ i, text: "x".repeat(30) }));
+    const s = streams();
+    let runId = "";
+    const status = await main(tool(), ["t", "count"], async (run) => {
+      runId = run.id;
+      writeFileSync(join(run.receiptDir, run.id), "a file where the sidecar directory should go");
+      run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" }, { rows });
+    }, { cwd: dir, env, ...s });
+    expect(status).toBe(4);
+    expect(runId).not.toBe("");
+    const { receiptLines } = check(dir, s);
+    expect(receiptLines.at(-1)).toMatchObject({ event: "end", status: 4 });
+    expect(receiptLines.some((o) => o.event === "error" && String(o.code).startsWith("sink."))).toBe(true);
+    expect(s.stderr.objs.some((o) => o.event === "error")).toBe(true);
+  });
+
+  test("envelope keys supplied by the tool are refused", async () => {
+    const { dir, env } = scratch();
+    const r = await runCount(dir, env, ["count"], (run) => {
+      expect(() => run.result({ event: "result", value: 1, seq: 99 }, { id: "t.count", version: "1.0.0" })).toThrow(TypeError);
+      expect(() => run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" }, { run: "other" })).toThrow(TypeError);
+      expect(() => run.page(null, true)).toThrow(TypeError);
+    });
+    expect(r.violations).toEqual([]);
+  });
+});
+
+describe("PE-18 console capture (F-9)", () => {
+  test("every console function is captured and nothing reaches a stream", async () => {
+    const { dir, env } = scratch();
+    const r = await runCount(dir, env, ["count"], () => {
+      console.table([{ a: 1 }]); console.dir({ b: 2 }); console.group("g"); console.count("c"); console.groupEnd(); console.assert(false, "asserted"); console.time("t"); console.timeLog("t"); console.timeEnd("t");
+    });
+    expect(r.stderr.lines).toEqual([]);
+    for (const l of r.stdout.lines) expect(() => JSON.parse(l)).not.toThrow();
+    expect(r.receipt).toContain("asserted");
+    expect(r.violations).toEqual([]);
+  });
+
+  test("overlapping runs restore the original console once the last one ends", async () => {
+    const original = console.log;
+    const { dir, env } = scratch();
+    let release2!: () => void; const gate2 = new Promise<void>((r) => { release2 = r; });
+    const second = (async () => { await new Promise((r) => setTimeout(r, 10)); return main(tool(), ["t", "count"], async () => { await gate2; }, { cwd: dir, env, ...streams() }); })();
+    await main(tool(), ["t", "count"], async () => { await new Promise((r) => setTimeout(r, 30)); }, { cwd: dir, env, ...streams() });
+    expect(console.log).not.toBe(original);
+    release2(); await second;
+    expect(console.log).toBe(original);
+  });
+});
+
+describe("PE-19 inputs (F-11, F-13, F-14)", () => {
+  test("a tree input skips .parley and honours exclude, and its digest follows content", async () => {
+    const { dir, env } = scratch();
+    mkdirSync(join(dir, "src")); writeFileSync(join(dir, "src", "a.txt"), "one"); writeFileSync(join(dir, "src", "secret.pem"), "key-1");
+    const invOf = (r: { receiptLines: Record<string, unknown>[] }) => (r.receiptLines.find((o) => o.event === "receipt.inputs") as { inv?: string } | undefined)?.inv;
+    const decl = [{ path: ".", role: "tree", exclude: ["src/secret.pem"] }];
+    const a = await runCount(dir, env, ["count"], () => {}, {}, decl);
+    const b = await runCount(dir, env, ["count"], () => {}, {}, decl);
+    expect(invOf(a)).toMatch(/^[0-9a-f]{64}$/); expect(invOf(a)).toBe(invOf(b));
+    writeFileSync(join(dir, "src", "secret.pem"), "key-2");
+    const c = await runCount(dir, env, ["count"], () => {}, {}, decl);
+    expect(invOf(c)).toBe(invOf(a));
+    writeFileSync(join(dir, "src", "a.txt"), "two");
+    const d = await runCount(dir, env, ["count"], () => {}, {}, decl);
+    expect(invOf(d)).not.toBe(invOf(a));
+  });
+
+  test("a supplied stdin input is digested and an absolute path resolves", async () => {
+    const { dir, env } = scratch();
+    writeFileSync(join(dir, "abs.txt"), "absolute");
+    const r = await runCount(dir, env, ["count"], (run) => { run.input("-", "from stdin"); }, {}, [{ path: "-", role: "stdin" }, { path: join(dir, "abs.txt") }]);
+    const inputs = r.receiptLines.find((o) => o.event === "receipt.inputs") as { inputs: { path: string; sha256?: string; error?: string }[]; inv?: string };
+    expect(inputs.inputs[0]!.sha256).toBe(createHash("sha256").update("from stdin").digest("hex"));
+    expect(inputs.inputs[1]!.sha256).toBe(createHash("sha256").update("absolute").digest("hex"));
+    expect(inputs.inv).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  test("a secret in receiptExtra is replaced and recorded", async () => {
+    const { dir, env } = scratch();
+    const r = await runCount(dir, env, ["count", "--token", SECRET2], (run) => { run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" }, { note: "token=" + SECRET2 }); });
+    expect(r.receipt.includes(SECRET2)).toBe(false);
+    expect(r.receiptLines.some((o) => o.event === "redaction" && o.at === "/note")).toBe(true);
+    expect(r.violations).toEqual([]);
+  });
+});
+
+describe("PE-20 smaller contract gaps (F-13)", () => {
+  test("an Object.prototype name is not a command", async () => {
+    const { dir, env } = scratch();
+    const s = streams();
+    const status = await main(twoCommands(), ["t", "toString"], async () => {}, { cwd: dir, env, ...s });
+    expect(status).toBe(3);
+    expect(s.stderr.objs[0]).toMatchObject({ event: "startup.failed", code: "startup.unknown_command" });
+  });
+
+  test("end(0) after a reported error is refused", async () => {
+    const { dir, env } = scratch();
+    let threw = false;
+    const r = await runCount(dir, env, ["count"], (run) => { run.error({ code: "x.y", problem: "p" }); try { run.end(0); } catch { threw = true; } });
+    expect(threw).toBe(true); expect(r.status).toBe(2);
+  });
+
+  test("bookkeeping declares the state directory's retention and an empty secret is still recorded", async () => {
+    const { dir, env } = scratch();
+    const r = await runCount(dir, env, ["count", "--token", ""], () => {});
+    const head = r.receiptLines[0] as { effects: { bookkeeping: { op: string; scope: string }[] }; redacted?: { argv?: number[] } };
+    expect(head.effects.bookkeeping.some((b) => b.op === "delete" && b.scope.includes("parley") && !b.scope.includes(".parley"))).toBe(true);
+    expect(head.redacted?.argv).toEqual([3]);
+    const cmd = (await (async () => { const s = streams(); await main(tool(), ["t", "--schema"], async () => {}, { cwd: dir, env, ...s }); return s.stdout.objs.find((o) => o.event === "command") as { effects: { bookkeeping: { op: string; scope: string }[] } }; })());
+    expect(cmd.effects.bookkeeping.filter((b) => b.op === "delete").length).toBe(2);
+  });
+
+  test("the ignore file is created whole", async () => {
+    const { dir, env } = scratch();
+    await runCount(dir, env, ["count"], () => {});
+    expect(readFileSync(join(dir, ".parley", ".gitignore"), "utf8")).toBe("*\n");
+    expect(readdirSync(join(dir, ".parley")).sort()).toEqual([".gitignore", "receipts"]);
+  });
+});

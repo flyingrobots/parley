@@ -7,6 +7,15 @@ The spec and each message schema are versioned separately from this package.
 
 ### Changed
 
+- §1.2 and §6.1: stderr carries errors and warnings, both structured; a warning is a recovered
+  condition with the error's shape and the event `warning`, retained in the receipt and never
+  changing the exit status; progress goes to the receipt only. New draft schema `parley.warning`
+  1.0.0 with a validated example. (flyingrobots/parley#16)
+- §1.4 reader rules: buffer to the newline (a read chunk or flush is not a boundary); quarantine
+  and report a non-JSON complete line on stderr and any unterminated EOF fragment; a non-JSON
+  line on stdout is the writer's contract failure; quarantined lines prove nothing beyond their
+  own existence. (flyingrobots/parley#16)
+
 - §8 and §9 are informative in v0.2: their conformance obligations are removed and each says it
   describes a layer that is designed (flyingrobots/parley#2, #3) and not built. §9a's lineage
   prose moves to an unnumbered preface. The README marks the history layer as planned. The

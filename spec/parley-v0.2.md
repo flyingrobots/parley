@@ -49,8 +49,8 @@ schema, or any plain text on any stream, is a **bug** — not a cosmetic one.
 | Stream | Carries |
 | --- | --- |
 | **stdout** | The result. The smallest payload that answers the question, plus the bootstrap line. |
-| **stderr** | Errors, and only errors. |
-| **receipt file** | The record: argv, resolved interpretation, input digests, per-step reasoning. |
+| **stderr** | Errors and warnings (§6), both structured. Nothing else. |
+| **receipt file** | The record: argv, resolved interpretation, input digests, per-step reasoning, progress, and copies of every result, error and warning (§5). |
 
 **stdout carries what you need to act; the receipt carries what you need to check.** A reader
 should not have to pay context to re-read the program's own reasoning in order to use its answer,
@@ -108,6 +108,24 @@ not interpretation, and does not conflict with the stand-alone rule above. Becau
 line (§3.1) is the first line a run emits on any stream, it is always `seq: 0`; every other line
 is `seq >= 1`, and nothing else is pinned. The one exception is a run that fails before it can
 bootstrap (§3.2), whose single diagnostic line is `seq: 0` instead.
+
+### 1.4 Reading the streams
+
+The rules above bind the writer. These bind a reader, because the cases §6 names as
+unconstrainable, a native crash or a library writing to a file descriptor behind the program's
+back, will happen, and a reader that aborts on the first stray byte is broken by exactly the case
+the spec admits.
+
+- A reader **MUST** buffer until a newline before parsing. A read chunk or a flush is not a line
+  boundary; valid JSON that arrived across two reads is not garbage.
+- A complete line on **stderr** that is not a JSON object **MUST** be quarantined: kept, reported
+  as a defect attributed to the run, and never treated as a result or an error of the protocol.
+- A complete line on **stdout** that is not a JSON object is a contract failure of the writer
+  (§1), and the reader **MUST** report it as such.
+- An unterminated fragment at EOF on any stream is quarantined and reported; it is not a line
+  (§5.4).
+- A reader **MUST NOT** treat a quarantined line as evidence of anything beyond the fact that the
+  writer, or something sharing its descriptors, wrote it.
 
 ---
 
@@ -640,6 +658,23 @@ A top-level handler **MUST** convert every uncaught throw into a conforming erro
 that genuinely cannot be constrained — a hard crash inside a native dependency, a signal kill —
 **MUST** be documented as exceptions rather than papered over. "No surprises" is only credible if
 the places it cannot hold are named.
+
+### 6.1 Warnings
+
+A condition the program recovered from, so that the command still succeeded, is a **warning**: the
+same shape as an error, the event `warning`, on stderr and retained in the receipt. Warnings alone
+never change the exit status (§3.4). A condition that was not recovered from is an error.
+
+```json
+{"event":"warning","t":1795326412370,"seq":3,"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8",
+ "code":"input.encoding_guessed","problem":"src/tokens.css has no BOM or charset; read as UTF-8",
+ "remedy":"declare the file's encoding","remedy_target":"src/tokens.css",
+ "_schema":{"id":"parley.warning","version":"1.0.0"}}
+```
+
+Progress, the "still working, 40 of 120" kind of line, is neither a result nor a warning. It goes
+to the receipt only (§5), where a person watching can see it and a caller paying for stdout
+context does not.
 
 ---
 

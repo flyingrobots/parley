@@ -30,7 +30,8 @@ export type DefectCode =
   | "line.quarantined" | "line.blank" | "line.no_envelope" | "line.unterminated"
   | "record.invalid" | "record.unknown_pair" | "copies.disagree"
   | "sidecar.missing" | "sidecar.unreadable" | "sidecar.digest_mismatch"
-  | "sidecar.bytes_mismatch" | "sidecar.escapes_bundle" | "sidecar.unparseable";
+  | "sidecar.bytes_mismatch" | "sidecar.escapes_bundle" | "sidecar.unparseable"
+  | "receipt.unreadable";
 
 /** The quarantine codes: a kept line that is not a record (§1.4, §5.4). */
 export const QUARANTINE_CODES: ReadonlySet<DefectCode> = new Set<DefectCode>([
@@ -55,7 +56,9 @@ export interface Defect {
 
 export type SidecarState =
   | "intact" | "missing" | "unreadable" | "digest_mismatch" | "bytes_mismatch"
-  | "escapes_bundle" | "unparseable";
+  | "escapes_bundle" | "unparseable"
+  /** Resolution was switched off, so nothing about the stored bytes was established either way. */
+  | "unchecked";
 
 export interface SidecarResolution {
   /** The `seq` of the record the sidecar holds. */
@@ -148,6 +151,8 @@ export interface Load {
   readonly bundles: readonly Bundle[];
   /** Every kept line that is not a record, across every file. */
   readonly quarantined: readonly Defect[];
+  /** Defects that belong to no bundle, such as a receipt file that could not be read at all. */
+  readonly defects: readonly Defect[];
   readonly counts: {
     readonly bundles: number;
     readonly records: number;
@@ -295,7 +300,9 @@ function resolveSidecar(seq: number, held: Held, read: boolean): { resolution: S
   }
   const target = within(dirname(held.file), path);
   if (target === null) return at("escapes_bundle");
-  if (!read) return { resolution: { source, seq, path, resolved: target, state: "intact", declared } };
+  // Resolution off: say nothing was established, rather than calling an unread sidecar intact.
+  // §1.2a — a reader must not take one kind of evidence for another.
+  if (!read) return { resolution: { source, seq, path, resolved: target, state: "unchecked", declared } };
 
   let bytes: Buffer;
   try { bytes = readFileSync(target); } catch (e) {
@@ -333,6 +340,7 @@ function buildBundle(run: string, raw: readonly Raw[], sources: readonly BundleS
     if (entry.base.event !== "sidecar") continue;
     const { resolution, stored } = resolveSidecar(seq, entry, opts.sidecars);
     sidecars.push(resolution);
+    if (resolution.state === "unchecked") continue; // nothing was looked at, so nothing is a defect
     if (resolution.state !== "intact") {
       defects.push(defect(`sidecar.${resolution.state}` as DefectCode, SIDECAR_SECTION, entry.file, entry.line, sidecarProblem(resolution), { run, source: resolution.source >= 0 ? resolution.source : undefined }));
       continue;
@@ -393,6 +401,7 @@ function sidecarProblem(s: SidecarResolution): string {
     case "escapes_bundle": return `the sidecar path ${s.path} is absolute or leaves the receipt's directory and was not read`;
     case "unparseable": return `the sidecar at ${s.path} is not a JSON object, so it holds no record`;
     case "unreadable": return `the sidecar event does not name a source, path, bytes and sha256, or its file could not be read`;
+    case "unchecked": return `the sidecar at ${s.path} was not resolved, so nothing about its stored bytes is established`;
     case "intact": return "intact";
   }
 }
@@ -436,6 +445,7 @@ export function loadReceipts(opts: LoadOptions = {}): Load {
   const sourcesByRun = new Map<string, BundleSource[]>();
   const quarantinedByRun = new Map<string, Defect[]>();
   const quarantined: Defect[] = [];
+  const loose: Defect[] = [];
 
   for (const location of locations) {
     if (!location.present) continue;
@@ -443,7 +453,16 @@ export function loadReceipts(opts: LoadOptions = {}): Load {
       if (!name.endsWith(".jsonl")) continue;
       const file = join(location.dir, name);
       if (!isFile(file)) continue;
-      const scanned = scan(file);
+      // One receipt that cannot be opened is reported, not thrown: a load over a repository's
+      // history should not lose the other bundles to it.
+      let scanned: Scan;
+      try { scanned = scan(file); } catch (e) {
+        const problem = `the receipt could not be read: ${e instanceof Error ? e.message : String(e)}`;
+        const reported = defect("receipt.unreadable", "§5", file, 0, problem, { run: runOfFileName(file) });
+        loose.push(reported);
+        files.push({ file, where: location.where, run: runOfFileName(file), lines: 0, runs: [], quarantined: [] });
+        continue;
+      }
       const runs = [...new Set(scanned.raw.map((r) => r.run))].sort();
       const attributed = attribute(scanned.quarantined, runs, runOfFileName(file));
       files.push({ file, where: location.where, run: runOfFileName(file), lines: scanned.lines, runs, quarantined: attributed });
@@ -463,7 +482,7 @@ export function loadReceipts(opts: LoadOptions = {}): Load {
   const records = bundles.flatMap((b) => b.records);
   const state = (s: Validation["state"]) => records.filter((r) => r.validation.state === s).length;
   return {
-    locations, files, bundles, quarantined,
+    locations, files, bundles, quarantined, defects: loose,
     counts: {
       bundles: bundles.length,
       records: records.length,

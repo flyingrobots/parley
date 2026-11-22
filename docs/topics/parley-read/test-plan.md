@@ -8,13 +8,13 @@ writer (`@flyingrobots/parley-emit`) and load what it left behind.
 | ID | Requirement | Spec |
 | --- | --- | --- |
 | RD-1 | Both receipt locations for a working directory are located, reported present or absent, and nothing is created or modified to do it | §5, §5.2 |
-| RD-2 | Every run under both locations is returned, with its records in `seq` order | §1.3, §5 |
+| RD-2 | Every run under both locations is returned, with its records in `seq` order, and one unreadable receipt file does not lose the others | §1.3, §5 |
 | RD-3 | A line is parsed only at a newline boundary; a line, or a character, split across reads is not garbage | §1.4 |
 | RD-4 | A complete line that is not a JSON object, or carries no usable `(run, seq)`, is quarantined and reported, never a record | §1.4, §1.3 |
 | RD-5 | An unterminated final line is ignored and reported; a newline-terminated `end` establishes that the run reported termination | §5.4 |
 | RD-6 | `(run, seq)` identifies an event: copies are one record, a copy may carry a field another omits, a disagreement is reported, and two runs on one stream are told apart | §1.3 |
 | RD-7 | A `parley.*` line is validated against the schema for its exact pair; an unshipped `parley.*` pair is partial; a tool-owned line is passed through as unvalidated | §4.5, §4.6 |
-| RD-8 | A sidecar is resolved relative to its receipt, its stored bytes checked against `bytes` and `sha256`, and the record it holds returned in its place | §5 |
+| RD-8 | A sidecar is resolved relative to its receipt, its stored bytes checked against `bytes` and `sha256`, and the record it holds returned in its place; with resolution off, nothing about it is claimed either way | §5, §1.2a |
 | RD-9 | A bundle is unavailable for replay when a sidecar is missing, mismatched or escaping, when no newline-terminated `end` closes it, when its status is non-zero, or when it is redacted | §5, §5.3, §5.4 |
 | RD-10 | The shipped schemas are byte-identical to the repository drafts and pinned by commit | §4.5 |
 | RD-11 | A quarantined line is never evidence: not a record, not termination, not a validation result | §1.4 |
@@ -29,6 +29,7 @@ writer (`@flyingrobots/parley-emit`) and load what it left behind.
 | RD-2a | Two receipts under `.parley/receipts`, one under the state directory | three bundles, each record list ascending in `seq`, each bundle naming the location it came from | `every run under both locations is returned with its records in seq order` | implemented |
 | RD-2b | A receipt whose lines are written out of `seq` order | records come back ascending in `seq` | `records out of order in the file come back in seq order` | implemented |
 | RD-2c | A `notes.txt` beside the receipts | ignored; the bundle count is unchanged | `a non-jsonl file in a receipt directory is ignored` | implemented |
+| RD-2e | A receipt file at mode `000` beside a readable one | the readable run loads; the unreadable file is a `receipt.unreadable` defect attributed to its named run, and the load does not throw | `an unreadable receipt is reported, not thrown, and the rest of the directory loads` | implemented |
 | RD-2d | An empty `.parley/receipts` | no bundles, no defects, the location present | `an empty directory yields no bundles` | implemented |
 | RD-3a | One JSON object pushed as two chunks split mid-object | nothing until the newline arrives, then exactly one line | `a line split across two reads is one line` | implemented |
 | RD-3b | A multi-byte character split across the chunk boundary | the line decodes to the whole character | `a multi-byte character split across two reads is decoded whole` | implemented |
@@ -49,6 +50,7 @@ writer (`@flyingrobots/parley-emit`) and load what it left behind.
 | RD-7d | An `end` whose `status` is a string | state `invalid` with the validator's message | `a parley line that breaks its schema is reported invalid` | implemented |
 | RD-7e | A line with no `_schema` | state `unvalidated`, reason `no_schema_ref` | `a line with no _schema is unvalidated` | implemented |
 | RD-8a | A `sidecar` event whose stored file matches `bytes` and `sha256` | the stored record is returned at `source`, marked as from a sidecar; the sidecar event is also a record; state `intact` | `a sidecar is resolved and the record it holds is returned in its place` | implemented |
+| RD-8b | `sidecars: false` over a bundle with a sidecar | state `unchecked`, no record restored, no defect, and replay ruled out because nothing was established | `with sidecar resolution off a sidecar is unchecked, never intact` | implemented |
 | RD-9a | The stored sidecar bytes edited after the event was written | state `digest_mismatch`; the bundle unavailable for replay | `a sidecar with a wrong digest marks its bundle unavailable for replay` | implemented |
 | RD-9b | The sidecar file deleted | state `missing`; the bundle unavailable for replay | `a missing sidecar marks its bundle unavailable for replay` | implemented |
 | RD-9c | `path: "../escape.json"` with a readable file there | state `escapes_bundle`; the file's contents are in no record | `a sidecar path that would leave the bundle is never read` | implemented |

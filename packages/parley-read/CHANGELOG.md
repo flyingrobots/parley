@@ -38,4 +38,8 @@ its manifest so it cannot be published by accident.
   newline-terminated `end`, a non-zero status, or a redacted receipt each rule a bundle out, with a
   reason per rule (§5, §5.3, §5.4). Nothing ruling it out is reported as exactly that, since
   §2.3 and §5.3 eligibility for a given invocation is the caller's to decide.
+- Robustness, from the review of the first candidate: a receipt file that cannot be opened is a
+  `receipt.unreadable` defect in `load.defects`, not a throw that loses the rest of the directory;
+  and with `sidecars: false` a sidecar is reported `unchecked` rather than `intact`, since nothing
+  about its stored bytes was established (§1.2a), which also rules replay out.
 - The fourteen draft schemas at the pinned commit, with a test that they match the repository.

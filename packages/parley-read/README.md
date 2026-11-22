@@ -35,6 +35,11 @@ directory (§5): `.parley/receipts/` under it, and `$XDG_STATE_HOME/parley/<repo
 It creates nothing and reports each location present or absent. A single file is read with
 `readReceiptFile(path)`.
 
+A receipt file the loader cannot open at all is reported as a `receipt.unreadable` defect in
+`load.defects` rather than losing the rest of the directory; `readReceiptFile`, given one path by
+name, throws instead. Passing `sidecars: false` skips sidecar resolution and reports each sidecar
+`unchecked` — never `intact`, since nothing about its stored bytes was established.
+
 ## A captured load
 
 Two runs of the writer's own `count` example in one directory, then one `loadReceipts` over it, on

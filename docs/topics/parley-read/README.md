@@ -26,7 +26,11 @@ suite and `bun run typecheck` checks it strictly, over `src`, `scripts` and `tes
 ## What a load returns
 
 A `Load` carries the locations it looked in, a `FileSummary` per receipt file it read, a `Bundle`
-per run, every quarantined line, and counts.
+per run, every quarantined line, the defects that belong to no bundle, and counts. A receipt file
+that cannot be opened at all is one of those loose defects — `receipt.unreadable`, attributed to
+the run its name names — because a load over a repository's history should not lose the other
+bundles to one unreadable file. `readReceiptFile`, which is given one path by name, throws
+instead.
 
 A `Bundle` is one run: the `sources` it was read from, its `records` (one per `(run, seq)`,
 ascending), its resolved `sidecars`, its `quarantined` lines, every `defect` found, how many extra
@@ -131,6 +135,7 @@ by `source`, marked `fromSidecar`. A `SidecarResolution` says what happened:
 | `escapes_bundle` | The path is absolute or would leave the receipt's directory. It was **not read** |
 | `unparseable` | The bytes are intact but are not a JSON object, so they hold no record |
 | `unreadable` | The `sidecar` event does not name a `source`, `path`, `bytes` and `sha256`, or its file could not be opened |
+| `unchecked` | `sidecars: false` was passed, so the stored bytes were never looked at and nothing about them is established either way (§1.2a) |
 
 A sidecar whose path would leave the bundle is refused before anything is read, because §5 says
 the bundle moves as one and a path out of it is not part of the bundle at all.
@@ -143,6 +148,7 @@ rule:
 | Reason | Rule |
 | --- | --- |
 | `sidecar.missing`, `sidecar.digest_mismatch`, `sidecar.bytes_mismatch`, `sidecar.escapes_bundle`, `sidecar.unparseable`, `sidecar.unreadable` | §5: a reader that finds a sidecar missing or its digest mismatched must treat the bundle as unavailable for replay |
+| `sidecar.unchecked` | §5.4: replay requires intact sidecars, and with resolution off this reader has not established that they are |
 | `receipt.no_end` | §5.4: replay requires the records it needs, and nothing establishes termination |
 | `end.status_nonzero` | §5.4: replay requires a successful outcome |
 | `receipt.redacted` | §5.3: a reader must not replay from a receipt that carries `redacted` |

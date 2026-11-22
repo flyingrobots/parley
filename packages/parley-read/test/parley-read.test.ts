@@ -196,6 +196,21 @@ describe("RD-2 every run", () => {
     expect(load.files.map((f) => f.file)).toEqual([join(repoReceipts(dir), `${RUN_A}.jsonl`)]);
   });
 
+  test("an unreadable receipt is reported, not thrown, and the rest of the directory loads", () => {
+    const { dir, env } = scratch();
+    plainReceipt(repoReceipts(dir), RUN_A);
+    const bad = plainReceipt(repoReceipts(dir), RUN_B);
+    chmodSync(bad, 0o000);
+    try {
+      const load = loadReceipts({ cwd: dir, env });
+      expect(load.bundles.map((b) => b.run)).toEqual([RUN_A]);
+      expect(load.files.length).toBe(2);
+      expect(load.defects.map((d) => d.code)).toEqual(["receipt.unreadable"]);
+      expect(load.defects[0]!.run).toBe(RUN_B);
+      expect(load.defects[0]!.file).toBe(bad);
+    } finally { chmodSync(bad, 0o644); }
+  });
+
   test("an empty directory yields no bundles", () => {
     const { dir, env } = scratch();
     mkdirSync(repoReceipts(dir), { recursive: true });
@@ -465,6 +480,17 @@ describe("RD-8 sidecars", () => {
     expect(bundle!.sidecars[0]!.state).toBe("intact");
     expect(bundle!.sidecars[0]!.source).toBe(2);
     expect(bundle!.replay.unavailable).toBe(false);
+  });
+
+  test("with sidecar resolution off a sidecar is unchecked, never intact", () => {
+    const { dir, env } = scratch();
+    withSidecar(repoReceipts(dir));
+    const [bundle] = loadReceipts({ cwd: dir, env, sidecars: false }).bundles;
+    expect(bundle!.sidecars[0]!.state).toBe("unchecked");
+    expect(bundle!.records.some((r) => r.fromSidecar)).toBe(false);
+    expect(bundle!.defects).toEqual([]);
+    expect(bundle!.replay.unavailable).toBe(true);
+    expect(bundle!.replay.reasons).toEqual(["sidecar.unchecked"]);
   });
 });
 

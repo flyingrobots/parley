@@ -186,7 +186,7 @@ and the command's output, in that order.
 {"event":"run","t":1795326412345,"seq":0,
  "tool":"theme-book","v":"0.2.1",
  "inv":"inv_7f3a9c1e","run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8","session":"ses_9c4f",
- "paths":{"receipt":".parley/receipts/01JD3KQ8Z6V9X2M4N7P1R3T5W8.jsonl"},
+ "paths":{"receipt":"/work/site/.parley/receipts/01JD3KQ8Z6V9X2M4N7P1R3T5W8.jsonl"},
  "_schema":{"id":"parley.run.bootstrap","version":"1.1.1"}}
 ```
 
@@ -229,7 +229,7 @@ is the run's final sequence number; there is no separate field for it.
 
 ```json
 {"event":"end","t":1795326412401,"seq":9,"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8",
- "status":0,"receipt":".parley/receipts/01JD3KQ8Z6V9X2M4N7P1R3T5W8.jsonl","redacted":true,
+ "status":0,"receipt":"/work/site/.parley/receipts/01JD3KQ8Z6V9X2M4N7P1R3T5W8.jsonl","redacted":true,
  "_schema":{"id":"parley.end","version":"1.0.0"}}
 ```
 
@@ -290,16 +290,32 @@ for its success output and the schema for **every error type it can produce**.
 A command's description **MUST** declare its effects:
 
 ```json illustrative
-{"effects":{"reads":["<cwd>/**/*.css"],"writes":[],"network":false,"idempotent":true},
+{"effects":{"reads":["<cwd>/**/*.css"],"writes":[],"network":false,"idempotent":true,
+            "bookkeeping":[{"op":"create","scope":".parley/receipts/"},
+                           {"op":"create","scope":".parley/.gitignore"},
+                           {"op":"delete","scope":".parley/receipts/"}]},
  "secrets":["--token","THEME_BOOK_TOKEN"]}
 ```
 
-`secrets` names the arguments and environment variables whose values are credentials (§5.3). It
-is part of the same declaration, so a caller learns before running what the receipt will not
-contain. A command with no secrets declares an empty list.
+`writes` lists **subject-matter** writes: what the command exists to change. `writes: []` means
+the command changes nothing it was asked about; it does not mean the filesystem is untouched,
+because every conforming program writes evidence. Those writes are declared separately, in
+`effects.bookkeeping`: the receipt and its sidecars (§5), the local ignore file (§5.2) and
+retention operations (§5.1), each with an operation (`create`, `append`, `delete`) and a scope,
+so creation and deletion are distinguishable and nothing a program does to the filesystem is
+undeclared. Bookkeeping is observable behaviour, not an exemption; it cannot cover a mutation the
+command was asked to make.
+
+`secrets` names the arguments, environment variables and credential files whose values are
+secrets (§5.3). It is part of the same declaration, so a caller learns before running what the
+receipt will not contain. A command with no secrets declares an empty list.
 
 A caller needs to know whether something mutates **before** running it. Every command **SHOULD**
-accept `--dry-run`, reporting what it would do without doing it.
+accept `--dry-run`. A dry run emits the bootstrap line, writes its receipt and any evidence
+sidecars, and performs no subject-matter writes, no mutating remote action and no retention
+deletion. Its receipt describes what would have happened, not effects that occurred, and the
+bootstrap line and receipt head both carry `dry_run: true` so no reader mistakes one for the
+other.
 
 ### 4.4 Schema versioning
 
@@ -376,6 +392,17 @@ carries the §1.3 envelope fields is not validation against a schema and is perm
 A receipt is a JSON Lines file written for every run, at the path the bootstrap line declared.
 It is written **whether or not anyone asked for it**.
 
+**Where it goes.** The default location is `.parley/receipts/<run>.jsonl` under the invocation's
+**initial** working directory, resolved once at startup and unaffected by any later `chdir`. The
+bootstrap line's `paths.receipt` **MUST** be absolute, so the path means the same thing to every
+reader. When that location is unavailable, because the directory is read-only or cannot be
+created, the program falls back to `$XDG_STATE_HOME/parley/<repo-hash>/receipts/<run>.jsonl`,
+honouring `XDG_STATE_HOME` only when it is set, non-empty and absolute, and otherwise using
+`~/.local/state`. `<repo-hash>` is a digest of the canonical path of the git worktree root, or of
+the canonical initial working directory outside git; it keys storage and **MUST NOT** enter `inv`
+(§2.2). If no permitted location is writable, the run fails at startup (§3.2, exit `3`): a
+fallback improves availability, it does not promise that somewhere writable exists.
+
 Its first line **MUST** carry `tool` and `v`, and what the bootstrap line omitted: the raw `argv`
 as received, after §5.3 redaction; the `resolved` interpretation after defaults and environment are
 applied; and a digest per declared input.
@@ -440,8 +467,17 @@ failure mode worth designing out rather than discovering.
 
 ### 5.2 Repository hygiene
 
-A program writing receipts into a repository **MUST** add a real `.gitignore` entry on first use.
-A machine-local `.git/info/exclude` does not protect a collaborator who clones the repo.
+A program writing into `.parley/` **MUST** first ensure that `.parley/.gitignore` exists and
+contains `*`, creating it if absent and never overwriting a file that is already there, whether
+a user wrote it or git tracks it. Two programs starting at once **MUST** both end with the file
+in place; create-if-absent is the rule, not create-or-replace. A program **MUST NOT** edit the
+user's tracked `.gitignore` or any other tracked file to achieve this.
+
+Be clear about what that buys. The file ignores itself, so it does not travel through a clone;
+each conforming writer establishes hygiene locally on first use, and a collaborator's first run
+does the same for them. Git's ignore rules also do nothing for a file that is already tracked. If
+local hygiene cannot be established, because `.parley/` cannot be created or the file cannot be
+written, the program uses the state-directory fallback (§5) rather than touching tracked files.
 
 ### 5.3 Privacy
 

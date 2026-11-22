@@ -7,6 +7,21 @@ The spec and each message schema are versioned separately from this package.
 
 ### Changed
 
+- §4.3: `effects.writes` means subject-matter writes only; evidence writes (receipt, sidecars,
+  ignore file, retention) are declared in `effects.bookkeeping` with an operation and scope;
+  `secrets` also names credential files; `--dry-run` emits bootstrap and receipt, performs no
+  subject-matter writes, remote mutations or retention deletion, and is marked `dry_run: true` on
+  the bootstrap line and receipt head. (flyingrobots/parley#12)
+- §5: the receipt location is resolved against the initial working directory and announced as an
+  absolute path; fallback to `$XDG_STATE_HOME/parley/<repo-hash>/receipts/` per the XDG rules,
+  with `<repo-hash>` keying storage and never entering `inv`; if nothing is writable the run fails
+  at startup with exit 3. (flyingrobots/parley#12)
+- §5.2: the `.gitignore` mandate is replaced by create-if-absent `.parley/.gitignore` containing
+  `*`, never overwriting an existing file and never editing a tracked one, with the honest
+  statement that the file ignores itself and does not travel through a clone.
+  (flyingrobots/parley#12)
+- `parley.run.bootstrap` and `parley.receipt.head` gain optional `dry_run` (drafts, in place).
+
 - Spec §3 is now the run lifecycle: §3.1 bootstrap (the receipt file is created or reserved before
   it is announced); §3.2 startup failure (one `startup.failed` line on stderr, exit 3, no
   fabricated bootstrap); §3.3 the terminal `end` event, written to stdout and the receipt as one

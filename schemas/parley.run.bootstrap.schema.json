@@ -60,7 +60,7 @@
       "properties": {
         "receipt": {
           "type": "string",
-          "description": "The receipt file for this run (spec \u00a75). The only path the protocol defines; a program may add others it documents."
+          "description": "Absolute path of the receipt file for this run (spec \u00a75). The only path the protocol defines; a program may add others it documents."
         }
       },
       "description": "Files this run writes."
@@ -81,6 +81,10 @@
           "description": "Full validation is against the schema for this exact id and version (spec \u00a74.5, \u00a74.6)."
         }
       }
+    },
+    "dry_run": {
+      "type": "boolean",
+      "description": "True when the run performed no subject-matter writes, no mutating remote action and no retention deletion (spec \u00a74.3). Absent means false."
     }
   }
 }

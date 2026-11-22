@@ -63,8 +63,8 @@ it. This page is the reference for what the package does on `main`; the package
 - Replay. `cache.hit` is not emitted; the writer never short-circuits on `inv` (spec §2.3 leaves
   that to the tool, and nothing here decides it).
 - Windows paths. v0.2 of the spec is POSIX-only.
-- Publication. The package is not on npm yet; the name is reserved by decision
-  (flyingrobots/parley#20) and free as of 2026-11-22.
+- Replay across tools. The package is on npm as `@flyingrobots/parley-emit` (name per
+  flyingrobots/parley#20); it is one writer, not a registry of receipts.
 - Reading. The doctor under `scripts/` is the repository's reader; the reader library is
   flyingrobots/parley#2.
 

@@ -8,3 +8,4 @@ export { canonical, computeInv, digestTree, sha256, type InputDescriptor } from 
 export { chooseLocation, isLocationFailure, repoRoot, stateBase, bookkeepingFor } from "./location.ts";
 export { HISTORY_DAYS_ENV, HISTORY_DEFAULT_DAYS, HISTORY_ENV, HISTORY_MAX_DAYS, historyBookkeeping, historyDays, historyProjection, isHistoryFailure, isHistorySink, openHistory, resolveHistory, retainHistory, segmentName, transformDigest, transformName, writeWholeLine, type HistoryConfig, type HistoryFailure, type HistoryPlan, type HistoryProjection, type HistorySink, type HistoryTransform } from "./history.ts";
 export { carriesSecret, classifySecrets, collectSecretValues, redactArgv, scrub } from "./redact.ts";
+export { declaredProjection } from "./transforms/declared.ts";

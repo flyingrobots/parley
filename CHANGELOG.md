@@ -19,7 +19,7 @@ The spec and each message schema are versioned separately from this package.
   promoting them to normative is a spec version's decision, taken on its own. No schema version
   moves and no message type is added: `parley.run.bootstrap`'s `paths` is already open and
   already says a program may add paths it documents, so `paths.history` needs no version, and
-  segment retention is recorded with `parley.receipt.step`. Fourteen cases, PE-22a to PE-22n,
+  segment retention is recorded with `parley.receipt.step`. Fifteen cases, PE-22a to PE-22o,
   with the doctor as the oracle. Review of the same change found a latent redaction defect in the
   writer: the `code` of a diagnostic the writer itself raises was being scrubbed, which could put
   a line on the stream that no longer validated against its own schema, so a writer-raised code

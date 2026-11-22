@@ -222,6 +222,10 @@ rewriting it, which is the whole reason the segments are dated; with `days` at l
 segment is never a candidate and the newest deletable one is already `days` days old, so no run
 is holding it open. A dry run deletes nothing and says what it would have deleted.
 
+`PARLEY_HISTORY_DAYS` is an integer from 1 to 36,500; anything else, including a window so wide
+that its own start date stops being a date, falls back to 14, because a retention window is not
+worth failing a run over. A run that crosses midnight keeps writing to the segment it opened.
+
 ### What the stream can contain, and why credentials cannot
 
 **The stream is the receipt's bytes, so a credential cannot reach it unless it reached the receipt

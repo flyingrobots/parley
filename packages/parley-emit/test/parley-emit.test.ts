@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 import { doctor } from "../../../scripts/doctor.ts";
-import { defineTool, main, SCHEMA_SOURCE, SCHEMAS, ulid, writeWholeLine, type Run, type Sink, type ToolSpec } from "../src/index.ts";
+import { defineTool, main, SCHEMA_SOURCE, SCHEMAS, ulid, writeWholeLine, historyDays, HISTORY_DEFAULT_DAYS, HISTORY_MAX_DAYS, type Run, type Sink, type ToolSpec } from "../src/index.ts";
 
 const SCHEMAS_DIR = resolve(import.meta.dir, "../../../schemas");
 
@@ -1171,5 +1171,29 @@ describe("PE-22 a secret the stream's path or field name would carry", () => {
     expect(r.receiptLines[0]!.event).toBe("receipt.head");
     expect(Object.keys(pathsOf(s.stdout.objs[0]!))).toEqual(["receipt"]);
     expect(s.stderr.objs.filter((o) => o.event === "warning" && o.code === "history.unavailable").length).toBe(1);
+  });
+});
+
+describe("PE-22 the retention window", () => {
+  test("an unusable PARLEY_HISTORY_DAYS falls back to the default rather than failing the run", async () => {
+    for (const raw of ["0", "-3", "2.5", "many", "", "1e400", String(Number.MAX_SAFE_INTEGER)]) {
+      expect(historyDays({ PARLEY_HISTORY_DAYS: raw })).toBe(HISTORY_DEFAULT_DAYS);
+    }
+    expect(historyDays({})).toBe(HISTORY_DEFAULT_DAYS);
+    expect(historyDays({ PARLEY_HISTORY_DAYS: " 3 " })).toBe(3);
+    expect(historyDays({ PARLEY_HISTORY_DAYS: String(HISTORY_MAX_DAYS) })).toBe(HISTORY_MAX_DAYS);
+
+    // A window so wide that its own start date is not a date would throw where nothing catches
+    // it. The run completes, and the default window is applied: five days old survives, four
+    // hundred does not.
+    const { dir, env, hist } = historyScratch();
+    const recent = segmentFor(Date.now() - 5 * DAY_MS);
+    const ancient = segmentFor(Date.now() - 400 * DAY_MS);
+    writeFileSync(join(hist, recent), "{}\n");
+    writeFileSync(join(hist, ancient), "{}\n");
+    const r = await runCount(dir, { ...env, PARLEY_HISTORY: hist, PARLEY_HISTORY_DAYS: String(Number.MAX_SAFE_INTEGER) }, ["count"], () => {});
+    expect(r.status).toBe(0);
+    expect(r.violations).toEqual([]);
+    expect(readdirSync(hist).sort()).toEqual([recent, segmentFor(Date.now())].sort());
   });
 });

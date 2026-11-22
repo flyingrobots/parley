@@ -27,6 +27,8 @@ export const HISTORY_ENV = "PARLEY_HISTORY";
 /** How many daily segments to keep, today's included. */
 export const HISTORY_DAYS_ENV = "PARLEY_HISTORY_DAYS";
 export const HISTORY_DEFAULT_DAYS = 14;
+/** A century of daily segments. Beyond this the window's own start date stops being representable. */
+export const HISTORY_MAX_DAYS = 36_500;
 const DIR_MODE = 0o700;
 const FILE_MODE = 0o600;
 const OFF = new Set(["0", "off", "false", "no", "none"]);
@@ -60,12 +62,16 @@ export function isHistoryFailure(h: HistorySink | HistoryFailure): h is HistoryF
 /** The segment a run started at `t` writes to: the UTC date, so one day is one file everywhere. */
 export function segmentName(t: number): string { return `${new Date(t).toISOString().slice(0, 10)}.jsonl`; }
 
-/** `PARLEY_HISTORY_DAYS` as a positive integer; anything else is the default. */
+/**
+ * `PARLEY_HISTORY_DAYS` as an integer from 1 to `HISTORY_MAX_DAYS`; anything else, including a
+ * window so wide that the date it names is not a date, is the default. A retention window is not
+ * worth failing a run over, and an unrepresentable one would throw where nothing can catch it.
+ */
 export function historyDays(env: Record<string, string | undefined>): number {
   const raw = env[HISTORY_DAYS_ENV];
   if (raw === undefined) return HISTORY_DEFAULT_DAYS;
   const n = Number(raw.trim());
-  return Number.isInteger(n) && n >= 1 ? n : HISTORY_DEFAULT_DAYS;
+  return Number.isInteger(n) && n >= 1 && n <= HISTORY_MAX_DAYS ? n : HISTORY_DEFAULT_DAYS;
 }
 
 /**

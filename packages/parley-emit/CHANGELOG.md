@@ -48,6 +48,11 @@ on its own; the spec and each message schema move separately (spec §4.4).
   carries on without it. The literal field name `history` is checked the same way, because a
   secret that is a substring of it would rename the key the line prints.
 
+  `PARLEY_HISTORY_DAYS` is an integer from 1 to `HISTORY_MAX_DAYS` (36,500); anything else falls
+  back to 14. A window wide enough that its own start date is not a date would have thrown out of
+  `main` after the head was written, where nothing could catch it, and a retention window is not
+  worth failing a run over.
+
 ### Changed
 
 - The `code` of a diagnostic **the writer itself raises** is no longer scrubbed. It is the

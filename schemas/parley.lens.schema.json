@@ -1,0 +1,228 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flyingrobots.dev/parley/schemas/parley.lens/1.0.0",
+  "title": "parley lens",
+  "description": "The lens a result carries: the asker, the view, the budget and the window that produced it, the query it answers, a stated bound on what the view loses, and the records it was built from by (run, seq) (spec §9, informative; decided in flyingrobots/parley#46). One lens line precedes the result it describes, so a later reader knows what it is looking at and can get back to the records.",
+  "type": "object",
+  "required": [
+    "event",
+    "t",
+    "seq",
+    "run",
+    "query",
+    "asker",
+    "view",
+    "budget",
+    "window",
+    "loss",
+    "records",
+    "_schema"
+  ],
+  "properties": {
+    "event": {
+      "const": "lens"
+    },
+    "t": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "POSIX time in milliseconds (spec §1.3)."
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The run's single counter (spec §1.3)."
+    },
+    "run": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The execution this line belongs to: the read itself, not the runs being read (spec §2.1)."
+    },
+    "session": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Working period spanning runs. Supplied by the caller or inherited; never invented (spec §2.1)."
+    },
+    "query": {
+      "type": "object",
+      "required": [
+        "run",
+        "seq"
+      ],
+      "properties": {
+        "run": {
+          "type": "string",
+          "minLength": 1
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "description": "The recorded query this result answers, by (run, seq). Required: §9 records every query, and a result whose query was not recorded cannot be audited."
+    },
+    "asker": {
+      "type": "object",
+      "required": [
+        "tool"
+      ],
+      "properties": {
+        "tool": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cwd": {
+          "type": "string",
+          "pattern": "^/",
+          "minLength": 2
+        },
+        "task": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "description": "Echoed from the query: who the result is for."
+    },
+    "view": {
+      "enum": [
+        "what-ran",
+        "what-failed",
+        "what-changed",
+        "how-it-decided",
+        "everything"
+      ],
+      "description": "The view this result is. Echoed from the query, from the same closed set."
+    },
+    "budget": {
+      "type": "object",
+      "required": [
+        "records"
+      ],
+      "properties": {
+        "records": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "ms": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "description": "The budget actually applied, including a default the query did not supply. Constitutive, not decoration: two results computed under different budgets are not comparable, so a lens without it does not identify the view that produced the result."
+    },
+    "window": {
+      "type": "object",
+      "required": [
+        "from",
+        "to"
+      ],
+      "properties": {
+        "from": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "to": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "description": "The stretch of history the result covers, echoed from the query."
+    },
+    "loss": {
+      "type": "object",
+      "required": [
+        "bound",
+        "excluded"
+      ],
+      "properties": {
+        "bound": {
+          "enum": [
+            "none",
+            "count-only"
+          ],
+          "description": "What kind of statement the loss is. none: the view is the identity on the window and nothing was left out. count-only: the excluded count is all that is known, which is a weak proxy. A measured distortion bound needs a translator to measure it and is a later version of this schema."
+        },
+        "excluded": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many records in the window the view did not name. A proxy and a weak one: one withheld record can matter more than fifty, so this count cannot bound what the view loses."
+        }
+      },
+      "description": "What the view loses against the records it was built from, so a later reader knows which questions this result can still answer and cannot mistake a digest for the whole."
+    },
+    "records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "run",
+          "seq"
+        ],
+        "properties": {
+          "run": {
+            "type": "string",
+            "minLength": 1
+          },
+          "seq": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "0 for a bootstrap or startup-failure line (spec §1.3)."
+          }
+        }
+      },
+      "description": "The records this result was built from, by (run, seq), never more than budget.records of them. Stored rather than recomputed: projecting down to a result is cheap and expanding back up may be impossible within a budget, so the way back has to be written here. A result is built from records, never from another result."
+    },
+    "_schema": {
+      "type": "object",
+      "required": [
+        "id",
+        "version"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "const": "parley.lens"
+        },
+        "version": {
+          "const": "1.0.0",
+          "description": "Full validation is against the schema for this exact id and version (spec §4.5, §4.6)."
+        }
+      }
+    }
+  },
+  "if": {
+    "type": "object",
+    "required": [
+      "loss"
+    ],
+    "properties": {
+      "loss": {
+        "type": "object",
+        "required": [
+          "bound"
+        ],
+        "properties": {
+          "bound": {
+            "const": "none"
+          }
+        }
+      }
+    }
+  },
+  "then": {
+    "type": "object",
+    "properties": {
+      "loss": {
+        "type": "object",
+        "properties": {
+          "excluded": {
+            "const": 0
+          }
+        }
+      }
+    }
+  }
+}

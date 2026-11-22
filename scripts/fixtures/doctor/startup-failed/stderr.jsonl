@@ -1,0 +1,1 @@
+{"event":"startup.failed","t":1795326412345,"seq":0,"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8","tool":"theme-book","v":"0.2.1","code":"startup.receipt_unwritable","problem":"No writable receipt location","remedy":"set XDG_STATE_HOME","_schema":{"id":"parley.startup.failed","version":"1.0.0"}}

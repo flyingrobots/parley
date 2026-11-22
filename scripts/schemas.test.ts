@@ -153,6 +153,13 @@ describe("schemas/", () => {
       expect(head({ ...okHead, inputs: [{ path: "vendor/", role: "tree", error: "input.unreadable" }] })).toBe(true);
       expect(head({ ...okHead, inputs: [{ role: "tree" }] })).toBe(false);
     });
+    test("a page with has_more needs a cursor; the last page does not (§7.2)", () => {
+      const page = validate("parley.page.schema.json");
+      const okPage = { event: "page", t: 1, seq: 7, run: "r", has_more: false, _schema: { id: "parley.page", version: "1.0.0" } };
+      expect(page(okPage)).toBe(true);
+      expect(page({ ...okPage, has_more: true })).toBe(false);
+      expect(page({ ...okPage, has_more: true, cursor: "abc" })).toBe(true);
+    });
     test("redacted marker shape", () => {
       expect(head({ ...okHead, redacted: { argv: [5], resolved: ["/token"], env: ["GITHUB_TOKEN"] } })).toBe(true);
       expect(head({ ...okHead, redacted: { argv: [-1] } })).toBe(false);

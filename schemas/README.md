@@ -18,9 +18,15 @@ Released versions are snapshotted, immutable, under `released/<id>/<version>.sch
 | `parley.end` | 1.0.0 (draft) | The terminal event, on stdout and in the receipt | §3.3 |
 | `parley.sidecar` | 1.0.0 (draft) | A receipt line standing in for a record stored beside the receipt | §5 |
 | `parley.redaction` | 1.0.0 (draft) | A receipt line recording a redaction decided after the head | §5.3 |
+| `parley.receipt.step` | 1.0.0 (draft) | One decision and its reason; receipt only | §5 |
+| `parley.receipt.inputs` | 1.0.0 (draft) | Late input digests and `inv` once settled | §2.2 |
+| `parley.cache.hit` | 1.0.0 (draft) | The program answered from a prior receipt | §2.3 |
+| `parley.page` | 1.0.0 (draft) | One page of unbounded output | §7.2 |
+| `parley.command` | 1.0.0 (draft) | A command's description, effects, secrets and emitted types | §4.1 to §4.3 |
+| `parley.schema` | 1.0.0 (draft) | One message schema, carried by discovery | §4.1, §4.2 |
 
-Message types the spec requires that have no schema yet are tracked in
-[flyingrobots/parley#10](https://github.com/flyingrobots/parley/issues/10).
+Every message type the spec requires has a draft schema here and a validated example in the
+spec.
 
 `scripts/schemas.test.ts` holds the invariants every file here must satisfy, and
 `bun run check` validates every example in the repository against these files.

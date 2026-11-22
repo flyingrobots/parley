@@ -28,6 +28,7 @@ doctor knows.
 | PE-18 | Every `console` function is captured, from before the resolvers run and in a real process; overlapping runs restore the console; a failing renderer is reported once; a throw during discovery is an error line | §1.2, §6 |
 | PE-19 | Tree inputs skip `.parley`, honour `exclude` and follow content; stdin and absolute inputs are digested; `receiptExtra` is scrubbed | §2.2, §5.3 |
 | PE-20 | Smaller gaps: prototype names are not commands; `end(0)` after an error is refused; state-directory retention is declared; an empty secret is recorded; the ignore file is created whole | §4.3, §3.4, §5.2, §5.3 |
+| PE-21 | From the blind pass over the repaired head: a stalled pipe reader does not fail stdout; a secret as a number, boolean or key is redacted and out of `inv`; nested secrets leave no tail; a secret in the session, tool name or version is a startup failure; a failed sidecar keeps the record inline; a startup problem never carries a secret | §5.4, §5.3, §2.2, §5, §3.2 |
 
 | ID | Case | Oracle | Evidence | Status |
 | --- | --- | --- | --- | --- |
@@ -74,7 +75,7 @@ doctor knows.
 | PE-16b | A bundle with a sidecar, then retention | receipt and sidecar directory both gone | `retention deletes a bundle's sidecar directory with its receipt` | implemented |
 | PE-17a | `resolved` of 70,000 bytes | head is the first receipt line, no sidecar, doctor passes | `a head over the sidecar threshold is still the receipt's first line` | implemented |
 | PE-17b | stdout throws on the bootstrap write | head first, then the error, `end` status 4 | `a stdout failure on the bootstrap write still puts the head first` | implemented |
-| PE-17c | A file where the sidecar directory should go | `sink.` error on stderr and in the receipt; `end` status 4 in the receipt | `a sidecar write failure is an error line and the receipt still ends` | implemented |
+| PE-17c | A file where the sidecar directory should go | `sink.` error on stderr and in the receipt; `end` status 4 in the receipt (the record itself: PE-21e) | `a sidecar write failure is an error line and the receipt still ends` | implemented |
 | PE-17d | `seq` in a record; `run` in `receiptExtra`; `page(null, true)` | `TypeError` each | `envelope keys supplied by the tool are refused` | implemented |
 | PE-18a | `console.table`, `dir`, `group`, `count`, `assert`, `time`, `timeLog`, `timeEnd` in the handler | stderr empty, stdout all JSON, text in the receipt, doctor passes | `every console function is captured and nothing reaches a stream` | implemented |
 | PE-18b | Two overlapping runs, the first ending first | console patched while one is open, original restored after the last | `overlapping runs restore the original console once the last one ends` | implemented |
@@ -89,5 +90,11 @@ doctor knows.
 | PE-20b | `end(0)` after `error` | `TypeError`; the run ends 2 | `end(0) after a reported error is refused` | implemented |
 | PE-20c | `--token ""`; `--schema` | bookkeeping carries a `delete` for the state directory; `redacted.argv` names the empty value | `bookkeeping declares the state directory's retention and an empty secret is still recorded` | implemented |
 | PE-20d | Fresh directory | `.parley/.gitignore` is exactly `*` and a newline; no temporary file remains | `the ignore file is created whole` | implemented |
+| PE-21a | 300 KB of results into a shell pipe whose reader sleeps 1.5 s (real process) | exit 0, stderr empty, 62 lines received, last is `end` status 0; fails with a one-shot `writeSync` sink | `a stalled pipe reader does not fail the stdout sink` | implemented |
+| PE-21b | `--token 4321` with `resolved.pin = Number(...)` and the value as a key | `pin` is `[redacted]`, the key is renamed, pointers recorded, equal `inv` for two PINs, value absent from the receipt | `a secret parsed to a number or used as a key is still redacted and stays out of inv` | implemented |
+| PE-21c | Secrets `abc` and `abcdef` | every occurrence is exactly `[redacted]`; no `def` remains | `a secret that contains another secret leaves no tail behind` | implemented |
+| PE-21d | Session `ses_s3s_1` with secret `s3s`; secret equal to the version | `startup.secret_in_identity`, exit 3, value absent from stderr | `a secret inside the session, tool name or version is a startup failure` | implemented |
+| PE-21e | A file where the sidecar directory should go | the result with its rows is inline in the receipt; status 4; doctor passes | `when a sidecar cannot be written the record is kept inline and the bundle is complete` | implemented |
+| PE-21f | `resolved` throws with the secret in its message | `startup.arguments_invalid` whose problem carries `[redacted]` and not the value | `a startup failure's problem never carries the secret` | implemented |
 
 Also implemented, outside the numbered requirements: `run ids are ULIDs, unique and sortable`.

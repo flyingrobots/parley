@@ -772,3 +772,81 @@ describe("PE-20 smaller contract gaps (F-13)", () => {
     expect(readdirSync(join(dir, ".parley")).sort()).toEqual([".gitignore", "receipts"]);
   });
 });
+
+describe("PE-21 found by the blind pass over the repaired head", () => {
+  test("a stalled pipe reader does not fail the stdout sink", async () => {
+    const { dir, env } = scratch();
+    const script = join(dir, "big.ts");
+    writeFileSync(script, `import { defineTool, main } from ${JSON.stringify(resolve(import.meta.dir, "../src/index.ts"))};
+const tool = defineTool({ name: "t", version: "0.0.1", commands: { count: { intent: "count", effects: { reads: [], writes: [], network: false, idempotent: true }, secrets: [], emits: [{ id: "t.count", version: "1.0.0" }] } }, retention: { count: 10 } });
+process.exit(await main(tool, ["t", "count"], (run) => { console.log("touch console so the runtime may flip fd 1"); for (let i = 0; i < 60; i++) run.result({ event: "result", value: i, pad: "x".repeat(5000) }, { id: "t.count", version: "1.0.0" }); }));`);
+    // A shell pipe whose reader sleeps first: the 64 KiB pipe buffer fills while the writer is still writing.
+    const proc = Bun.spawn(["bash", "-c", `bun ${JSON.stringify(script)} 2>${JSON.stringify(join(dir, "err.txt"))} | (sleep 1.5; cat); exit \${PIPESTATUS[0]}`], { cwd: dir, env: { ...process.env, ...env }, stdout: "pipe", stderr: "pipe" });
+    const [out, status] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+    expect(readFileSync(join(dir, "err.txt"), "utf8")).toBe("");
+    expect(status).toBe(0);
+    const lines = out.trimEnd().split("\n");
+    expect(lines.length).toBe(62);
+    expect(JSON.parse(lines.at(-1)!)).toMatchObject({ event: "end", status: 0 });
+  });
+
+  test("a secret parsed to a number or used as a key is still redacted and stays out of inv", async () => {
+    const { dir, env } = scratch();
+    const run1 = streams(), run2 = streams();
+    const resolved = (args: string[]) => ({ command: "count", pin: Number(args[1]), [args[1]!]: true });
+    await main(tool(), ["t", "count", "--token", "4321"], async (run) => { run.step("checked", "because", { 4321: "key", n: 4321 }); }, { cwd: dir, env, ...run1, resolved });
+    await main(tool(), ["t", "count", "--token", "9999"], async () => {}, { cwd: dir, env, ...run2, resolved });
+    const r1 = check(dir, run1), r2 = check(dir, run2);
+    const head = r1.receiptLines[0] as { resolved: Record<string, unknown>; inv: string; redacted: { resolved: string[] } };
+    expect(head.resolved.pin).toBe("[redacted]");
+    expect(head.resolved["[redacted]"]).toBe(true);
+    expect(head.redacted.resolved.sort()).toEqual(["/[redacted]", "/pin"]);
+    expect(head.inv).toBe((r2.receiptLines[0] as { inv: string }).inv);
+    expect(r1.receipt.includes("4321")).toBe(false);
+    expect(r1.violations).toEqual([]);
+  });
+
+  test("a secret that contains another secret leaves no tail behind", async () => {
+    const { dir, env } = scratch();
+    const r = await runCount(dir, { ...env, T_TOKEN: "abcdef" }, ["count", "--token", "abc"], (run) => { run.step("s", "b", { a: "abcdef", b: "abc", c: "xabcdefx" }); });
+    const step = r.receiptLines.find((o) => o.event === "receipt.step") as { detail: Record<string, string> };
+    expect(step.detail).toEqual({ a: "[redacted]", b: "[redacted]", c: "x[redacted]x" });
+    expect(r.receipt.includes("def")).toBe(false);
+  });
+
+  test("a secret inside the session, tool name or version is a startup failure", async () => {
+    const { dir, env } = scratch();
+    const s = streams();
+    const status = await main(tool(), ["t", "count", "--token", "s3s"], async () => {}, { cwd: dir, env, ...s, session: "ses_s3s_1" });
+    expect(status).toBe(3);
+    expect(s.stderr.objs).toEqual([expect.objectContaining({ event: "startup.failed", code: "startup.secret_in_identity" })]);
+    expect(s.stderr.text.includes("s3s")).toBe(false);
+    const v = streams();
+    expect(await main(tool(), ["t", "count", "--token", "0.0.1"], async () => {}, { cwd: dir, env, ...v })).toBe(3);
+    expect(v.stderr.objs[0]!.code).toBe("startup.secret_in_identity");
+  });
+
+  test("when a sidecar cannot be written the record is kept inline and the bundle is complete", async () => {
+    const { dir, env } = scratch();
+    const rows = Array.from({ length: 3000 }, (_, i) => ({ i, text: "x".repeat(30) }));
+    const s = streams();
+    const status = await main(tool(), ["t", "count"], async (run) => {
+      writeFileSync(join(run.receiptDir, run.id), "a file where the sidecar directory should go");
+      run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" }, { rows });
+    }, { cwd: dir, env, ...s });
+    expect(status).toBe(4);
+    const { receiptLines, violations } = check(dir, s);
+    expect((receiptLines.find((o) => o.event === "result") as { rows: unknown[] }).rows.length).toBe(3000);
+    expect(violations).toEqual([]);
+  });
+
+  test("a startup failure's problem never carries the secret", async () => {
+    const { dir, env } = scratch();
+    const s = streams();
+    const status = await main(tool(), ["t", "count", "--token", SECRET2], async () => {}, { cwd: dir, env, ...s, resolved: () => { throw new Error("bad value " + SECRET2); } });
+    expect(status).toBe(3);
+    expect(s.stderr.objs[0]!.code).toBe("startup.arguments_invalid");
+    expect(s.stderr.text.includes(SECRET2)).toBe(false);
+    expect(String(s.stderr.objs[0]!.problem)).toContain("[redacted]");
+  });
+});

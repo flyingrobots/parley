@@ -31,4 +31,8 @@ The first version, `0.1.0`, is not yet on npm; this entry becomes its heading wh
   honour `exclude`; absolute input paths resolve; the ignore file is linked into place whole; the
   state directory's retention is declared; console capture starts before the tool's resolvers run;
   a failing renderer is one warning; a throw during discovery is an error line; an uncaught
-  throw's stack stays in the receipt; a failed `end` in `--human` mode names the receipt.
+  throw's stack stays in the receipt; a failed `end` in `--human` mode names the receipt. From the
+  blind pass over the repaired head: the default descriptor sinks retry a full pipe and continue a
+  partial write; numbers, booleans and object keys are redacted; the longest secret is replaced
+  first; a secret in the tool name, version or session is `startup.secret_in_identity`; a sidecar
+  that cannot be written is kept inline.

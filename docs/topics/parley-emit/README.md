@@ -23,7 +23,8 @@ it. This page is the reference for what the package does on `main`; the package
 
 1. Classify the declared secrets of every command into flags, variables and logical sources;
    collect the values flags and variables carry from `argv` and the environment; call the selected
-   command's source resolvers (spec §5.3). Choose a run id that carries none of those values.
+   command's source resolvers (spec §5.3). Choose a run id that carries none of those values; a tool
+   name, version or session that carries one is `startup.secret_in_identity`, exit 3.
 2. Reserve the receipt: `.parley/.gitignore` with a line `*`, created whole and linked into
    place if absent; then `.parley/receipts/<run>.jsonl` opened exclusively. On a user's ignore
    file without `*`, a working-directory path carrying a secret value, an unwritable directory or
@@ -50,7 +51,10 @@ it. This page is the reference for what the package does on `main`; the package
    `inv` if not already done, then writes `end` to stdout and the receipt as one event and closes
    the file. Status: the one given (`0` refused after a reported error), else 2 if an error was
    reported, else 0; 4 if any sink or sidecar failed (§3.3, §3.4, §5.4). Every record's payload is
-   scrubbed of declared secrets before any copy is written; the envelope never is.
+   scrubbed of declared secrets before any copy is written, within strings, in numbers and
+   booleans whose decimal form is a secret, and in object keys; the envelope never is. The default
+   descriptor sinks retry a full pipe and continue a partial write; a sidecar that cannot be
+   written is kept inline.
 
 ## What it does not do
 

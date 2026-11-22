@@ -34,9 +34,12 @@ export function collectSecretValues(argv: readonly string[], names: SecretNames,
   return values;
 }
 
+/** Longest value first, so a secret that contains another is replaced whole rather than leaving its tail behind. */
+function ordered(values: ReadonlySet<string>): string[] { return [...values].sort((a, b) => b.length - a.length); }
+
 export function replaceSecrets(s: string, values: ReadonlySet<string>): string {
   let out = s;
-  for (const v of values) if (out.includes(v)) out = out.split(v).join(REDACTED);
+  for (const v of ordered(values)) if (out.includes(v)) out = out.split(v).join(REDACTED);
   return out;
 }
 
@@ -71,7 +74,12 @@ export interface ScrubOptions {
   readonly skipKeys?: ReadonlySet<string>;
 }
 
-/** A deep copy of `value` with every secret replaced, and the RFC 6901 pointer of each string that changed. */
+/**
+ * A deep copy of `value` with every secret replaced, and the RFC 6901 pointer of each place that
+ * changed. Strings are replaced within; a number, boolean or bigint whose decimal form is a
+ * secret becomes the string `[redacted]` (a PIN parsed to a number is still the PIN); an object
+ * key that carries a secret is renamed, and the pointer recorded is the renamed key's.
+ */
 export function scrub(value: unknown, values: ReadonlySet<string>, pointer = "", found: string[] = [], opts: ScrubOptions = {}): unknown {
   if (values.size === 0) return value;
   if (typeof value === "string") {
@@ -79,11 +87,18 @@ export function scrub(value: unknown, values: ReadonlySet<string>, pointer = "",
     if (r !== value) found.push(pointer || "/");
     return r;
   }
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    if (values.has(String(value))) { found.push(pointer || "/"); return REDACTED; }
+    return value;
+  }
   if (Array.isArray(value)) return value.map((v, i) => scrub(v, values, `${pointer}/${i}`, found, opts));
   if (value && typeof value === "object") {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      out[k] = opts.skipKeys?.has(k) && typeof v === "string" ? v : scrub(v, values, `${pointer}/${escapePointer(k)}`, found, opts);
+      const key = replaceSecrets(k, values);
+      const p = `${pointer}/${escapePointer(key)}`;
+      if (key !== k) found.push(p);
+      out[key] = opts.skipKeys?.has(k) && typeof v === "string" ? v : scrub(v, values, p, found, opts);
     }
     return out;
   }

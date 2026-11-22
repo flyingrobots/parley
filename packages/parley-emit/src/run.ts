@@ -192,8 +192,10 @@ export class Run {
       const fd = openSync(join(this.receiptDir, rel), "wx");
       try { writeSync(fd, bytes); } finally { closeSync(fd); }
     } catch (e) {
-      // The receipt file itself is fine; only the stored record is lost. Say so and keep going.
+      // The receipt file itself is fine: keep the record inline so the bundle stays complete (§5),
+      // then say what failed; the run still closes with 4 because a write failed (§5.4).
       this.sidecarFailed = true;
+      this.write("receipt", text + "\n");
       this.reportSinkFailure("sidecar", e);
       return;
     }

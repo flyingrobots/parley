@@ -61,7 +61,24 @@ export interface MainOptions {
   resolved?: (args: string[], command: string) => Record<string, unknown> | Promise<Record<string, unknown>>;
 }
 
-const fdSink = (fd: number): Sink => ({ write(line) { writeSync(fd, line); } });
+/**
+ * A sink on a file descriptor that delivers the whole line: a partial write continues from where
+ * it stopped, and EAGAIN (a full pipe on a descriptor the runtime left non-blocking) waits a
+ * millisecond and tries again, which is what a blocking write would have done.
+ */
+export function fdSink(fd: number): Sink {
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  return {
+    write(line) {
+      const buf = Buffer.from(line, "utf8");
+      let off = 0;
+      while (off < buf.length) {
+        try { off += writeSync(fd, buf, off, buf.length - off); }
+        catch (e) { if ((e as NodeJS.ErrnoException).code === "EAGAIN") { Atomics.wait(pause, 0, 0, 1); continue; } throw e; }
+      }
+    },
+  };
+}
 const OWN_FLAGS = new Set(["--human", "--humanize", "--dry-run", "--schema", "--help", "-h"]);
 const WRITER_SCHEMAS: SchemaRef[] = Object.values(SCHEMA_IDS);
 /** Incomplete receipts (no end line) older than this are deletable by retention; younger ones may still be in flight. */
@@ -102,6 +119,11 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
   };
 
   if (carriesSecret(id, secretValues)) return startupFailed("startup.secret_in_path", "no run id free of a declared secret value could be chosen", "do not pass a value this short as a declared secret");
+  // The identity fields of the bootstrap line are never scrubbed (they are not payload), so none may carry a secret.
+  const sessionEarly = opts.session ?? env.PARLEY_SESSION;
+  for (const [what, val] of [["tool name", spec.name], ["tool version", spec.version], ["session", sessionEarly ?? ""]] as const) {
+    if (val && carriesSecret(val, secretValues)) return startupFailed("startup.secret_in_identity", `the ${what} contains a declared secret value and cannot be printed`, what === "session" ? "supply a session id that does not contain the secret" : "a declared secret cannot equal part of the tool's own name or version");
+  }
   if (!commandName && discovery === null) return startupFailed("startup.unknown_command", `no command named; commands are ${names.join(", ")}`, `name one of: ${names.join(", ")}`);
 
   // Console capture starts here, before any tool code runs; captured text is buffered until the receipt exists (§1.2).

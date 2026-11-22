@@ -22,17 +22,18 @@
 //      ranking function, not a filter applied afterwards — and the answer is still every record in
 //      the window. The rules are in `rank.ts`; the over-filtering §9 warns about is impossible
 //      here because nothing is dropped at any tier.
-//   - **It does not apply the budget.** The budget is recorded, defaulted visibly, and echoed;
-//      nothing is truncated and no excluded count is claimed, because the digest that bounds an
-//      answer and states what it left out is flyingrobots/parley#50.
-//   - **It emits no `parley.lens`.** A lens states a loss bound and the records a result was
-//      built from; this returns the records themselves, so there is no loss to state yet. The
-//      lens belongs to the digest (flyingrobots/parley#50).
+//   - **It does not fetch what the digest left out.** The digest below bounds the answer to the
+//      budget and names what it dropped as a count; a call that asks for those records by
+//      identity is flyingrobots/parley#51, and the digest stores the way back for it.
 //
-// Each of those is the safe intermediate state the issues name, and each is stated in
-// `docs/topics/parley-read/README.md` as a limit rather than left for a caller to discover.
+// What it **does** do with the budget is the digest (flyingrobots/parley#50): the first response
+// is a `parley.lens` record, bounded by `budget.records` and by `budget.bytes` when the query
+// states one, carrying the asker, the view, the window and the budget applied, and reporting the
+// records the ranking placed beyond the bound as a count — zero included, never absent. `digest.ts`
+// holds the bound and `docs/topics/parley-read/README.md` states it.
 import { resolve } from "node:path";
 import { defineTool, main, type Sink } from "@flyingrobots/parley-emit";
+import { LENS_SCHEMA, digestFor, type Digest } from "./digest.ts";
 import { loadReceipts, type Load, type LoadOptions, type LoadedRecord } from "./load.ts";
 import { repoReceiptDir, stateReceiptDir } from "./locate.ts";
 import { rankRecords, type Ranking } from "./rank.ts";
@@ -142,17 +143,35 @@ export interface QueryAnswer {
   readonly window: QueryWindow;
   readonly note?: string;
   /**
-   * Every record in the window, ordered by the view: the failure surface first when the view
-   * implies a change, then the view's own surface, then `(t, run, seq)` ascending. **Not** bounded
-   * by `budget.records`: this returns the whole window, and bounding it is flyingrobots/parley#50.
+   * The records the digest names, in full: the window ordered by the view — the failure surface
+   * first when the view implies a change, then the view's own surface, then `(t, run, seq)`
+   * ascending — and cut at the budget. Never more than `budget.records` of them, and fewer when a
+   * stated `budget.bytes` cuts first. What the bound left out is `counts.excluded`, and fetching
+   * it is flyingrobots/parley#51.
    */
   readonly records: readonly LoadedRecord[];
-  /** The same records with the key each was placed by, the per-run outcomes, and the tier counts. */
+  /** The digest this read answered with, exactly as the `parley.lens` record carries it. */
+  readonly digest: Digest;
+  /** The digest's line in UTF-8 bytes, its newline included, as the read wrote it. */
+  readonly digestBytes: number;
+  /**
+   * The ranking the digest was cut from: `records` and `ranked` hold what the digest names, in
+   * rank order, while `outcomes` and `counts` describe the **whole window** the digest was drawn
+   * from. The two are deliberately not the same population: a run's outcome is established from
+   * the window (§1.2a), so recomputing it from a bounded prefix would turn a run whose `end` the
+   * bound cut into an undetermined one, and a tier census of the window is what tells a caller
+   * the digest is not the whole of it.
+   */
   readonly ranking: Ranking;
   readonly counts: {
     /** Records the load returned, the read's own run included. */
     readonly scanned: number;
+    /** Records in the window, the digest's bound disregarded: the population the digest was drawn from. */
     readonly inWindow: number;
+    /** Records the digest names. */
+    readonly answered: number;
+    /** Records the ranking placed beyond the bound. Zero is a count, not an absence (§9). */
+    readonly excluded: number;
     /** Records whose `t` is not a number, which cannot be placed in a window and are therefore not in the answer. */
     readonly undated: number;
     /** The read's own records, which a read does not answer itself with. */
@@ -356,10 +375,13 @@ function inWindow(record: LoadedRecord, window: QueryWindow): boolean {
  * receipt beside the ones being read, so the loader finds it on the next read, and the answer
  * names it by `(run, seq)`.
  *
- * The answer is every record in the window, ordered by the view, excluding the read's own run: a
- * read does not answer itself, and the record of it is there for the next one. Nothing is dropped
- * by the ranking and nothing is bounded by the budget: bounding the answer and saying what was
- * left out is flyingrobots/parley#50.
+ * The answer is the window's records ordered by the view and **bounded by the budget**, excluding
+ * the read's own run: a read does not answer itself, and the record of it is there for the next
+ * one. The bound is the digest's (flyingrobots/parley#50): a second `parley.lens` record goes
+ * through the writer naming the asker, the view, the window, the budget applied and the records
+ * the digest holds, and reporting the rest of the ranking as a count. Nothing is dropped by the
+ * ranking itself — it reorders and never filters — so the count is exactly the tail of one total
+ * order, and fetching that tail is flyingrobots/parley#51.
  */
 export async function queryReceipts(request: QueryRequest, opts: QueryOptions = {}): Promise<QueryOutcome> {
   const cwd = resolve(opts.cwd ?? process.cwd());
@@ -389,7 +411,7 @@ export async function queryReceipts(request: QueryRequest, opts: QueryOptions = 
           idempotent: true,
         },
         secrets: [],
-        emits: [{ ...QUERY_SCHEMA }],
+        emits: [{ ...QUERY_SCHEMA }, { ...LENS_SCHEMA }],
       },
     },
     // §5.1 asks every tool for a stated policy. A read states one that deletes nothing: expiring
@@ -416,16 +438,49 @@ export async function queryReceipts(request: QueryRequest, opts: QueryOptions = 
     // places for it to drift.
     const inside = others.filter((r) => inWindow(r, query.window));
     const ranking = rankRecords(query, inside);
-    const records = ranking.records;
 
-    run.step(
-      `answered with ${records.length} record(s) in the window`,
-      "the window's records, ordered by the view: spec §9's purpose is the ranking function, not a filter, so every record in the window is in the answer and the budget still bounds nothing (flyingrobots/parley#50)",
+    const ranked = run.step(
+      `ranked ${ranking.records.length} record(s) of the window by the ${query.view} view`,
+      "spec §9's purpose is the ranking function, not a filter: every record in the window is ranked, so the digest that follows cuts the tail of one total order and can say how long that tail was (flyingrobots/parley#49)",
       {
-        scanned: all.length, in_window: records.length, undated: undated.length, own: own.length,
+        scanned: all.length, in_window: ranking.records.length, undated: undated.length, own: own.length,
         view: query.view, implies_change: ranking.impliesChange, tiers: ranking.counts,
       },
     );
+
+    // The digest's line is bounded in bytes before it is written, so the envelope it will be
+    // written with has to be known here. `run.result` and `run.step` each take one seq in order
+    // and return it, a read declares no secrets so no redaction line comes between them, and the
+    // one step below sits between this ranking step and the digest: the digest's seq is therefore
+    // `ranked + 2`. RD-20c pins that arithmetic against the line the writer really wrote.
+    const digested = digestFor(
+      query,
+      { run: run.id, seq },
+      ranking.records,
+      { run: run.id, seq: ranked + 2, t: (opts.now ?? Date.now)() },
+    );
+    const records = digested.records;
+
+    run.step(
+      digested.excluded === 0
+        ? `answered with all ${records.length} ranked record(s): the budget cut nothing`
+        : `answered with ${records.length} of ${ranking.records.length} ranked record(s) and excluded ${digested.excluded}`,
+      "spec §9: a result is bounded and reports what it excluded, at least as a count, so a later reader cannot mistake a digest for the whole (flyingrobots/parley#50)",
+      {
+        records_bound: query.budget.records,
+        ...(query.budget.bytes === undefined ? {} : { bytes_bound: query.budget.bytes }),
+        named: records.length, excluded: digested.excluded, loss_bound: digested.digest.loss.bound,
+        digest_bytes: digested.bytes,
+      },
+    );
+
+    const before = stdout.lines.length;
+    run.result(digested.digest as unknown as Record<string, unknown>, LENS_SCHEMA);
+    // The bytes the answer reports are the bytes that went out, not the reconstruction the bound
+    // was measured against; a stream the host replaced cannot hide a line the read wrote, because
+    // the read's own tee holds it.
+    const written = stdout.lines[before];
+    const digestBytes = written === undefined ? digested.bytes : Buffer.byteLength(written, "utf8");
 
     answer = {
       refused: false,
@@ -439,8 +494,19 @@ export async function queryReceipts(request: QueryRequest, opts: QueryOptions = 
       window: query.window,
       ...(query.note === undefined ? {} : { note: query.note }),
       records,
-      ranking,
-      counts: { scanned: all.length, inWindow: records.length, undated: undated.length, own: own.length },
+      digest: digested.digest,
+      digestBytes,
+      // The ranking's records stop where the digest does; its outcomes and counts describe the
+      // window the digest was drawn from (see `QueryAnswer.ranking`).
+      ranking: { ...ranking, records, ranked: ranking.ranked.slice(0, records.length) },
+      counts: {
+        scanned: all.length,
+        inWindow: ranking.records.length,
+        answered: records.length,
+        excluded: digested.excluded,
+        undated: undated.length,
+        own: own.length,
+      },
       load,
     };
   }, {

@@ -10,6 +10,8 @@ import {
   SCHEMA_SOURCE,
   VIEWS,
   loadReceipts,
+  digestBytes,
+  digestLine,
   planQuery,
   queryReceipts,
   rankRecords,
@@ -1446,7 +1448,9 @@ describe("RD-20 the first response is a digest", () => {
     expect(record.view).toBe("what-ran");
     expect(record.window).toEqual(SEALED);
     expect(record.budget).toEqual({ records: 20 });
-    expect(answer.digest).toEqual(record as unknown as typeof answer.digest);
+    // The answer's digest is the record's payload: the writer owns `t`, `seq`, `run` and `_schema`.
+    const { t: _t, seq: _seq, run: _run, _schema: _pair, ...payload } = record;
+    expect(payload).toEqual(answer.digest as unknown as typeof payload);
   });
 
   test("the digest loads as validated against parley.lens 1.0.0 in its own bundle", async () => {
@@ -1474,14 +1478,20 @@ describe("RD-20 the first response is a digest", () => {
     expect(line).toBeDefined();
     expect(validator().validate(line).state).toBe("validated");
     expect(stdout.objs[0]!.event).toBe("run");
-    // The digest is the answer, so its line is the last one the read puts on the stream before
-    // the run closes: the query it answers is already there, and nothing follows it.
+    // The digest is the answer, so its line is the last the read puts on the stream before the run
+    // closes: the query it answers is already there, and only the terminal event follows.
     const events = stdout.objs.map((o) => o.event);
-    expect(events[events.length - 1]).toBe("lens");
+    expect(events[events.length - 1]).toBe("end");
+    expect(events[events.length - 2]).toBe("lens");
     expect(events.indexOf("query")).toBeLessThan(events.indexOf("lens"));
     // The bytes the read reported are the bytes it wrote.
     const written = stdout.lines.find((l) => l.includes("\"event\":\"lens\""))!;
     expect(answer.digestBytes).toBe(Buffer.byteLength(written, "utf8"));
+    // And the reconstruction the byte bound is measured against is that line, byte for byte: the
+    // digest's own serialisation, given the envelope the writer really used, is what went out.
+    const lens = lensRecord(dir, env, answer.run);
+    expect(digestLine(answer.digest, { run: answer.run, seq: lens.seq, t: lens.t! })).toBe(written);
+    expect(digestBytes(answer.digest, { run: answer.run, seq: lens.seq, t: lens.t! })).toBe(answer.digestBytes);
   });
 
   test("the digest names the records the answer holds, in rank order", async () => {
@@ -1540,21 +1550,35 @@ describe("RD-21 the digest is bounded by the budget", () => {
     expect(none.digest.loss).toEqual({ bound: "count-only", excluded: 30 });
   });
 
-  test("what the bound excluded is nowhere in the digest, and the count accounts for all of it", async () => {
+  test("what the bound excluded is nowhere in the answer, and the count accounts for all of it", async () => {
     const { dir, env } = scratch();
     seedDays(dir, 10);
+    // A budget wide enough to hold the window is the oracle for what the window held; the same
+    // sealed window read under a budget of five is what the bound did to it.
+    const whole = answered(await queryReceipts(
+      { asker: { tool: "t" }, view: "what-ran", window: SEALED, budget: { records: 1000 } },
+      { cwd: dir, env },
+    ));
     const answer = answered(await queryReceipts(
       { asker: { tool: "t" }, view: "what-ran", window: SEALED, budget: { records: 5 } },
       { cwd: dir, env },
     ));
     const named = new Set(digestIds(answer));
     expect(named.size).toBe(5);
+    expect(answer.counts.inWindow).toBe(30);
     expect(answer.digest.loss.excluded).toBe(answer.counts.inWindow - named.size);
-    // Every record the window held is either named or counted, and none is both.
-    const window = ids(answer.ranking.records);
-    expect(window.length).toBe(30);
-    expect(window.slice(0, 5)).toEqual([...named]);
-    expect(ids(answer.records).some((id) => !named.has(id))).toBe(false);
+    // The digest is the head of the order the wide read answered in, and what it cut is the tail.
+    const order = ids(whole.records);
+    expect(order.length).toBe(30);
+    expect(order.slice(0, 5)).toEqual([...named]);
+    // Not one excluded record is anywhere in the bounded answer: not in its records, not in the
+    // digest, not in the ranking it carries. The count is all a caller gets, which is why
+    // fetching them is flyingrobots/parley#51.
+    const cut = order.slice(5);
+    expect(cut.length).toBe(25);
+    const anywhere = new Set([...ids(answer.records), ...digestIds(answer), ...ids(answer.ranking.records)]);
+    expect(cut.filter((id) => anywhere.has(id))).toEqual([]);
+    expect([...anywhere].sort()).toEqual([...named].sort());
   });
 
   test("a window that fits the budget excludes nothing and says the loss is none", async () => {
@@ -1661,9 +1685,10 @@ describe("RD-22 a digest never reads as complete", () => {
     const lens = lensRecord(dir, env, answer.run);
     expect(lens.validation.state).toBe("validated");
     expect((lens.validation as { schema: { id: string; version: string } }).schema).toEqual({ id: "parley.lens", version: "1.0.0" });
+    const { event, ...rest } = answer.digest;
     expect(lens.record).toEqual({
-      event: "lens", t: lens.t!, seq: lens.seq, run: answer.run,
-      ...answer.digest, _schema: { id: "parley.lens", version: "1.0.0" },
+      event, t: lens.t!, seq: lens.seq, run: answer.run,
+      ...rest, _schema: { id: "parley.lens", version: "1.0.0" },
     } as unknown as typeof lens.record);
     expect(answer.load.counts.invalid).toBe(0);
     expect(answer.load.counts.quarantined).toBe(0);

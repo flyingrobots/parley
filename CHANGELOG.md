@@ -29,6 +29,12 @@ The spec and each message schema are versioned separately from this package.
   major-pinned.
 - §5 gains a complete receipt-head example and §6's error example is now complete, so the
   example checker validates all three schemas.
+- `parley.run.bootstrap` `1.1.0` → `1.1.1`: `paths.log` and `paths.error` are no longer
+  described, since the protocol defines no such streams; `receipt` is the only defined path.
+  Descriptions only; nothing previously valid is rejected. (flyingrobots/parley#18)
+- Normative keywords cite RFC 2119 and RFC 8174; §1.1's no-colour rule carries its keyword; §3
+  says how `v` differs from `_schema.version`; example timestamps are in 2026.
+  (flyingrobots/parley#18)
 
 ### Added
 

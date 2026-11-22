@@ -1450,6 +1450,27 @@ describe("PE-23 the history sink's transform", () => {
     expect(r.status).toBe(0);
   });
 
+  test("a record that cannot be serialised is withheld, not a sink failure", async () => {
+    // A cycle in what the transform returns throws inside JSON.stringify, which runs inside the
+    // receipt's own write. If that escaped, the optional stream would close the run with 4.
+    const cyclic: HistoryTransform = (rec) => {
+      if (rec.event !== "result") return rec;
+      const loop: Record<string, unknown> = { ...rec };
+      loop.self = loop;
+      return loop;
+    };
+    const r = await projected(cyclic, (run) => { run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" }); });
+    expect(r.status).toBe(0);
+    expect(r.violations).toEqual([]);
+    const resultSeq = r.receiptLines.find((o) => o.event === "result")!.seq as number;
+    const warns = warningsOf(r, "history.transform_failed");
+    expect(warns.length).toBe(1);
+    expect(String(warns[0]!.problem)).toContain(`seq ${resultSeq}`);
+    expect(r.objs.some((o) => o.seq === resultSeq)).toBe(false);
+    expect(r.receiptLines.some((o) => o.event === "error")).toBe(false);
+    expect(r.objs.at(-1)!.event).toBe("end");
+  });
+
   test("the re-validation checker covers every shipped schema", async () => {
     const ajv = new Ajv2020({ strict: false, allErrors: true }); addFormats(ajv);
     const samples: Record<string, unknown>[] = [

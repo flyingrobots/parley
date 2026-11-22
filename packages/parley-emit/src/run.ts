@@ -204,6 +204,19 @@ export class Run {
     let rec: Record_;
     try { rec = JSON.parse(text) as Record_; } catch { return null; }
     const seq = typeof rec.seq === "number" ? rec.seq : -1;
+    // Nothing from here may escape. This runs inside the receipt's own write, so a throw that got
+    // out would be reported as a receipt sink failure and close the run with status 4 — the stream
+    // failing the run it is an optional observer of, which §8 forbids. A record that cannot be
+    // serialised (a cycle, a BigInt) is withheld like any other failure.
+    try { return this.projectOne(rec, seq, p); }
+    catch (e) {
+      const msg = e instanceof Error ? e.message || e.name : String(e);
+      this.withhold({ code: "history.transform_failed", problem: `the projection of seq ${seq} by ${p.name} could not be completed: ${msg}; that line is not on the shared stream and the receipt is unaffected`, remedy: "return a record that serialises as JSON: no cycles, no bigint, nothing the receipt line did not already carry" });
+      return null;
+    }
+  }
+
+  private projectOne(rec: Record_, seq: number, p: HistoryProjection): string | null {
     const stamp = rec._schema as { id?: unknown; version?: unknown } | undefined;
     const pair = `${typeof stamp?.id === "string" ? stamp.id : "?"}@${typeof stamp?.version === "string" ? stamp.version : "?"}`;
     // The envelope is taken before the transform runs, not read back off the record afterwards: a

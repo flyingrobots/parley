@@ -4,6 +4,7 @@
 // and is never scrubbed: the run id and the receipt path were chosen secret-free at startup.
 import { closeSync, mkdirSync, openSync, writeSync } from "node:fs";
 import { join } from "node:path";
+import type { HistorySink } from "./history.ts";
 import { computeInv, digestInput, sha256, type InputDecl, type InputDescriptor } from "./inv.ts";
 import { scrub } from "./redact.ts";
 
@@ -15,10 +16,15 @@ const ENVELOPE_KEYS = ["t", "seq", "run", "_schema"] as const;
  * Writer-owned string fields never scrubbed in a writer-built record: digests (a secret cannot
  * occur in one except by hex coincidence, and replacing it would corrupt the digest) and public
  * identity the tool declared and every discovery line prints regardless: the tool's name and
- * version, a command's name, a schema's id and version. Tool-supplied values that reach a
- * writer-built record (`resolved`, input descriptors) are scrubbed in full before it is built.
+ * version, a command's name, a schema's id and version, and the `code` of a diagnostic the
+ * writer itself raises, which is the writer's own stable identifier and not a value a caller
+ * supplied — replacing part of it would put a line on the stream that no longer validates
+ * against its schema, which is the one thing redaction must not do. A tool's own diagnostic is
+ * not writer-built and its `code` is scrubbed like anything else. Tool-supplied values that
+ * reach a writer-built record (`resolved`, input descriptors) are scrubbed in full before it is
+ * built.
  */
-const DIGEST_KEYS = new Set(["sha256", "inv", "tool", "v", "name", "id", "version"]);
+const DIGEST_KEYS = new Set(["sha256", "inv", "tool", "v", "name", "id", "version", "code"]);
 
 export const SCHEMA_IDS = {
   bootstrap: { id: "parley.run.bootstrap", version: "1.1.1" },
@@ -54,6 +60,8 @@ export interface RunInit {
   secretValues: Set<string>; now: () => number; cwd: string;
   command: string; resolved: unknown; inputs: InputDecl[];
   headRedacted: boolean; human?: (line: Record_) => string | null;
+  /** The shared history stream of §8, when one is configured: it receives the receipt's bytes. */
+  history?: HistorySink;
 }
 
 type SinkName = "stdout" | "stderr" | "receipt";
@@ -69,6 +77,7 @@ export class Run {
   private redactedAny: boolean;
   private failedSinks = new Set<SinkName>();
   private sidecarFailed = false;
+  private historyFailed = false;
   private deferred: { sink: SinkName; error: unknown }[] = [];
   private inputsSettled = false;
   private supplied = new Map<string, Uint8Array>();
@@ -106,7 +115,11 @@ export class Run {
   private write(sink: SinkName, text: string, defer = false): boolean {
     if (this.failedSinks.has(sink)) return false;
     try {
-      if (sink === "receipt") { if (!this.receiptOpen) return false; writeSync(this.init.receiptFd, text); }
+      if (sink === "receipt") {
+        if (!this.receiptOpen) return false;
+        writeSync(this.init.receiptFd, text);
+        this.mirrorToHistory(text);
+      }
       else this.init[sink].write(text);
       return true;
     } catch (e) {
@@ -123,6 +136,27 @@ export class Run {
   private reportSinkFailure(sink: string, e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     this.emit({ to: { stderr: sink !== "stderr", receipt: sink !== "receipt" }, writer: true }, { event: "error", code: sink === "sidecar" ? "sink.sidecar_failed" : "sink.write_failed", problem: `writing to ${sink} failed: ${msg}`, remedy: "the run will close with status 4; whatever other sinks received is preserved" }, SCHEMA_IDS.error);
+  }
+
+  /**
+   * The shared history stream (§8) gets the receipt's bytes, after they are in the receipt: the
+   * same line, so a declared secret cannot reach it that did not reach the receipt. It is an
+   * opt-in extra and the dependency runs one way, so a failure is one `warning` and nothing
+   * else: not an error, not a sink failure, no change to the exit status. The stream is dropped
+   * at the first failure, so a broken stream is reported once and the run carries on.
+   */
+  private mirrorToHistory(text: string): void {
+    const h = this.init.history;
+    if (h === undefined || this.historyFailed) return;
+    try { h.append(text); } catch (e) {
+      this.historyFailed = true;
+      try { h.close(); } catch { /* already closed */ }
+      if (this.closed) return;
+      const msg = e instanceof Error ? e.message : String(e);
+      try {
+        this.writerWarning({ code: "history.write_failed", problem: `appending to the shared history stream at ${h.path} failed: ${msg}; the receipt is unaffected and the rest of this run is not in the stream`, remedy: `free space or fix permissions on ${h.dir}, or set PARLEY_HISTORY=off; the receipt is the record and the stream is a convenience` });
+      } catch { /* the run ended between the write and the warning */ }
+    }
   }
 
   /** Internal: report sink failures held back during the bootstrap write, now that the head is in place (§5: the head is the receipt's first line). */
@@ -142,7 +176,7 @@ export class Run {
       if (!this.rendererFailed && !this.closed) {
         this.rendererFailed = true;
         const msg = e instanceof Error ? e.message : String(e);
-        queueMicrotask(() => { try { if (!this.closed) this.warning({ code: "human.renderer_failed", problem: `the tool's --human renderer threw: ${msg}; the default rendering is used for the rest of the run`, remedy: "fix the renderer; the receipt is complete regardless" }); } catch { /* the run ended first */ } });
+        queueMicrotask(() => { try { if (!this.closed) this.writerWarning({ code: "human.renderer_failed", problem: `the tool's --human renderer threw: ${msg}; the default rendering is used for the rest of the run`, remedy: "fix the renderer; the receipt is complete regardless" }); } catch { /* the run ended first */ } });
       }
     }
     if (typeof custom === "string") return custom.endsWith("\n") ? custom : custom + "\n";
@@ -219,7 +253,10 @@ export class Run {
 
   /** Internal: the bootstrap line, stdout only, seq 0 (§3.1). A stdout failure here is reported after the head. */
   bootstrap(inv: string | undefined): void {
-    const rec: Record_ = { event: "run", tool: this.tool, v: this.v, ...(inv ? { inv } : {}), ...(this.session ? { session: this.session } : {}), paths: { receipt: this.receiptPath }, ...(this.dryRun ? { dry_run: true } : {}) };
+    // `paths` is open and the protocol defines only `receipt`; `history` is documented by this
+    // writer and is present only when a stream is configured (spec §3.1, §8).
+    const paths: Record_ = { receipt: this.receiptPath, ...(this.init.history ? { history: this.init.history.path } : {}) };
+    const rec: Record_ = { event: "run", tool: this.tool, v: this.v, ...(inv ? { inv } : {}), ...(this.session ? { session: this.session } : {}), paths, ...(this.dryRun ? { dry_run: true } : {}) };
     this.emit({ to: { stdout: true }, writer: true, deferFailures: true }, rec, SCHEMA_IDS.bootstrap);
   }
 
@@ -247,6 +284,13 @@ export class Run {
   }
 
   warning(d: Diagnostic): number { return this.emit({ to: { stderr: true, receipt: true } }, { event: "warning", ...this.diagnostic(d) }, SCHEMA_IDS.warning); }
+
+  /**
+   * Internal: a warning the writer itself raises, such as a relocated receipt or an unusable
+   * history stream. Its `code` is the writer's own identifier, so it is not scrubbed; the
+   * `problem` and `remedy`, which carry paths, are.
+   */
+  writerWarning(d: Diagnostic): number { return this.emit({ to: { stderr: true, receipt: true }, writer: true }, { event: "warning", ...this.diagnostic(d) }, SCHEMA_IDS.warning); }
 
   /** A structured error (§6). The run then closes with status 2 unless `end` is given another non-zero status. `receiptExtra` goes to the receipt copy only. */
   error(d: Diagnostic, receiptExtra?: Record_): number {
@@ -298,6 +342,8 @@ export class Run {
     this.receiptOpen = false;
     let closeOk = true;
     try { closeSync(this.init.receiptFd); } catch { closeOk = false; }
+    // The stream is not the record: closing it cannot change the status (§8 is informative).
+    try { this.init.history?.close(); } catch { /* the stream was already gone */ }
     this.finalStatus = okOut && okRec && closeOk ? s : 4;
     return this.finalStatus;
   }

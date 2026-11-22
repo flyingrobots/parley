@@ -69,6 +69,25 @@ The spec and each message schema are versioned separately from this package.
 
 ### Added
 
+- The shared history stream of spec §8, inside the writer: `packages/parley-emit` appends every
+  line of the receipt to a dated daily segment when one is configured, by `PARLEY_HISTORY` or by
+  `$XDG_STATE_HOME/parley/history` existing, so one timeline spans tools, repositories, agents
+  and people. The sink receives the receipt's bytes, which is why a credential cannot reach it
+  that did not reach the receipt; scope is one stream per user per machine and expiry unlinks
+  whole segments, keeping `PARLEY_HISTORY_DAYS` of them (default 14). A run with no stream
+  configured is unchanged in every byte, and a stream that cannot be written is a warning rather
+  than an error, a sink failure or a different exit status: the dependency runs one way. §8 and
+  §9 stay informative in v0.2 — §8's rules now have an implementation and tests behind them, and
+  promoting them to normative is a spec version's decision, taken on its own. No schema version
+  moves and no message type is added: `parley.run.bootstrap`'s `paths` is already open and
+  already says a program may add paths it documents, so `paths.history` needs no version, and
+  segment retention is recorded with `parley.receipt.step`. Fifteen cases, PE-22a to PE-22o,
+  with the doctor as the oracle. Review of the same change found a latent redaction defect in the
+  writer: the `code` of a diagnostic the writer itself raises was being scrubbed, which could put
+  a line on the stream that no longer validated against its own schema, so a writer-raised code
+  now joins the public identity a writer-built record carries. A tool's own diagnostic code is
+  scrubbed exactly as before. (flyingrobots/parley#3)
+
 - `packages/parley-read`: the reader library `@flyingrobots/parley-read`, a Bun workspace package,
   unreleased and private in its manifest. Its loader lists both receipt locations for a working
   directory and returns every run's records: newline-buffered over bytes, stray lines and

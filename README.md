@@ -14,7 +14,9 @@ built.
 
 > **Status: proposal.** The [specification](spec/) is written. The writer library,
 > [`@flyingrobots/parley-emit`](packages/parley-emit/README.md), is published and appends to the
-> shared history stream when one is configured; the reader is not built. See the
+> shared history stream when one is configured; the reader library,
+> [`@flyingrobots/parley-read`](packages/parley-read/README.md), loads a repository's receipt
+> bundles and is not published yet. See the
 > [open issues](https://github.com/flyingrobots/parley/issues).
 
 ## Two layers, and the dependency runs one way

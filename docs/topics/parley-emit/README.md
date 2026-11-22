@@ -101,8 +101,8 @@ stream. Querying it is flyingrobots/parley#2 and syncing it between machines is 
 - Windows paths. v0.2 of the spec is POSIX-only.
 - Replay across tools. The package is on npm as `@flyingrobots/parley-emit` (name per
   flyingrobots/parley#20); it is one writer, not a registry of receipts.
-- Reading. The doctor under `scripts/` is the repository's reader; the reader library is
-  flyingrobots/parley#2.
+- Reading. The doctor under `scripts/` checks a captured run; [parley-read](../parley-read/README.md)
+  loads a repository's receipt bundles. Neither is this package.
 
 ## Checks
 

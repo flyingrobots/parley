@@ -19,7 +19,7 @@ first.
 
 ## What conforms and what does not
 
-The writer and reader libraries, once they exist, are conforming implementations of the spec. The
+The writer and reader libraries are conforming implementations of the spec. The
 repository's own tooling under `scripts/` is not: the example checker and the doctor emit JSON
 Lines with a `parley.tooling.*` schema so they are parseable, but they carry no run identity and
 make no claim to the protocol. The doctor will be rebuilt on the writer library when it exists.
@@ -32,8 +32,8 @@ example that is deliberately incomplete.
 
 ## The libraries
 
-`packages/` holds the conforming implementations as Bun workspace packages, `parley-emit` first.
-They are consumers of the spec and the draft schemas: `bun run sync-schemas` in a package copies
+`packages/` holds the conforming implementations as Bun workspace packages: `parley-emit` writes
+and `parley-read` reads. They are consumers of the spec and the draft schemas: `bun run sync-schemas` in a package copies
 the drafts in, pinned by commit and digest, and a test fails when the copy is stale. The gate for
 the whole repository is `bun test`, `bun run check` and `bun run typecheck`.
 

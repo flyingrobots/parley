@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { doctor, type Verdict } from "./doctor.ts";
+import { doctor, inspectSegment, type SegmentVerdict, type Verdict } from "./doctor.ts";
 
 const F = "scripts/fixtures/doctor";
 const read = (c: string, s: string) => readFileSync(`${F}/${c}/${s}.jsonl`, "utf8");
@@ -33,6 +33,47 @@ describe("parley doctor", () => {
     const c = conforming();
     const broken = { ...c, stdout: edit(c.stdout, 2, () => null), stderr: c.stderr + "glibc: warning\n" + '{"event":"x"}' };
     for (const v of [...doctor(c), ...doctor(broken)]) expect(validate(stamp(v)), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  test("a segment of the shared stream reports its projections, its gaps and its torn lines", () => {
+    const line = (o: Record<string, unknown>) => JSON.stringify(o) + "\n";
+    const run = "01JD3KN8A3B6C1D4E9F2G7H5J8";
+    const seg =
+      line({ event: "history.transform", t: 1, seq: 1, run, name: "drop-detail", sha256: "a".repeat(64), _schema: { id: "parley.history.transform", version: "1.0.0" } }) +
+      line({ event: "receipt.head", t: 1, seq: 2, run, tool: "t", v: "1", argv: [], resolved: {}, inputs: [], _schema: { id: "parley.receipt.head", version: "2.0.0" } }) +
+      // seq 3 was withheld by the transform: a gap on this copy and nowhere else.
+      line({ event: "end", t: 2, seq: 4, run, status: 0, receipt: "/w/r.jsonl", redacted: false, _schema: { id: "parley.end", version: "1.0.0" } }) +
+      "glibc: warning\n";
+    const vs = inspectSegment(seg);
+    expect(vs.filter((v) => v.event === "doctor.projection")).toEqual([{ event: "doctor.projection", run, name: "drop-detail", sha256: "a".repeat(64), line: 1 }]);
+    expect(vs.filter((v) => v.event === "doctor.gap")).toEqual([{ event: "doctor.gap", run, seq: 3 }]);
+    expect(vs.at(-1)).toEqual({ event: "doctor.segment", passed: false, lines: 4, runs: 1, projected: 1, gaps: 1, torn: 1, incomplete: 0 });
+  });
+
+  test("a sidecar accounts for the seq it stands in for, and a copy without end is reported once", () => {
+    const line = (o: Record<string, unknown>) => JSON.stringify(o) + "\n";
+    const run = "01JD3KN8A3B6C1D4E9F2G7H5J8";
+    const seg =
+      line({ event: "receipt.head", t: 1, seq: 1, run, tool: "t", v: "1", argv: [], resolved: {}, inputs: [], _schema: { id: "parley.receipt.head", version: "2.0.0" } }) +
+      line({ event: "sidecar", t: 1, seq: 3, run, source: 2, path: `${run}/2.json`, bytes: 10, sha256: "b".repeat(64), _schema: { id: "parley.sidecar", version: "1.0.0" } });
+    const vs = inspectSegment(seg);
+    expect(vs.filter((v) => v.event === "doctor.gap")).toEqual([]);
+    expect(vs.at(-1)).toMatchObject({ event: "doctor.segment", passed: true, runs: 1, projected: 0, gaps: 0, incomplete: 1 });
+  });
+
+  test("every segment verdict validates against the doctor's output schema", async () => {
+    const Ajv2020 = (await import("ajv/dist/2020.js")).default;
+    const schema = JSON.parse(readFileSync("scripts/doctor.schema.json", "utf8"));
+    const validate = new Ajv2020({ strict: false, allErrors: true }).compile(schema);
+    const { stamp } = await import("./doctor.ts");
+    const run = "01JD3KN8A3B6C1D4E9F2G7H5J8";
+    const seg =
+      JSON.stringify({ event: "history.transform", t: 1, seq: 1, run, name: "n", sha256: "c".repeat(64), _schema: { id: "parley.history.transform", version: "1.0.0" } }) + "\n" +
+      JSON.stringify({ event: "end", t: 2, seq: 3, run, status: 0, receipt: "/w/r.jsonl", redacted: false, _schema: { id: "parley.end", version: "1.0.0" } }) + "\n" +
+      "{}\n" + '{"event":"x","t":1,"seq":9}\n' + '{"broken"';
+    const vs: SegmentVerdict[] = inspectSegment(seg);
+    expect(vs.length).toBeGreaterThan(4);
+    for (const v of vs) expect(validate(stamp(v)), JSON.stringify(validate.errors)).toBe(true);
   });
 
   const cases: [string, (c: ReturnType<typeof conforming>) => Partial<ReturnType<typeof conforming>>, string[]][] = [

@@ -1,15 +1,18 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://flyingrobots.dev/parley/tooling/parley.tooling.doctor/1.0.0",
+  "$id": "https://flyingrobots.dev/parley/tooling/parley.tooling.doctor/1.1.0",
   "title": "doctor output line",
   "description": "One line of output from scripts/doctor.ts. Tooling output, not a protocol message; lives beside the script rather than under schemas/.",
   "type": "object",
   "required": ["event", "_schema"],
   "properties": { "_schema": { "$ref": "#/$defs/stamp" }, "event": { "type": "string" } },
   "oneOf": [
-    { "properties": { "event": { "const": "doctor.violation" }, "rule": { "type": "string", "pattern": "^R[0-9]+\\.[a-z0-9_]+$" }, "section": { "type": "string", "minLength": 1 }, "stream": { "enum": ["stdout", "stderr", "receipt"] }, "line": { "type": "integer", "minimum": 0 }, "problem": { "type": "string", "minLength": 1 }, "_schema": { "$ref": "#/$defs/stamp" } }, "required": ["rule", "section", "stream", "line", "problem"], "additionalProperties": false },
+    { "properties": { "event": { "const": "doctor.violation" }, "rule": { "type": "string", "pattern": "^R[0-9]+\\.[a-z0-9_]+$" }, "section": { "type": "string", "minLength": 1 }, "stream": { "enum": ["stdout", "stderr", "receipt", "history"] }, "line": { "type": "integer", "minimum": 0 }, "problem": { "type": "string", "minLength": 1 }, "_schema": { "$ref": "#/$defs/stamp" } }, "required": ["rule", "section", "stream", "line", "problem"], "additionalProperties": false },
     { "properties": { "event": { "const": "doctor.summary" }, "passed": { "type": "boolean" }, "violations": { "type": "integer", "minimum": 0 }, "lines": { "type": "object", "required": ["stdout", "stderr", "receipt"], "properties": { "stdout": { "type": "integer", "minimum": 0 }, "stderr": { "type": "integer", "minimum": 0 }, "receipt": { "type": "integer", "minimum": 0 } } }, "run": { "type": ["string", "null"] }, "status": { "type": ["integer", "null"] }, "partial": { "type": "integer", "minimum": 0 }, "_schema": { "$ref": "#/$defs/stamp" } }, "required": ["passed", "violations", "lines", "run", "status", "partial"], "additionalProperties": false },
+    { "properties": { "event": { "const": "doctor.projection" }, "run": { "type": "string", "minLength": 1 }, "name": { "type": "string" }, "sha256": { "type": "string" }, "line": { "type": "integer", "minimum": 1 }, "_schema": { "$ref": "#/$defs/stamp" } }, "required": ["run", "name", "sha256", "line"], "additionalProperties": false },
+    { "properties": { "event": { "const": "doctor.gap" }, "run": { "type": "string", "minLength": 1 }, "seq": { "type": "integer", "minimum": 0 }, "_schema": { "$ref": "#/$defs/stamp" } }, "required": ["run", "seq"], "additionalProperties": false },
+    { "properties": { "event": { "const": "doctor.segment" }, "passed": { "type": "boolean" }, "lines": { "type": "integer", "minimum": 0 }, "runs": { "type": "integer", "minimum": 0 }, "projected": { "type": "integer", "minimum": 0 }, "gaps": { "type": "integer", "minimum": 0 }, "torn": { "type": "integer", "minimum": 0 }, "incomplete": { "type": "integer", "minimum": 0 }, "_schema": { "$ref": "#/$defs/stamp" } }, "required": ["passed", "lines", "runs", "projected", "gaps", "torn", "incomplete"], "additionalProperties": false },
     { "properties": { "event": { "const": "error" }, "code": { "type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$" }, "problem": { "type": "string", "minLength": 1 }, "_schema": { "$ref": "#/$defs/stamp" } }, "required": ["code", "problem"], "additionalProperties": false }
   ],
-  "$defs": { "stamp": { "type": "object", "required": ["id", "version"], "additionalProperties": false, "properties": { "id": { "const": "parley.tooling.doctor" }, "version": { "const": "1.0.0" } } } }
+  "$defs": { "stamp": { "type": "object", "required": ["id", "version"], "additionalProperties": false, "properties": { "id": { "const": "parley.tooling.doctor" }, "version": { "const": "1.1.0" } } } }
 }

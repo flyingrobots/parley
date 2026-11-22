@@ -37,10 +37,12 @@ on its own; the spec and each message schema move separately (spec §4.4).
   gap as a `receipt.step`. A run with no transform configured has no opening line, no step and no
   difference in any byte; a transform with no stream configured is equally inert.
 
-  New: `src/check.ts` with `checkRecord`, a bounded JSON Schema checker — this package has no
+  New: `src/check.ts` with `checkRecord` and `schemaSubsetGap`, a bounded JSON Schema checker — this package has no
   runtime dependencies, so re-validation is implemented here for the constructs the protocol's own
-  schemas use, and it reports a keyword it does not implement instead of ignoring it. A test
-  asserts every shipped draft is inside the subset. New exports from `src/history.ts`:
+  schemas use, and it reports a keyword it does not implement instead of ignoring it. The subset
+  check walks the whole schema document before any record is checked, so a construct nested under
+  a property that record happens not to carry cannot slip past; a test asserts every shipped draft
+  is inside the subset. New exports from `src/history.ts`:
   `historyProjection`, `transformDigest`, `transformName`, `isHistorySink`, and the types
   `HistoryTransform`, `HistoryConfig`, `HistoryProjection`. `Run` grows `declareProjection`,
   `noteProjection` and `withheldFromHistory`.

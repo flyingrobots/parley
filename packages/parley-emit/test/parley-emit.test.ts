@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 import { doctor } from "../../../scripts/doctor.ts";
-import { checkRecord, defineTool, main, SCHEMA_SOURCE, SCHEMAS, transformDigest, ulid, writeWholeLine, historyDays, HISTORY_DEFAULT_DAYS, HISTORY_MAX_DAYS, type HistoryTransform, type MainOptions, type Run, type Sink, type ToolSpec } from "../src/index.ts";
+import { checkRecord, defineTool, main, schemaSubsetGap, SCHEMA_SOURCE, SCHEMAS, transformDigest, ulid, writeWholeLine, historyDays, HISTORY_DEFAULT_DAYS, HISTORY_MAX_DAYS, type HistoryTransform, type MainOptions, type Run, type Sink, type ToolSpec } from "../src/index.ts";
 import { inspectSegment } from "../../../scripts/doctor.ts";
 
 const SCHEMAS_DIR = resolve(import.meta.dir, "../../../schemas");
@@ -1245,6 +1245,23 @@ describe("PE-23 the history sink's transform", () => {
     expect(streamHead.extra).toBe(1);
     expect(r.objs.every((o) => o.run === head.run || o.event === "history.transform")).toBe(true);
     expect(r.objs.some((o) => o.event === "forged")).toBe(false);
+
+    // The same, in place: a transform that mutates the record it was handed and returns it must
+    // not hand back its own envelope, so the envelope is taken before it runs.
+    const mutate: HistoryTransform = (rec) => {
+      rec.event = "forged"; rec.t = 0; rec.seq = 999; rec.run = "FORGED";
+      (rec._schema as Record<string, unknown>).version = "9.9.9";
+      delete rec._schema; rec.extra = 2;
+      return rec;
+    };
+    const m = await projected(mutate, (run) => { run.result({ event: "result", value: 3 }, { id: "t.count", version: "1.0.0" }); });
+    expect(warningsOf(m, "history.transform_invalid")).toEqual([]);
+    expect(warningsOf(m, "history.transform_uncheckable")).toEqual([]);
+    const mHead = m.receiptLines[0]!;
+    const mStreamHead = m.objs.find((o) => o.seq === mHead.seq)!;
+    for (const k of ["event", "t", "seq", "run", "_schema"]) expect(mStreamHead[k]).toEqual(mHead[k]);
+    expect(mStreamHead.extra).toBe(2);
+    expect(m.objs.some((o) => o.run === "FORGED")).toBe(false);
   });
 
   test("an invalid body is withheld and warned by seq", async () => {
@@ -1379,7 +1396,9 @@ describe("PE-23 the history sink's transform", () => {
 
   test("a transform that fails on every line cannot warn about its own warning", async () => {
     const always: HistoryTransform = () => { throw new Error("every line"); };
+    let captured: Run | undefined;
     const r = await projected(always, (run) => {
+      captured = run;
       run.step("counted the things", "every line fails");
       run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" });
     });
@@ -1394,6 +1413,8 @@ describe("PE-23 the history sink's transform", () => {
     }
     expect(r.objs.length).toBe(1);
     expect(r.objs[0]!.event).toBe("history.transform");
+    // The gaps, not the warning count, are the ground truth for what the copy is missing.
+    expect(captured!.withheldFromHistory).toBeGreaterThan(warns.length);
   });
 
   test("the transform's identity is its name and the digest of its source", async () => {
@@ -1450,7 +1471,12 @@ describe("PE-23 the history sink's transform", () => {
       }
     }
     // Every shipped draft is inside the subset the checker implements, or the gate fails here.
-    for (const s of SCHEMAS) expect(checkRecord({ event: "x", t: 0, seq: 1, run: "r", _schema: { id: s.id, version: s.version } }, s.schema).unsupported).toBeUndefined();
+    // The walk is over the document, not over one record, so a keyword nested under a property no
+    // sample happens to carry cannot slip past it.
+    for (const s of SCHEMAS) expect(schemaSubsetGap(s.schema), `${s.id}@${s.version}`).toBeNull();
+    expect(schemaSubsetGap({ type: "object", properties: { a: { $ref: "#/$defs/x" } } })).toBe("$ref");
+    expect(schemaSubsetGap({ type: "string", format: "uri" })).toBe("format uri");
+    expect(checkRecord({ a: 1 }, { properties: { a: { uniqueItems: true } } }).unsupported).toBe("uniqueItems");
   });
 
   test("the doctor reports a segment's projection and its withheld gaps", async () => {

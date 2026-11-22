@@ -206,6 +206,10 @@ export class Run {
     const seq = typeof rec.seq === "number" ? rec.seq : -1;
     const stamp = rec._schema as { id?: unknown; version?: unknown } | undefined;
     const pair = `${typeof stamp?.id === "string" ? stamp.id : "?"}@${typeof stamp?.version === "string" ? stamp.version : "?"}`;
+    // The envelope is taken before the transform runs, not read back off the record afterwards: a
+    // transform that mutates the record it was handed and returns it would otherwise hand back its
+    // own envelope, and the receipt line's is the only one that may stand (§1.3).
+    const envelope = { event: rec.event, t: rec.t, seq: rec.seq, run: rec.run, _schema: { id: stamp?.id, version: stamp?.version } };
     let returned: unknown;
     try { returned = p.fn(rec); } catch (e) {
       const msg = e instanceof Error ? e.message || e.name : String(e);
@@ -228,7 +232,7 @@ export class Run {
       this.withhold({ code: "history.transform_uncheckable", problem: `seq ${seq} advertises ${pair}, which this writer holds no schema document for, so the projection by ${p.name} could not be re-validated and that line is not on the shared stream`, remedy: "declare the schema on the command's emitted type (spec §4.2) so a projection of it can be checked, or remove the transform" });
       return null;
     }
-    const out: Record_ = { event: rec.event, t: rec.t, seq: rec.seq, run: rec.run, ...body, _schema: rec._schema };
+    const out: Record_ = { event: envelope.event, t: envelope.t, seq: envelope.seq, run: envelope.run, ...body, _schema: envelope._schema };
     const verdict = checkRecord(out, doc);
     if (!verdict.ok) {
       if ("unsupported" in verdict) {

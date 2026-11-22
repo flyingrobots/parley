@@ -25,6 +25,46 @@ const FORMATS: Record<string, RegExp> = {
   "json-pointer": /^(?:\/(?:[^~/]|~0|~1)*)*$/u,
 };
 
+/**
+ * The first construct in `schema` this checker does not implement, or `null` when the whole
+ * document is inside the subset. This is a property of the schema and not of any one record, so
+ * it is checked **before** a value is walked: a keyword nested under a property the record does
+ * not happen to carry would otherwise go unnoticed, and "we checked the parts we understood" is
+ * exactly the claim this file exists not to make. Memoised per document.
+ */
+export function schemaSubsetGap(schema: unknown): string | null {
+  if (typeof schema !== "object" || schema === null) return walkSchema(schema);
+  const cached = gaps.get(schema as object);
+  if (cached !== undefined) return cached;
+  const gap = walkSchema(schema);
+  gaps.set(schema as object, gap);
+  return gap;
+}
+const gaps = new WeakMap<object, string | null>();
+
+const SUBSCHEMA = ["items", "not", "if", "then", "else", "additionalProperties"] as const;
+const SUBSCHEMA_LISTS = ["anyOf", "allOf", "oneOf"] as const;
+
+function walkSchema(node: unknown): string | null {
+  if (node === true || node === false || node === undefined) return null;
+  if (typeof node !== "object" || node === null || Array.isArray(node)) return "a schema that is not an object or a boolean";
+  const s = node as Record<string, unknown>;
+  for (const k of Object.keys(s)) {
+    if (!SUPPORTED.has(k)) return k;
+    if (k === "format" && !Object.hasOwn(FORMATS, String(s[k]))) return `format ${String(s[k])}`;
+  }
+  if (Array.isArray(s.items)) return "items as a tuple";
+  for (const k of SUBSCHEMA) { const gap = walkSchema(s[k]); if (gap !== null) return gap; }
+  for (const k of SUBSCHEMA_LISTS) {
+    if (!Array.isArray(s[k])) continue;
+    for (const sub of s[k] as unknown[]) { const gap = walkSchema(sub); if (gap !== null) return gap; }
+  }
+  if (s.properties !== null && typeof s.properties === "object" && !Array.isArray(s.properties)) {
+    for (const sub of Object.values(s.properties as Record<string, unknown>)) { const gap = walkSchema(sub); if (gap !== null) return gap; }
+  }
+  return null;
+}
+
 export type CheckResult =
   /** The record satisfies the schema. */
   | { readonly ok: true }
@@ -33,6 +73,7 @@ export type CheckResult =
   /** The schema uses a construct this checker does not implement, so nothing was established. */
   | { readonly ok: false; readonly errors: readonly string[]; readonly unsupported: string };
 
+/** The same refusal, raised from inside the walk of a value as a guard of last resort. */
 class Unsupported extends Error {
   constructor(readonly keyword: string) { super(`the schema uses ${keyword}, which this checker does not implement`); }
 }
@@ -43,6 +84,8 @@ class Unsupported extends Error {
  * result establishes nothing either way, and a caller that must not guess should refuse.
  */
 export function checkRecord(value: unknown, schema: unknown): CheckResult {
+  const gap = schemaSubsetGap(schema);
+  if (gap !== null) return { ok: false, errors: [`the schema uses ${gap}, which this checker does not implement`], unsupported: gap };
   const errors: string[] = [];
   try { validate(schema, value, "", errors); }
   catch (e) {

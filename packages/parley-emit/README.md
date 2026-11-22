@@ -341,7 +341,10 @@ This package has no runtime dependencies, and re-validation needs a JSON Schema 
 schemas use (`type`, `const`, `enum`, `required`, `properties`, `additionalProperties`, `items`,
 the length, size and range bounds, `pattern`, the `json-pointer` format, `not`, `anyOf`, `allOf`,
 `oneOf` and `if`/`then`/`else`) and **reports** a keyword it does not implement rather than
-ignoring it, which is the difference between a bounded checker and a quiet one. A test asserts
+ignoring it, which is the difference between a bounded checker and a quiet one. The subset check
+walks the whole schema document before any record is checked, because a keyword nested under a
+property that record happens not to carry would otherwise go unnoticed and "we checked the parts
+we understood" is the one claim this must not make. A test asserts
 every schema this package ships is inside the subset, so a future draft reaching for `$ref` fails
 there rather than silently going unchecked. A tool whose own type needs a construct outside the
 subset will see its projected lines withheld as `history.transform_uncheckable`, which is the

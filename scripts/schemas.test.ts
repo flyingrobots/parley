@@ -40,11 +40,11 @@ describe("schemas/", () => {
       for (const k of ["event", "t", "seq", "run", "_schema"]) expect(s.required).toContain(k);
     });
 
-    test(`${f}: _schema pins id by const and version to the major (§4.5)`, () => {
+    test(`${f}: _schema pins id and the exact version by const (§4.5)`, () => {
       const sch = s.properties._schema;
       expect(sch.additionalProperties).toBe(false);
       expect(sch.properties.id.const).toBe(id);
-      expect(sch.properties.version.pattern).toBe(`^${m![2]}\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$`);
+      expect(sch.properties.version.const).toBe(`${m![2]}.${m![3]}.${m![4]}`);
     });
 
     test(`${f}: open everywhere except _schema (§4.5)`, () => {
@@ -122,8 +122,11 @@ describe("schemas/", () => {
       expect(error({ ...okError, code: "contrast-unsatisfiable" })).toBe(false);
       expect(error({ ...okError, code: "a.b." })).toBe(false);
     });
-    test("leading-zero version component", () => expect(error({ ...okError, _schema: { id: "parley.error", version: "2.01.0" } })).toBe(false));
-    test("same-major newer minor still validates", () => expect(error({ ...okError, _schema: { id: "parley.error", version: "2.7.0" }, extra: 1 })).toBe(true));
+    test("another version of the same id does not validate against this schema", () => {
+      expect(error({ ...okError, _schema: { id: "parley.error", version: "2.1.0" } })).toBe(false);
+      expect(error({ ...okError, _schema: { id: "parley.error", version: "1.0.0" } })).toBe(false);
+    });
+    test("unknown fields are still accepted at the exact version", () => expect(error({ ...okError, extra: 1 })).toBe(true));
     test("receipt head without tool or v", () => {
       const { tool, ...noTool } = okHead;
       const { v, ...noV } = okHead;

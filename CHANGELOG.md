@@ -7,6 +7,16 @@ The spec and each message schema are versioned separately from this package.
 
 ### Changed
 
+- §4.5 and §4.6 amended: the same-major promise did not hold for open schemas (a minor that adds
+  an optional typed field rejects an older line carrying another type under that name). Full
+  validation is now against the schema for the exact advertised `(id, version)`; `_schema.version`
+  is pinned by `const`; a reader without the exact schema may check the version-independent core
+  and must report partial, never validation; released versions are snapshotted immutably under
+  `schemas/released/`; fixtures pin a commit or digest for drafts. (flyingrobots/parley#8)
+- §2.3: cache eligibility is checked on both sides; a secret supplied to the current invocation
+  or a cached receipt carrying `redacted` disqualifies replay; matching `inv` alone never
+  authorises skipping an effect or reusing an answer. (flyingrobots/parley#13)
+
 - Spec `0.1.0` → `0.2.0`. `run` joins the envelope every line carries (§1.3), so a line read out
   of a shared stream or an interleaved terminal can be attributed without state.
   (flyingrobots/parley#6)

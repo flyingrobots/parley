@@ -77,9 +77,8 @@
           "const": "parley.run.bootstrap"
         },
         "version": {
-          "type": "string",
-          "pattern": "^1\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
-          "description": "Any 1.x.y: a reader validates every line of the major it was built against and ignores fields it does not know (spec \u00a74.5)."
+          "const": "1.1.1",
+          "description": "Full validation is against the schema for this exact id and version (spec \u00a74.5, \u00a74.6)."
         }
       }
     }

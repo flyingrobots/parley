@@ -33,8 +33,10 @@ The spec and each message schema are versioned separately from this package.
 - §2.1: `session` is optional; a program MUST carry it when supplied and MUST NOT invent one.
 - §3: the bootstrap line is the first line a run emits, on whichever stream, not only the first
   line of stdout. It is not itself mirrored into the receipt, whose first line is the head.
-- `parley.error` `1.0.0` → `2.0.0`: `run` required, `seq` at least `1`, `_schema` pinned (now by `const` to the exact version; see the §4.5 entry above).
-- `parley.receipt.head` `1.0.0` → `2.0.0`: `seq` at least `1`, `_schema` pinned (now by `const` to the exact version; see the §4.5 entry above).
+- `parley.error` `1.0.0` → `2.0.0`: `run` required, `seq` at least `1`, `_schema` pinned (now by
+  `const` to the exact version; see the §4.5 entry above).
+- `parley.receipt.head` `1.0.0` → `2.0.0`: `seq` at least `1`, `_schema` pinned (now by `const`
+  to the exact version; see the §4.5 entry above).
 - `parley.run.bootstrap` `1.0.0` → `1.1.0`: opened (top level and `paths`), `_schema` pinned
   (now by `const` to the exact version; see the §4.5 entry above).
 - §5 gains a complete receipt-head example and §6's error example is now complete, so the
@@ -67,8 +69,10 @@ The spec and each message schema are versioned separately from this package.
   flyingrobots/parley#26): `t` is never negative (§1.3); `tool`, `v`, `run`, `inv` and `session`
   are non-empty (§2.1); `code` is two or more dot-separated segments of lowercase letters, digits
   and underscores and `problem` is non-empty (§6); `_schema.version` is exact (§4.5), which
-  rejects leading-zero components with everything else. These narrow `parley.run.bootstrap` `1.1.1` in place under the draft rule;
-  the earlier `1.1.1` entry below described its first, description-only change. A shared envelope schema file was
+  rejects leading-zero components with everything else. These narrow `parley.run.bootstrap` `1.1.1`
+in place under the draft rule;
+  the earlier `1.1.1` entry below described its first, description-only change. A shared envelope
+schema file was
   considered and not adopted: `scripts/schemas.test.ts` enforces the envelope uniformly across
   every schema, and a cross-file `$ref` would force every consumer to preload schemas.
 - `parley.receipt.head` requires `tool` and `v` (§5 MUST list), so a receipt read on its own says
@@ -77,7 +81,9 @@ The spec and each message schema are versioned separately from this package.
 - §5.3 redaction rule: secrets are declared in the command description's `secrets` list (§4.3);
   their values are replaced with `[redacted]` before the head is written; the head's new
   `redacted` field records argv indexes, resolved JSON Pointers, input indexes and env names and is
-  present whenever a declared secret was supplied. §2.2: `inv` never incorporates a declared secret, so a receipt
+  present whenever a declared secret was supplied. §2.2: `inv` never incorporates a declared
+  secret,
+so a receipt
   is not an oracle for it; §2.3 and §5.3: a redacted receipt is never replayed from or served
   from cache. (flyingrobots/parley#13)
 - §4.5: a schema version still under `Unreleased` is a draft and may change in place. The

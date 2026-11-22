@@ -132,8 +132,9 @@ receipt.
 
 ### 2.3 What `inv` buys
 
-Each of these holds for receipts that carry no `redacted` (§5.3); a redacted receipt shares its
-`inv` with every run that differed only in a secret, so none of them applies to it.
+Each of these holds only where no declared secret is involved on either side: the receipt carries
+no `redacted` (§5.3) and the invocation comparing against it supplied none. A redacted receipt
+shares its `inv` with every run that differed only in a secret, so none of them applies to it.
 
 - **Change detection.** Same `inv`, same result ⇒ nothing moved.
 - **Non-determinism detection, free.** Same `inv`, *different* result ⇒ the program is not
@@ -152,9 +153,13 @@ secret was supplied to the current invocation, or when the cached receipt carrie
 §2.2 keeps secrets out of it. Whether a declared secret was supplied is known from `argv` and the
 environment before the head is written (§5.3), so both sides are decidable at the moment of
 choice. The rule reaches declared secrets. A credential the program obtains some other way, from
-a keychain, a credential helper or a token refresh, is outside it unless declared; a program that
-uses such credentials **MUST** declare them (§4.3) or **MUST NOT** short-circuit at all. The same
-two-sided rule binds a reader that serves cached answers (§5.3).
+a keychain, a credential helper or a token refresh, is outside it; a program that uses such
+credentials **MUST** route them through a declared argument or environment variable (§4.3) or
+**MUST NOT** short-circuit at all, because a reader cannot see them and this rule offers it no
+protection for them. The same two-sided rule binds a reader that serves cached answers (§5.3): it
+decides the current side from that invocation's own receipt head, whose `redacted` is mandatory
+when a declared secret was supplied, or from its declaration together with its `argv` and
+environment, and **MUST NOT** serve when it holds neither.
 
 ---
 
@@ -259,7 +264,9 @@ A schema version whose changelog entry is still under `Unreleased` is a draft an
 in place; a draft change is recorded in that entry rather than as a bump. A release is a version
 heading in `CHANGELOG.md` that names the schema versions it publishes. A released schema version
 is immutable: the release snapshots it, and the snapshot is what the pair resolves to from then
-on (§4.6). A draft's version string does not identify exact bytes, so a fixture or test outside
+on (§4.6). The same change that snapshots a version bumps the draft to a new one, since a draft
+may not claim a released pair. A draft's version string does not identify exact bytes, so a fixture
+or test outside
 the repository that holds the draft **MUST** pin a source commit or the schema's digest, and a
 reader built from a draft holds whichever bytes it shipped and **SHOULD** state their commit or
 digest until a release exists.
@@ -305,7 +312,7 @@ applied; and a digest per declared input.
  "argv":["theme-book","count","--format","css","--token","[redacted]"],
  "resolved":{"command":"count","format":"css","cwd":"/work/site","token":"[redacted]"},
  "redacted":{"argv":[5],"resolved":["/token"]},
- "inputs":[{"path":"src/tokens.css","sha256":"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"}],
+"inputs":[{"path":"src/tokens.css","sha256":"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"}],
  "effects":{"reads":["src/**/*.css"],"writes":[],"network":false,"idempotent":true},
  "_schema":{"id":"parley.receipt.head","version":"2.0.0"}}
 ```
@@ -359,7 +366,9 @@ collide unless the program redacts. Privacy wins:
   the declaration is the floor, not the ceiling. An undeclared value redacted this way is still in
   the `inv` preimage (§2.2 excludes declared secrets only), so declaring it is the real protection.
 - A reader **MUST NOT** replay from, or serve a cached answer for, a receipt that carries
-  `redacted`, nor serve one to an invocation that supplied a declared secret (§2.3). Two invocations that differ only in a secret, for example two tokens
+  `redacted`, nor serve one to an invocation that supplied a declared secret (§2.3). Two
+  invocations
+that differ only in a secret, for example two tokens
   selecting two accounts, have the same `inv` (§2.2 excludes the secret) and identical receipts,
   and their answers may differ.
 

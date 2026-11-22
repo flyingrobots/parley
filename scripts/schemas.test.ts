@@ -3,11 +3,11 @@
 import { describe, expect, test } from "bun:test";
 import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
-import { readdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { check } from "./check-examples.ts";
 
 import { schemaFiles, loadSchemas } from "./check-examples.ts";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -176,6 +176,7 @@ describe("schemas/", () => {
     expect([...loadSchemas(dir).byKey.keys()].sort()).toEqual(["parley.error@1.9.0", "parley.error@2.0.0"]);
     writeFileSync(join(dir, "released", "parley.error", "2.0.0.schema.json"), JSON.stringify(draft));
     expect(() => loadSchemas(dir)).toThrow(/both claim parley.error@2.0.0/);
+    rmSync(dir, { recursive: true, force: true });
   });
 
   test("every schema is exercised by a validated example in the repository", () => {

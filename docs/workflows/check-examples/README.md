@@ -47,7 +47,7 @@ A document whose `_schema.id` does not start with `parley.` is tool-owned (for e
 The checker resolves `_schema.version` by exact match against the version in each schema's `$id`.
 That is the same rule a reader follows under spec §4.5 and §4.6: full validation is against the
 schema for the exact advertised `(id, version)` pair, so an example stamped `2.1.0` while the
-only schema is `2.0.0` is reported as `unknown_schema`. The loader walks `schemas/` recursively,
+only schema is `2.0.0` is reported as `unknown_schema`. The loader reads `schemas/` and `schemas/released/<id>/`,
 so a released snapshot at `schemas/released/<id>/<version>.schema.json` resolves by the same exact
 pair once one exists; a draft and a snapshot that claim the same pair are a configuration error
 and fail the invariant test.

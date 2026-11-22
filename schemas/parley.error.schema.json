@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flyingrobots.dev/parley/schemas/parley.error/1.0.0",
+  "title": "parley error",
+  "description": "Errors are data. measured, limit and remedy are what make an error actionable in one step rather than several.",
+  "type": "object",
+  "required": ["event", "t", "seq", "code", "problem", "_schema"],
+  "properties": {
+    "event": { "const": "error" },
+    "t": { "type": "integer" },
+    "seq": { "type": "integer", "minimum": 0 },
+    "code": { "type": "string", "description": "Stable, dotted identifier. Never a prose message." },
+    "problem": { "type": "string", "description": "What is wrong, in one sentence." },
+    "measured": { "description": "The value observed, when the failure is a threshold." },
+    "limit": { "description": "The threshold that was not met." },
+    "remedy": { "type": "string", "description": "The lever to pull. Omit rather than invent one." },
+    "remedy_target": { "type": "string", "description": "What the remedy applies to." },
+    "retryable": { "type": "boolean" },
+    "_schema": {
+      "type": "object",
+      "required": ["id", "version"],
+      "properties": { "id": { "type": "string" }, "version": { "type": "string" } }
+    }
+  }
+}

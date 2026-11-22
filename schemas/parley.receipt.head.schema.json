@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flyingrobots.dev/parley/schemas/parley.receipt.head/1.0.0",
+  "title": "parley receipt head",
+  "description": "First line of a receipt file. Carries what the bootstrap line deliberately omitted, so stdout stays small while proof stays complete.",
+  "type": "object",
+  "required": ["event", "t", "seq", "run", "inv", "argv", "resolved", "inputs", "_schema"],
+  "properties": {
+    "event": { "const": "receipt.head" },
+    "t": { "type": "integer" },
+    "seq": { "const": 0 },
+    "run": { "type": "string" },
+    "inv": { "type": "string" },
+    "session": { "type": "string" },
+    "argv": { "type": "array", "items": { "type": "string" }, "description": "Raw, as received." },
+    "resolved": { "type": "object", "description": "After defaults, environment and path resolution. The gap between this and argv is where bugs live." },
+    "inputs": {
+      "type": "array",
+      "description": "Every declared input, digested by content. inv is computed over these bytes, never over paths.",
+      "items": {
+        "type": "object",
+        "required": ["path", "sha256"],
+        "properties": { "path": { "type": "string" }, "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" } }
+      }
+    },
+    "effects": {
+      "type": "object",
+      "properties": {
+        "reads": { "type": "array", "items": { "type": "string" } },
+        "writes": { "type": "array", "items": { "type": "string" } },
+        "network": { "type": "boolean" },
+        "idempotent": { "type": "boolean" }
+      }
+    },
+    "_schema": {
+      "type": "object",
+      "required": ["id", "version"],
+      "properties": { "id": { "type": "string" }, "version": { "type": "string" } }
+    }
+  }
+}

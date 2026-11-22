@@ -2,9 +2,7 @@
 
 Evidence lives in `packages/parley-emit/test/`. Where a case says the run conforms, it runs the
 doctor (`scripts/doctor.ts`) over the captured streams and asserts zero violations against the
-repository's draft schemas; cases about a single field or a refusal assert that field. PE-12a
-excludes the doctor's rule R3 because its 300 records are tool-owned and carry no schema the
-doctor knows.
+repository's draft schemas; cases about a single field or a refusal assert that field.
 
 | ID | Requirement | Spec |
 | --- | --- | --- |
@@ -28,7 +26,7 @@ doctor knows.
 | PE-18 | Every `console` function is captured, from before the resolvers run and in a real process; overlapping runs restore the console; a failing renderer is reported once; a throw during discovery is an error line | §1.2, §6 |
 | PE-19 | Tree inputs skip `.parley`, honour `exclude` and follow content; stdin and absolute inputs are digested; `receiptExtra` is scrubbed | §2.2, §5.3 |
 | PE-20 | Smaller gaps: prototype names are not commands; `end(0)` after an error is refused; state-directory retention is declared; an empty secret is recorded; the ignore file is created whole | §4.3, §3.4, §5.2, §5.3 |
-| PE-21 | From the blind pass over the repaired head: a stalled pipe reader does not fail stdout; a secret as a number, boolean or key is redacted and out of `inv`; nested secrets leave no tail; a secret in the session, tool name or version is a startup failure; a failed sidecar keeps the record inline; a startup problem never carries a secret | §5.4, §5.3, §2.2, §5, §3.2 |
+| PE-21 | From the blind pass and the checker: a stalled pipe reader does not fail stdout; a secret as a number, boolean or key is redacted and out of `inv`, while the writer's own scalars are untouched; nested secrets leave no tail; a secret in the session is a startup failure; a failed sidecar keeps the record inline; a startup problem never carries a secret | §5.4, §5.3, §2.2, §5, §3.2 |
 
 | ID | Case | Oracle | Evidence | Status |
 | --- | --- | --- | --- | --- |
@@ -59,7 +57,7 @@ doctor knows.
 | PE-10a | `--schema` | a run: bootstrap, one `command` per command, one `schema` per emitted type, `end`; doctor passes | `--schema is a run` | implemented |
 | PE-10b | `<command> --help` | the `command` line, a `schema` for its result and one per error type | `--help describes one command` | implemented |
 | PE-11a | Receipt copy of a result over 65,536 bytes | `sidecar` event in its place; file exists; `bytes` and `sha256` match the stored bytes; stdout copy intact | `a large record is stored as a sidecar` | implemented |
-| PE-12a | 300 random records with control characters, newlines and unicode | every line on every stream parses; records round-trip | `every line on every stream is one JSON object` | implemented |
+| PE-12a | 300 random records with control characters, newlines and unicode | every line on every stream parses; records round-trip; doctor passes (the tool-owned records are reported as unvalidated, not as violations) | `every line on every stream is one JSON object` | implemented |
 | PE-12b | A library calls `console.log` and `console.error` during the run | stdout and stderr carry only protocol lines; the receipt records the captured text | `library console output is captured` | implemented |
 | PE-12c | `--human` | stdout is the tool's prose alone, no bootstrap or end line on success; the receipt's first line is the head | `--human renders prose and keeps the receipt` | implemented |
 | PE-13a | `src/schemas.ts` against `schemas/` | every digest matches; the commit is recorded | `shipped schemas match the drafts` | implemented |
@@ -93,7 +91,8 @@ doctor knows.
 | PE-21a | 300 KB of results into a shell pipe whose reader sleeps 1.5 s (real process) | exit 0, stderr empty, 62 lines received, last is `end` status 0; fails with a one-shot `writeSync` sink | `a stalled pipe reader does not fail the stdout sink` | implemented |
 | PE-21b | `--token 4321` with `resolved.pin = Number(...)` and the value as a key | `pin` is `[redacted]`, the key is renamed, pointers recorded, equal `inv` for two PINs, value absent from the receipt | `a secret parsed to a number or used as a key is still redacted and stays out of inv` | implemented |
 | PE-21c | Secrets `abc` and `abcdef` | every occurrence is exactly `[redacted]`; no `def` remains | `a secret that contains another secret leaves no tail behind` | implemented |
-| PE-21d | Session `ses_s3s_1` with secret `s3s`; secret equal to the version | `startup.secret_in_identity`, exit 3, value absent from stderr | `a secret inside the session, tool name or version is a startup failure` | implemented |
+| PE-21d | Session `ses_s3s_1` with secret `s3s`; secret equal to the version | the session case is `startup.secret_in_identity`, exit 3, value absent from stderr; the version case runs, prints `v` as it is, and the head is first | `a secret inside the session is a startup failure; one inside the public tool version is not` | implemented |
+| PE-21g | Secrets `false` and `4729` under `--dry-run` | `dry_run` true, `effects.network` false, `end.status` 0 intact; the tool's own `false` and `4729` redacted; doctor passes | `a secret equal to false or a small number leaves the writer's own scalars alone` | implemented |
 | PE-21e | A file where the sidecar directory should go | the result with its rows is inline in the receipt; status 4; doctor passes | `when a sidecar cannot be written the record is kept inline and the bundle is complete` | implemented |
 | PE-21f | `resolved` throws with the secret in its message | `startup.arguments_invalid` whose problem carries `[redacted]` and not the value | `a startup failure's problem never carries the secret` | implemented |
 

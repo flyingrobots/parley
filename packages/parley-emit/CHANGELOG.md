@@ -57,12 +57,16 @@ on its own; the spec and each message schema move separately (spec §4.4).
 
 - **`declaredProjection(values)`, a built-in history transform** (flyingrobots/parley#59): the
   same §5.3 scrubber the receipt's own redaction uses, applied to the stream copy's body with a
-  second declared set — longest value first, keys renamed, the envelope never touched. An empty
-  declared set returns `undefined` rather than an identity function, so no
-  `parley.history.transform` line is ever written for it; the transform's name on the stream is
-  always the literal `declaredProjection` and its digest never discloses what was declared, since
-  the digest is of the function's source text and the values only ever reach it as a closed-over
-  variable. New export from `src/transforms/declared.ts`, re-exported from `src/index.ts`.
+  second declared set — longest value first, keys renamed, the envelope never touched, nor the
+  writer's own identity scalars (`DIGEST_KEYS`, now exported from `src/run.ts`) on a writer-built
+  record it might also be handed — found in self-review: without it, a declared value that
+  coincided with the tool's own name would silently rename `tool` on the stream's head, since that
+  field carries no pattern a validator would reject a corrupted value by. An empty declared set
+  returns `undefined` rather than an identity function, so no `parley.history.transform` line is
+  ever written for it; the transform's name on the stream is always the literal
+  `declaredProjection` and its digest never discloses what was declared, since the digest is of
+  the function's source text and the values only ever reach it as a closed-over variable. New
+  export from `src/transforms/declared.ts`, re-exported from `src/index.ts`.
 
 - The shared history stream (spec §8, informative): an opt-in second sink that receives the bytes
   of the local receipt, so one timeline spans tools, repositories, agents and people. Opt in with

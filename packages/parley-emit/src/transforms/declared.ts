@@ -5,6 +5,7 @@
 // renaming subtly wrong (spec §5.3). This is the same code path the receipt's own redaction uses,
 // applied to the body alone with a second declared set, so its behaviour on nested keys,
 // longest-first order and key renaming is already specified and tested in redact.ts.
+import { DIGEST_KEYS } from "../run.ts";
 import type { HistoryTransform } from "../history.ts";
 import { scrub } from "../redact.ts";
 
@@ -14,6 +15,14 @@ import { scrub } from "../redact.ts";
  * a key that carries a declared value is renamed. The envelope — `event`, `t`, `seq`, `run` and
  * `_schema` — is never its to touch; it is read off the record and put back untouched, before the
  * writer reattaches its own anyway (§1.3).
+ *
+ * This runs on whatever record the receipt holds, which may be a writer-built one (`receipt.head`,
+ * `end`) and not only a tool's own. A writer-built record's own identity scalars — `tool`, `v`,
+ * `inv`, `sha256`, `name`, `id`, `version`, `code` — carry no pattern a validator would reject a
+ * corrupted one by, so a declared value that happens to coincide with, say, the tool's own name
+ * would otherwise silently rename `tool` on the stream's head with nothing to catch it (the same
+ * reason `src/run.ts` exempts these keys, `DIGEST_KEYS`, from the receipt's own redaction of a
+ * writer-built record). This exempts them here too, at any depth, the same way.
  *
  * An empty declared set is the identity transform, and this returns `undefined` for it rather
  * than a function that merely behaves like one: `MainOptions.history.transform` is then itself
@@ -34,7 +43,7 @@ export function declaredProjection(values: readonly string[]): HistoryTransform 
   if (declared.size === 0) return undefined;
   return function declaredProjection(record: Record<string, unknown>): Record<string, unknown> {
     const { event, t, seq, run, _schema, ...body } = record;
-    const scrubbed = scrub(body, declared) as Record<string, unknown>;
+    const scrubbed = scrub(body, declared, "", [], { skipKeys: DIGEST_KEYS }) as Record<string, unknown>;
     return { event, t, seq, run, ...scrubbed, _schema };
   };
 }

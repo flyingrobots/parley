@@ -28,7 +28,7 @@ const RESULT = {
   },
 };
 
-function tool(): ToolSpec {
+function tool(over: Partial<ToolSpec> = {}): ToolSpec {
   return defineTool({
     name: "t", version: "0.0.1",
     commands: {
@@ -40,6 +40,7 @@ function tool(): ToolSpec {
       },
     },
     retention: { count: 10 },
+    ...over,
   });
 }
 
@@ -60,11 +61,12 @@ function segmentObjs(hist: string): Record<string, unknown>[] {
   return segmentText(hist).trimEnd().split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>);
 }
 
-async function runWithTransform(transform: HistoryTransform | undefined, body: (run: Run) => void) {
+async function runWithTransform(transform: HistoryTransform | undefined, body: (run: Run) => void, over: Partial<ToolSpec> = {}) {
   const { dir, env, hist } = historyScratch();
   const stdout = new Capture(), stderr = new Capture();
   const extra: Partial<MainOptions> = transform === undefined ? {} : { history: { transform } };
-  const status = await main(tool(), ["t", "count"], async (run) => { await body(run); }, {
+  const spec = tool(over);
+  const status = await main(spec, [spec.name, "count"], async (run) => { await body(run); }, {
     cwd: dir, env, stdout, stderr, resolved: (args) => ({ command: "count", args }), ...extra,
   });
   const boot = stdout.objs[0] as { paths?: { receipt?: string } };
@@ -132,6 +134,26 @@ describe("PE-24 the built-in declaredProjection", () => {
     // distinguishes this step from the writer's own projection-explaining step.
     const step = objs.find((o) => o.event === "receipt.step" && String(o.because).startsWith("the word also appears")) as { decision: string };
     expect(step.decision).toBe("logged the [redacted]");
+  });
+
+  test("a declared value that coincides with the tool's own name does not corrupt the head's identity", async () => {
+    // `tool`, `v` and the other writer-owned identity scalars carry no pattern a validator would
+    // reject a corrupted value by (they are plain `type: string`), so a coincidental match would
+    // otherwise rename them on the stream's head with nothing to catch it. `argv` is not exempt:
+    // it is the tool's own caller-chosen data, and a declared value legitimately scrubs there.
+    const transform = declaredProjection(["dp-host-marker"]);
+    const r = await runWithTransform(transform, (run) => {
+      run.step("noted a mention", "a declared value elsewhere in the body is still scrubbed", { note: "dp-host-marker seen" });
+      run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" });
+    }, { name: "dp-host-marker" });
+    expect(r.status).toBe(0);
+    const head = segmentObjs(r.hist).find((o) => o.event === "receipt.head") as { tool: string; v: string; argv: string[] };
+    expect(head.tool).toBe("dp-host-marker");
+    // `argv` is the tool's own caller-chosen data, not a writer identity scalar, so the same
+    // declared value legitimately scrubs there even though it leaves `tool` alone above.
+    expect(head.argv).toEqual(["[redacted]", "count"]);
+    const step = segmentObjs(r.hist).find((o) => o.event === "receipt.step" && o.decision === "noted a mention") as { detail: Record<string, unknown> };
+    expect(step.detail).toEqual({ note: "[redacted] seen" });
   });
 
   test("declaredProjection's name and digest never disclose what it declared", async () => {

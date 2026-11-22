@@ -167,7 +167,10 @@ await main(tool, argv, handler, { history: { transform: declaredProjection(["db-
 It is the **same** scrubber `src/redact.ts` uses for a declared secret (§5.3), applied to the
 stream copy's body with `values` as a second declared set: longest value first, so one value that
 contains another is replaced whole, and a key that carries a declared value is renamed. It never
-touches the envelope the writer reattaches regardless.
+touches the envelope the writer reattaches regardless, nor the writer's own identity scalars
+(`tool`, `v`, `inv`, `sha256`, `name`, `id`, `version`, `code` — `DIGEST_KEYS` in `src/run.ts`) on
+a writer-built record it might also be handed, since those carry no pattern a validator would
+reject a corrupted value by. `argv` is not one of them, and scrubs normally.
 
 An empty `values` returns `undefined`, not an identity function, so `MainOptions.history.transform`
 is itself `undefined`: the writer never builds a projection for it and the stream copy carries no

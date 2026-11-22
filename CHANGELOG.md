@@ -127,8 +127,12 @@ The spec and each message schema are versioned separately from this package.
   the writer's own §5.3 scrubber for it rather than leaving every caller to get longest-first
   replacement or key renaming subtly wrong a second time. An empty declared set configures no
   transform at all (`declaredProjection([])` is `undefined`), and the transform's name and digest
-  on the stream's opening line never disclose what was declared. No schema moves. PE-24a to
-  PE-24e, with the doctor as the oracle.
+  on the stream's opening line never disclose what was declared. Self-review found a latent
+  defect of its own: the scrub ran over a writer-built record's identity scalars too, so a
+  declared value that coincided with the tool's own name would have silently renamed `tool` on
+  the stream's head, with no schema pattern to catch it; `DIGEST_KEYS` (now exported from
+  `src/run.ts`) exempts the same keys here that the receipt's own redaction already exempts for a
+  writer-built record. No schema moves. PE-24a to PE-24f, with the doctor as the oracle.
 
 - **The purpose orders a read's answer** (flyingrobots/parley#49). Spec §9 asks the purpose to
   shape the result and says it is the ranking function, not a filter applied afterwards.

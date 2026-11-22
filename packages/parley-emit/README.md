@@ -372,6 +372,15 @@ tail, and a key that carries a declared value is renamed. The envelope — `even
 even when a declared value happens to equal one of those fields' own value (the literal event name
 `"result"`, say).
 
+**The writer's own identity scalars are exempt too, at any depth.** A record the receipt holds may
+itself be writer-built (`receipt.head`, `end`), and fields like `tool`, `v`, `inv`, `sha256`,
+`name`, `id`, `version` and `code` carry no pattern a validator would reject a corrupted value by
+— they are plain strings. Without this, a declared value that happened to coincide with, say, the
+tool's own name would silently rename `tool` on the stream's head, with nothing to catch it. This
+is the same `DIGEST_KEYS` the receipt's own redaction of a writer-built record already exempts
+(`src/run.ts`); `argv` is not one of them, so the same declared value legitimately still scrubs
+there, since it is the tool's own caller-chosen data.
+
 **An empty declared set configures no transform at all.** `declaredProjection([])` returns
 `undefined` rather than an inert identity function, so `MainOptions.history.transform` is itself
 `undefined`: the writer's own check never builds a projection for it, and the stream copy carries

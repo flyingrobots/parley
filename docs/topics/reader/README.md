@@ -3,13 +3,13 @@
 How a read against parley history states what it wants, and what a result says about itself. This
 page is a reference for the two message types that exist today, `parley.query` and `parley.lens`.
 
-**The entry point exists; the ranking and the digest do not.** What is on `main` is this
+**The entry point and the ranking exist; the digest does not.** What is on `main` is this
 representation, its two draft schemas under [`schemas/`](../../../schemas/README.md), the examples
-below, and a read in the reader library that states these fields, is refused without them and is
-recorded as a `parley.query` event — [parley-read](../parley-read/README.md#making-a-read). What
-that read does **not** do is project to the view, bound the answer to the budget or emit a
-`parley.lens`: those are
-[flyingrobots/parley#49](https://github.com/flyingrobots/parley/issues/49) and
+below, and a read in the reader library that states these fields, is refused without them, is
+recorded as a `parley.query` event, and comes back **ordered by its view** —
+[parley-read](../parley-read/README.md#making-a-read) and
+[how the purpose orders the answer](../parley-read/README.md#how-the-purpose-orders-the-answer).
+What that read does **not** do is bound the answer to the budget or emit a `parley.lens`: that is
 [flyingrobots/parley#50](https://github.com/flyingrobots/parley/issues/50), and the drill-down is
 [flyingrobots/parley#51](https://github.com/flyingrobots/parley/issues/51). Spec
 [§9](../../../spec/parley-v0.2.md) is informative and unchanged; the reasoning behind the three
@@ -38,13 +38,22 @@ window get the same answer; that is what makes the view the thing a result can b
 Five tokens. Four are projections of a receipt stream that the treatment's taxonomy recognises as
 distinct families, and the fifth is the identity.
 
-| `view` | The answer it asks for |
-| --- | --- |
-| `what-ran` | One line per run: tool, version, status, time |
-| `what-failed` | The errors, the warnings and the ends of runs that did not succeed |
-| `what-changed` | Subject-matter writes, and the inputs they consumed |
-| `how-it-decided` | The decisions and their reasons — the `receipt.step` records |
-| `everything` | Every record in the window, in `(run, seq)` order |
+| `view` | The answer it asks for | Implies a change |
+| --- | --- | --- |
+| `what-ran` | One line per run: tool, version, status, time | no |
+| `what-failed` | The errors, the warnings and the ends of runs that did not succeed | no — failure is already its whole surface |
+| `what-changed` | Subject-matter writes, and the inputs they consumed | **yes** |
+| `how-it-decided` | The decisions and their reasons — the `receipt.step` records | no |
+| `everything` | Every record in the window, in `(run, seq)` order | no — it is the identity |
+
+The third column is a **derivation from this vocabulary, not a field**. `parley.query` carries
+nothing saying "this purpose implies a change"; of the five tokens exactly one is an answer about a
+change, and that is the one §9's own example — "I am about to change this program's audit path" —
+asks for. A read under that view puts what failed above what succeeded, because a read made in
+order to change something is a read made in order not to repeat a failure. The rules, and the
+surface each token names, are on
+[the reader library's page](../parley-read/README.md#how-the-purpose-orders-the-answer); adding a
+token here has to decide both.
 
 Closed, for two reasons. Declaring a view then costs one token, which is the only answer to §9's
 ceremony failure mode that does not end in callers writing noise. And a view that is free text
@@ -155,10 +164,10 @@ The lens of the result that answers it, naming the failed run of this specificat
 - A read that cannot be answered within the declared budget should say so, and say what budget
   would suffice. Nothing in `parley.lens` 1.0.0 expresses that, and the read on `main` does not
   bound its answer at all ([flyingrobots/parley#50](https://github.com/flyingrobots/parley/issues/50)).
-- The view is recorded and projects nothing yet
-  ([flyingrobots/parley#49](https://github.com/flyingrobots/parley/issues/49)), and the digest a
-  lens precedes has its own message type and its own bound (#50). Until then a read answers every
-  view the same way, with its window in time order.
+- The view **orders** a read's answer and the digest a lens precedes has its own message type and
+  its own bound ([flyingrobots/parley#50](https://github.com/flyingrobots/parley/issues/50)). Until
+  then every view answers with the whole window, so the view changes the order and never the
+  contents, and no result has a loss to state.
 - Whether the view vocabulary is the right five is a question for the first reader built on it.
-  It is five tokens in a draft schema, not a settled list, and the read on `main` has not yet
-  exercised four of them as anything but a recorded token.
+  It is five tokens in a draft schema, not a settled list. All five now rank an answer, so each has
+  a surface and a test behind it, but no caller outside this repository has asked for one yet.

@@ -3,10 +3,11 @@
 The reader library: `@flyingrobots/parley-read`, under `packages/parley-read`. It opens the
 receipt bundles a repository has accumulated and returns every run's records, under the rules the
 [specification](../../../spec/parley-v0.2.md) binds a reader to, and it answers a read over those
-records — refused unless it states who it is for and what it wants, and recorded as a run of its
-own. This page is the reference for what the package does on `main`; the package
-[README](../../../packages/parley-read/README.md) is the front door with a captured load and a
-captured read, and the [test plan](test-plan.md) beside this page is the contract ledger.
+records — refused unless it states who it is for and what it wants, recorded as a run of its own,
+and ordered by the purpose it states. This page is the reference for what the package does on
+`main`; the package [README](../../../packages/parley-read/README.md) is the front door with a
+captured load, a captured read and a captured ranking, and the [test plan](test-plan.md) beside
+this page is the contract ledger.
 
 It is a library with no command, and it is not published. The repository's `bun test` runs its
 suite and `bun run typecheck` checks it strictly, over `src`, `scripts` and `test`.
@@ -16,9 +17,12 @@ suite and `bun run typecheck` checks it strictly, over `src`, `scripts` and `tes
 | Export | Job |
 | --- | --- |
 | `loadReceipts(opts)` | Every run in both receipt locations for a working directory, as bundles; `opts` takes `cwd`, `env`, `home`, `sidecars` and a `validate` validator |
-| `queryReceipts(request, opts)` | A read: refused without an asker, a view and a window, else recorded as a `parley.query` event through the writer and answered with the window's records in time order; `opts` takes the loader's options plus `tool`, `stdout`, `stderr`, `session` and `now` |
+| `queryReceipts(request, opts)` | A read: refused without an asker, a view and a window, else recorded as a `parley.query` event through the writer and answered with the window's records **ordered by the view**; `opts` takes the loader's options plus `tool`, `stdout`, `stderr`, `session` and `now` |
 | `planQuery(request)` | The refusal rules and the budget default, as a pure function: it reads nothing, writes nothing and records nothing |
 | `queryRecord(query)` | The `parley.query` payload for an accepted read, without the envelope the writer owns |
+| `rankRecords(query, records)` | The ranking, as a pure function from an accepted query and records to the same records in one stated order |
+| `runOutcomes(records)`, `onViewSurface(view, record)`, `onFailureSurface(record)`, `impliesChange(view)` | The four questions the ranking asks, each answerable on its own |
+| `TIERS`, `OUTCOMES`, `CHANGE_VIEWS` | The three tiers best first, the three outcomes best-known-worst first, and the views that imply a change |
 | `VIEWS`, `DEFAULT_BUDGET`, `QUERY_SCHEMA`, `NO_RETENTION` | The five view tokens, the one documented budget default (`{"records": 20}`), the pair a read emits, and the retention policy a read states |
 | `readReceiptFile(path, opts)` | One receipt file, as a `FileRead`: its line count, the runs it holds, its quarantined lines and one bundle per run |
 | `receiptLocations(opts)`, `repoReceiptDir(cwd)`, `stateReceiptDir(opts)` | Where receipts are for a working directory, each location reported present or absent |
@@ -232,15 +236,15 @@ Three consequences worth stating:
 
 ### What the answer is, and what it is not
 
-The answer is every record in the window, ascending by `t` with `(run, seq)` breaking a tie so two
-records stamped the same millisecond come back in one stable order. A record whose `t` is not a
-number cannot be placed in a window at all; it is not in the answer and `counts.undated` says how
-many there were, rather than dropping it silently.
+The answer is every record in the window, ordered by the view (below), with `(t, run, seq)`
+ascending as the last part of the key so two records stamped the same millisecond come back in one
+stable order. A record whose `t` is not a number cannot be placed in a window at all; it is not in
+the answer and `counts.undated` says how many there were, rather than dropping it silently.
 
 | Recorded | Applied |
 | --- | --- |
 | `asker` | Nothing branches on it: two askers asking the same thing get the same answer |
-| `view` | **Nothing yet.** The answer is the window, unprojected. Shaping it to the view is [flyingrobots/parley#49](https://github.com/flyingrobots/parley/issues/49), and a test pins the two being the same today so it cannot drift silently |
+| `view` | **The order.** It ranks the answer and filters none of it — see [how the purpose orders the answer](#how-the-purpose-orders-the-answer). It does not project a record to fewer fields, and it never removes one |
 | `budget` | **Nothing yet.** Nothing is truncated and no excluded count is claimed, because a count of what was left out belongs to the digest that left it out ([flyingrobots/parley#50](https://github.com/flyingrobots/parley/issues/50)) |
 | `window` | Yes, and echoed verbatim in the answer |
 | `note` | Never parsed |
@@ -248,10 +252,98 @@ many there were, rather than dropping it silently.
 No `parley.lens` line is emitted. A lens states a loss bound and the records a result was built
 from; a read that returns the records has no loss to state, and the lens is the digest's (#50).
 
+## How the purpose orders the answer
+
+Spec §9 says the purpose shapes the result: "I am about to change this program's audit path"
+should return records touching that surface, not the last fifty things in chronological order. It
+is the **ranking function**, not a filter applied afterwards, and that is exactly what this is —
+`rankRecords` returns every record it was given, reordered. Over-filtering is the failure mode §9
+names, and nothing here can drop a record even in principle; bounding an answer and saying what it
+left out is [flyingrobots/parley#50](https://github.com/flyingrobots/parley/issues/50).
+
+### The order, stated as a key
+
+One total order on a key per record, compared left to right. Every part is decided by the records
+in hand, so the same records under the same view come back in the same order every time:
+
+| | Key | Smaller ranks first | Why |
+| --- | --- | --- | --- |
+| 1 | **tier** | `failure`, `surface`, `other` | A record on the failure surface is in the `failure` tier **only when the view implies a change**; otherwise it is placed by the view's own surface like any other record |
+| 2 | **outcome** | `failed`, `undetermined`, `succeeded` | What the ranked records establish about the record's run, and **only when the view implies a change**. Otherwise every record carries the same outcome key and the tier falls straight through to time |
+| 3 | **`t`**, then **`run`**, then **`seq`** | ascending | The order a read answered in before there was a ranking, so a view whose surface no record touches leaves the answer exactly as it was. A record with no usable `t` sorts last within its tier |
+
+The order is total and deterministic: `(run, seq)` identifies an event (§1.3), so no two records
+can tie on the whole key. `answer.ranking.ranked` carries each record's `rank`, `tier`, `outcome`
+and a `why` — the parts of the key, in the order they were compared — so a caller is never left
+inferring why a record is where it is.
+
+### Each view's surface
+
+The surface of a view is read off the vocabulary's own definition of its token
+([the reader representation](../reader/README.md#the-view-vocabulary)). Nothing here consults a
+field `parley.query` does not have:
+
+| `view` | On its surface |
+| --- | --- |
+| `what-ran` | The records that identify a run and its outcome: the bootstrap `run` line, `receipt.head`, `cache.hit`, `end` and `startup.failed` |
+| `what-failed` | The failure surface: `error`, `startup.failed`, `warning`, and an `end` whose `status` is a number other than zero (§3.3, §6, §6.1) |
+| `what-changed` | A record of the tool's own rather than of the protocol — §7's results, the subject matter a command exists to produce — the `sidecar` standing in one's place (§5), `receipt.inputs`, and a `receipt.head` or `command` declaring a non-empty `effects.writes` (§4.3) |
+| `how-it-decided` | `receipt.step`, the decision and its reason, and `cache.hit`, the decision not to run at all |
+| `everything` | Every record. It is the identity view, so the tier orders nothing and the answer is the `(t, run, seq)` order |
+
+A record of the tool's own is one whose `_schema.id` is outside `parley.` — or one that advertises
+no pair at all and carries no protocol event token, since a reader that cannot attribute a line to
+the protocol must not reinterpret it (§4.6).
+
+### Which purposes imply a change, and how that is derived
+
+`parley.query` 1.0.0 carries **no field** saying "this purpose implies a change", and this library
+adds none: inventing one would be an implementation extending a decided message. It does not need
+one. Of the five tokens exactly one is an answer about a change — `what-changed`, "subject-matter
+writes, and the inputs they consumed" — and it is the view §9's own example asks for. `what-ran`,
+`how-it-decided` and `everything` describe history without proposing to change it. `what-failed` is
+left out deliberately: failure is already that view's whole surface, so promoting it would restate
+the surface rather than order the answer.
+
+`CHANGE_VIEWS` is that derivation, written down. Adding a token to the vocabulary moves
+`parley.query` and `parley.lens` (flyingrobots/parley#46) and has to decide the new token's surface
+and whether it implies a change.
+
+### What a run's outcome is established from
+
+The outcome is a property of the run, read off **the records being ranked** rather than off the
+whole history:
+
+| Outcome | Established by |
+| --- | --- |
+| `failed` | An `error` or `startup.failed` record, or an `end` whose `status` is a number other than zero |
+| `succeeded` | An `end` whose `status` is `0`, with nothing above against it |
+| `undetermined` | Anything else, including a run whose `end` the window does not hold |
+
+A window that cuts a run's `end` out leaves that run `undetermined`, not successful: §1.2a asks a
+reader not to take one kind of evidence for another, and "no `end` in this window" is not "it
+ended well". A `warning` is on the failure surface, because that is what `what-failed` is an answer
+about, and it does not make its run a failed one — §6.1 makes it a warning precisely because the
+run went on.
+
+### What the ranking is not
+
+- It is not a filter, a projection or a truncation. Every record in the window is in the answer,
+  whatever the view, and `rankRecords` is held to that by a case over all five views.
+- It is not a relevance score. There is no weighting to tune and no number to compare between two
+  reads; a record's position is a key made of a tier, an outcome and a timestamp.
+- It does not read the `note`, the `asker` or the `budget`. Two askers reading the same window
+  under the same view get the same order, which is what makes the view the thing a result can be
+  compared on.
+- It does not rank a digest. A result is built from records, never from another result, because
+  each further summarising step adds its own loss
+  ([observer geometry](../related-work/observer-geometry.md)).
+
 ## What it does not do
 
-- Rank, project or truncate. A read returns its window in time order; the view and the budget are
-  recorded and applied to nothing (flyingrobots/parley#49, flyingrobots/parley#50).
+- Project or truncate. A read returns every record in its window, ordered by the view; the budget
+  is recorded and bounds nothing, and no excluded count is claimed
+  (flyingrobots/parley#50).
 - Recompute `inv` or any semantic digest (§7.1). It checks a sidecar's stored bytes against the
   digest the receipt declared, and nothing else.
 - Judge conformance. The [doctor](../conformance/README.md) names violated rules; a defect here is

@@ -149,7 +149,7 @@ describe("RD-1 locations", () => {
     const bundle = load.bundles.find((b) => b.run === written.run);
     expect(bundle).toBeDefined();
     expect(bundle!.sources.map((s) => s.where)).toEqual(["state"]);
-    expect(bundle!.sources[0]!.receipt).toBe(written.receipt);
+    expect(bundle!.sources[0]!.receipt).toBe(written.receipt!);
   });
 
   test("a missing location is reported as absent", () => {
@@ -421,7 +421,7 @@ describe("RD-7 validation", () => {
     const load = loadReceipts({ cwd: dir, env });
     const record = byEvent(load.bundles[0]!, "end")!;
     expect(record.validation.state).toBe("invalid");
-    expect((record.validation as { errors: string[] }).errors.join("; ")).toContain("/status");
+    expect((record.validation as unknown as { errors: string[] }).errors.join("; ")).toContain("/status");
     expect(load.counts.invalid).toBe(1);
     expect(load.bundles[0]!.defects.some((d) => d.code === "record.invalid")).toBe(true);
   });
@@ -600,7 +600,7 @@ describe("RD-12 writer-produced receipts", () => {
     });
 
     const load = loadReceipts({ cwd: dir, env });
-    expect(load.bundles.map((b) => b.run).sort()).toEqual([golden.run, big.run, threw.run, discovery.run, secret.run].sort());
+    expect(load.bundles.map((b) => b.run).sort()).toEqual([golden.run!, big.run!, threw.run!, discovery.run!, secret.run!].sort());
     expect(load.quarantined).toEqual([]);
     expect(load.counts.invalid).toBe(0);
     expect(load.counts.partial).toBe(0);
@@ -644,7 +644,7 @@ describe("RD-12 writer-produced receipts", () => {
       run.result({ event: "result", value: 3 }, { id: "t.count", version: "1.0.0" });
     });
     const [bundle] = loadReceipts({ cwd: dir, env }).bundles;
-    expect(bundle!.run).toBe(secret.run);
+    expect(bundle!.run).toBe(secret.run!);
     expect(bundle!.redacted).toBe(true);
     expect(bundle!.replay.unavailable).toBe(true);
     expect(bundle!.replay.reasons).toContain("receipt.redacted");

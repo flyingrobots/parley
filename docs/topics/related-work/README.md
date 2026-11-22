@@ -49,8 +49,12 @@ command line and parsed options. parley has the opening line and, at v0.2, not y
 digests are the nearest prior art for `inv`: identity computed over the inputs, not their paths.
 
 **[Terraform's machine-readable output](https://developer.hashicorp.com/terraform/internals/machine-readable-ui)**
-is where parley's §4.5 compatibility rule comes from: minor bumps are additive and readers ignore
-unknown properties; major bumps break and readers reject them.
+is where the first draft of parley's §4.5 came from: minor bumps are additive and readers ignore
+unknown properties; major bumps break and readers reject them. parley kept the SemVer-shaped
+promise and open schemas, and found that the other half, that a newer minor accepts every older
+line, does not hold for open schemas, because an older line may already carry a value under a
+name the new minor types; §4.5 now validates against the exact `(id, version)` pair and treats a
+line without its exact schema as partially checked at best.
 
 **[SARIF](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html)** is a single-document batch format for analysis
 results. Its invocation object (command line, arguments, exit status) and per-artifact hashes are

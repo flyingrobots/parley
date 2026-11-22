@@ -1,9 +1,12 @@
 # Schemas
 
 One JSON Schema (draft 2020-12) per message type the protocol defines, versioned separately from
-the spec and from any package (spec §4.4). The `$id` of each file ends in `/<id>/<version>`; the
-major of that version is also pinned inside the schema's `_schema` constraint (spec §4.5). A version whose changelog entry
-is under `Unreleased` is a draft and may change in place (spec §4.5).
+the spec and from any package (spec §4.4). The `$id` of each file ends in `/<id>/<version>`, and
+the same exact id and version are pinned inside the schema's `_schema` constraint, because full
+validation is against the schema for the exact advertised pair (spec §4.5). The files here are
+the current drafts; a version whose changelog entry is under `Unreleased` may change in place.
+Released versions are snapshotted, immutable, under `released/<id>/<version>.schema.json`
+(spec §4.6). Nothing is released yet.
 
 | Schema | Current version | Message | Spec |
 | --- | --- | --- | --- |

@@ -132,8 +132,9 @@ receipt.
 
 ### 2.3 What `inv` buys
 
-Each of these holds for receipts that carry no `redacted` (§5.3); a redacted receipt shares its
-`inv` with every run that differed only in a secret, so none of them applies to it.
+Each of these holds only where no declared secret is involved on either side: the receipt carries
+no `redacted` (§5.3) and the invocation comparing against it supplied none. A redacted receipt
+shares its `inv` with every run that differed only in a secret, so none of them applies to it.
 
 - **Change detection.** Same `inv`, same result ⇒ nothing moved.
 - **Non-determinism detection, free.** Same `inv`, *different* result ⇒ the program is not
@@ -143,9 +144,22 @@ Each of these holds for receipts that carry no `redacted` (§5.3); a redacted re
 A program **MAY** short-circuit on a known `inv`. If it does, it **MUST** emit the hit as an
 event rather than silently serving a cached answer, and **MUST** offer a way to force recompute.
 Short-circuiting **SHOULD NOT** be the default, because inputs can be identical while the world is
-not — a declared input set never captures everything. A program **MUST NOT** short-circuit on a
-receipt that carries `redacted` (§5.3): the answer may have depended on which secret was used, and
-`inv` cannot tell.
+not — a declared input set never captures everything. A matching `inv` on its own never
+authorises skipping an effect or reusing an answer; it is one input to that decision.
+
+Eligibility is checked on **both** sides. A program **MUST NOT** short-circuit when a declared
+secret was supplied to the current invocation, or when the cached receipt carries `redacted`
+(§5.3). Either run may have depended on which secret was used, and `inv` cannot tell, because
+§2.2 keeps secrets out of it. Whether a declared secret was supplied is known from `argv` and the
+environment before the head is written (§5.3), so both sides are decidable at the moment of
+choice. The rule reaches declared secrets. A credential the program obtains some other way, from
+a keychain, a credential helper or a token refresh, is outside it; a program that uses such
+credentials **MUST** route them through a declared argument or environment variable (§4.3) or
+**MUST NOT** short-circuit at all, because a reader cannot see them and this rule offers it no
+protection for them. The same two-sided rule binds a reader that serves cached answers (§5.3): it
+decides the current side from that invocation's own receipt head, whose `redacted` is mandatory
+when a declared secret was supplied, or from its declaration together with its `argv` and
+environment, and **MUST NOT** serve when it holds neither.
 
 ---
 
@@ -224,45 +238,53 @@ accept `--dry-run`, reporting what it would do without doing it.
 Schema versions are SemVer in the core `MAJOR.MINOR.PATCH` form only, with no prerelease or
 build metadata, and the number is a promise to readers:
 
-- A **minor** bump is additive in both directions. A line valid under `1.1.0` is valid under
-  `1.0.0` with its new fields ignored, and every line valid under `1.0.0` is still valid under
-  `1.1.0`. Narrowing any constraint, such as raising a `minimum`, adding a `const` or a
-  `pattern`, or making an optional field required, is therefore a major bump. A reader
-  **MUST** ignore fields it does not know, so a reader built against `1.0.0` keeps working when
-  a writer moves to `1.1.0`.
+- A **minor** bump **MAY** add optional fields that are safe to ignore. It **MUST** preserve the
+  meaning and the constraints of every field the previous minor defined. It is not a promise
+  that the newer schema accepts every older line: a schema that is open to unknown fields
+  cannot be, because an older line may already carry a value under a name the new minor
+  defines. A reader that lacks the exact schema for a newer minor can still rely on the fields
+  it knows.
 - A **major** bump may remove, rename or retype a field, add a required one, or narrow a
-  constraint. A reader **MUST** reject a line of a different major from the one it was built
-  against, newer or older, since it cannot know what changed.
+  constraint. A reader **MUST NOT** report a line of a major it does not support as validated.
 - A **patch** bump changes descriptions only.
 
-Because readers ignore unknown fields, parley schemas are **open**: they do not set
-`additionalProperties: false` anywhere, nested objects included, except on `_schema` itself.
-Each message schema pins `_schema.id` by `const` and constrains `_schema.version` to its own
-**major** (`1.x.y`, `2.x.y`). That is the rule above expressed in the schema: a reader validates
-every line whose major matches the schema it ships with, including a newer or older minor, and
-rejects a line of a different major. Validating a line against the schema its own `_schema`
-names is what stops a line from claiming a contract it does not meet.
+parley schemas are **open**: they do not set `additionalProperties: false` anywhere, nested
+objects included, except on `_schema` itself. Each message schema pins both `_schema.id` and
+`_schema.version` by `const` to its own exact id and version.
+
+**Full validation is against the schema for the exact advertised `(id, version)` pair.** A reader
+**MUST NOT** run another version's schema over a line and call the result validation, not even
+the latest schema of the same major. When a reader has no schema for the exact pair it **MAY**
+check the version-independent core, which is the §1.3 envelope and the shape of `_schema`, and
+it **MUST** report that result as partial, never as validation of the advertised contract; a
+reader that runs no such check reports the line as unvalidated. A conformance checker **MUST
+NOT** turn "the part I recognise passed" into "the contract passed".
 
 A schema version whose changelog entry is still under `Unreleased` is a draft and **MAY** change
 in place; a draft change is recorded in that entry rather than as a bump. A release is a version
-heading in `CHANGELOG.md`, and the promise above attaches to a schema version when a release
-publishes it. Until then a reader built from `main` holds a draft and the identifier alone cannot
-say so.
+heading in `CHANGELOG.md` that names the schema versions it publishes. A released schema version
+is immutable: the release snapshots it, and the snapshot is what the pair resolves to from then
+on (§4.6). The same change that snapshots a version bumps the draft to a new one, since a draft
+may not claim a released pair. A draft's version string does not identify exact bytes, so a fixture
+or test outside
+the repository that holds the draft **MUST** pin a source commit or the schema's digest, and a
+reader built from a draft holds whichever bytes it shipped and **SHOULD** state their commit or
+digest until a release exists.
 
-Once released, this promise binds from the first version of each schema published under this rule:
-`parley.run.bootstrap` `1.1.1`, `parley.error` `2.0.0`, `parley.receipt.head` `2.0.0`. All three
-`1.0.0` schemas predate it, and the `1.0.0` bootstrap schema was closed; a reader built against
-any of them is outside the promise, and the `1.0.0` to `1.1.0` bootstrap transition is governed
-by this paragraph rather than by the minor rule above.
+Nothing is released yet: no changelog heading names a schema version. The `1.0.0` schemas in git
+history predate every rule in this section and were never released; a reader built against any
+of them is outside the promise.
 
 ### 4.6 Resolution
 
-`_schema.id` and `_schema.version` are identifiers, not fetch instructions. A reader resolves them
-to the schema it ships with for that id, and applies the rule in §4.5 to the version. The `$id`
-inside each published schema is `https://flyingrobots.dev/parley/schemas/<id>/<version>` and
-is likewise an identifier; it is not required to be served. Each schema lives at
-`schemas/<id>.schema.json` in this repository at its current version. Earlier versions are in git
-history; the `CHANGELOG.md` entry that records a bump is the pointer to them.
+`_schema.id` and `_schema.version` are identifiers, not fetch instructions. A reader resolves the
+pair to the schema it ships with for exactly that id and version, and applies §4.5 when it has
+none. The `$id` inside each published schema is
+`https://flyingrobots.dev/parley/schemas/<id>/<version>` and is likewise an identifier; it is
+not required to be served. The current draft of each schema lives at `schemas/<id>.schema.json`
+in this repository. Each released version is snapshotted, immutable, at
+`schemas/released/<id>/<version>.schema.json`; the `CHANGELOG.md` entry for the release that
+published it is the pointer. A reader ships the snapshots it supports.
 
 A reader that ships no schema for a line's `_schema.id`, for example a tool-owned result such as
 `theme-book.count`, **MUST NOT** validate that line against any other schema. It **MAY** parse the
@@ -290,7 +312,7 @@ applied; and a digest per declared input.
  "argv":["theme-book","count","--format","css","--token","[redacted]"],
  "resolved":{"command":"count","format":"css","cwd":"/work/site","token":"[redacted]"},
  "redacted":{"argv":[5],"resolved":["/token"]},
- "inputs":[{"path":"src/tokens.css","sha256":"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"}],
+"inputs":[{"path":"src/tokens.css","sha256":"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"}],
  "effects":{"reads":["src/**/*.css"],"writes":[],"network":false,"idempotent":true},
  "_schema":{"id":"parley.receipt.head","version":"2.0.0"}}
 ```
@@ -344,7 +366,9 @@ collide unless the program redacts. Privacy wins:
   the declaration is the floor, not the ceiling. An undeclared value redacted this way is still in
   the `inv` preimage (§2.2 excludes declared secrets only), so declaring it is the real protection.
 - A reader **MUST NOT** replay from, or serve a cached answer for, a receipt that carries
-  `redacted` (§2.3). Two invocations that differ only in a secret, for example two tokens
+  `redacted`, nor serve one to an invocation that supplied a declared secret (§2.3). Two
+  invocations
+that differ only in a secret, for example two tokens
   selecting two accounts, have the same `inv` (§2.2 excludes the secret) and identical receipts,
   and their answers may differ.
 

@@ -59,15 +59,27 @@ function fencedBlocks(file: string, text: string): Block[] {
 
 interface SchemaIndex { byKey: Map<string, object> }
 
+export function schemaFiles(dir: string): string[] {
+  // Drafts at the top level; released snapshots under released/<id>/<version>.schema.json (spec §4.6).
+  const out: string[] = [];
+  for (const name of readdirSync(dir)) {
+    const p = join(dir, name);
+    if (statSync(p).isDirectory()) { if (name === "released") for (const idDir of readdirSync(p)) { const q = join(p, idDir); if (statSync(q).isDirectory()) out.push(...readdirSync(q).filter((f) => f.endsWith(".schema.json")).map((f) => join(q, f))); } }
+    else if (name.endsWith(".schema.json")) out.push(p);
+  }
+  return out.sort();
+}
+
 export function loadSchemas(dir: string): SchemaIndex {
   const byKey = new Map<string, object>();
-  for (const name of readdirSync(dir)) {
-    if (!name.endsWith(".schema.json")) continue;
-    const schema = JSON.parse(readFileSync(join(dir, name), "utf8"));
+  for (const file of schemaFiles(dir)) {
+    const schema = JSON.parse(readFileSync(file, "utf8"));
     const id = String(schema.$id ?? "");
     const m = /\/schemas\/([^/]+)\/([^/]+)$/.exec(id);
-    if (!m) throw new Error(`${name}: $id does not end in /schemas/<id>/<version>: ${id}`);
-    byKey.set(`${m[1]}@${m[2]}`, schema);
+    if (!m) throw new Error(`${file}: $id does not end in /schemas/<id>/<version>: ${id}`);
+    const key = `${m[1]}@${m[2]}`;
+    if (byKey.has(key)) throw new Error(`${file}: a draft and a released snapshot both claim ${key}; a released version is immutable and the draft must move on (spec §4.5)`);
+    byKey.set(key, schema);
   }
   return { byKey };
 }

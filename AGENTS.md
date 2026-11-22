@@ -34,5 +34,7 @@ example that is deliberately incomplete.
 
 - Do not let the libraries define the protocol. If an implementation cannot do what the spec says,
   change the spec deliberately and version it, or fix the implementation.
-- Do not add a field to a message without versioning its schema.
+- Do not add a field to a message without versioning its schema, unless that schema version is
+  still a draft under `Unreleased` in the changelog (spec §4.5), in which case record the change
+  in that entry.
 - Do not claim a section is settled that has not been tested against a real program.

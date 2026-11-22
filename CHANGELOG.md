@@ -53,16 +53,23 @@ The spec and each message schema are versioned separately from this package.
   borrows from each, and what is its own; routed from the README and the docs index.
   (flyingrobots/parley#19)
 
-- Schema constraints (flyingrobots/parley#9, #26): `t` is at least `0`; `tool`, `v`, `run` and
-  `inv` are non-empty; `code` matches `^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$`; `problem` is
-  non-empty; `_schema.version` rejects leading-zero components. A shared envelope schema file was
+- Schema constraints, each stated in the spec text (flyingrobots/parley#9,
+  flyingrobots/parley#26): `t` is never negative (§1.3); `tool`, `v`, `run`, `inv` and `session`
+  are non-empty (§2.1); `code` is two or more dot-separated segments of lowercase letters, digits
+  and underscores and `problem` is non-empty (§6); `_schema.version` rejects leading-zero
+  components (§4.5). These narrow `parley.run.bootstrap` `1.1.1` in place under the draft rule;
+  the earlier `1.1.1` entry below described its first, description-only change. A shared envelope schema file was
   considered and not adopted: `scripts/schemas.test.ts` enforces the envelope uniformly across
   every schema, and a cross-file `$ref` would force every consumer to preload schemas.
-- `parley.receipt.head` requires `tool` and `v`, so a receipt read on its own says what wrote it
-  and `inv` can be recomputed. (flyingrobots/parley#14)
-- §5.3 redaction rule: declared secrets are replaced with `[redacted]` before the head is written
-  and the head's new `redacted` field records where; a redacted receipt is never replayed from.
-  (flyingrobots/parley#13)
+- `parley.receipt.head` requires `tool` and `v` (§5 MUST list), so a receipt read on its own says
+  what wrote it and `inv` can be recomputed. (flyingrobots/parley#14)
+- `schemas/README.md` lists each schema and its current version. (flyingrobots/parley#9)
+- §5.3 redaction rule: secrets are declared in the command description's `secrets` list (§4.3);
+  their values are replaced with `[redacted]` before the head is written; the head's new
+  `redacted` field records argv indexes, resolved JSON Pointers and env names and is present
+  whenever any redaction occurred. §2.2: `inv` never incorporates a declared secret, so a receipt
+  is not an oracle for it; §2.3 and §5.3: a redacted receipt is never replayed from or served
+  from cache. (flyingrobots/parley#13)
 - §4.5: a schema version still under `Unreleased` is a draft and may change in place. The
   constraint additions above therefore stay at `parley.error` `2.0.0`, `parley.receipt.head`
   `2.0.0` and `parley.run.bootstrap` `1.1.1`.

@@ -102,8 +102,20 @@ describe("schemas/", () => {
     test("empty problem", () => expect(error({ ...okError, problem: "" })).toBe(false));
     test("empty identities", () => {
       expect(boot({ ...okBoot, tool: "" })).toBe(false);
+      expect(boot({ ...okBoot, v: "" })).toBe(false);
       expect(boot({ ...okBoot, run: "" })).toBe(false);
       expect(boot({ ...okBoot, inv: "" })).toBe(false);
+      expect(head({ ...okHead, v: "" })).toBe(false);
+      expect(head({ ...okHead, inv: "" })).toBe(false);
+      expect(head({ ...okHead, t: -1 })).toBe(false);
+      expect(boot({ ...okBoot, t: -1 })).toBe(false);
+    });
+    test("code grammar permits digits and underscores, rejects uppercase, hyphens and one segment", () => {
+      expect(error({ ...okError, code: "http.404" })).toBe(true);
+      expect(error({ ...okError, code: "fs.not_found" })).toBe(true);
+      expect(error({ ...okError, code: "ENOENT" })).toBe(false);
+      expect(error({ ...okError, code: "contrast-unsatisfiable" })).toBe(false);
+      expect(error({ ...okError, code: "a.b." })).toBe(false);
     });
     test("leading-zero version component", () => expect(error({ ...okError, _schema: { id: "parley.error", version: "2.01.0" } })).toBe(false));
     test("same-major newer minor still validates", () => expect(error({ ...okError, _schema: { id: "parley.error", version: "2.7.0" }, extra: 1 })).toBe(true));
@@ -114,9 +126,12 @@ describe("schemas/", () => {
       expect(head(noV)).toBe(false);
     });
     test("redacted marker shape", () => {
-      expect(head({ ...okHead, redacted: { argv: [5], resolved: ["token"], env: ["GITHUB_TOKEN"] } })).toBe(true);
+      expect(head({ ...okHead, redacted: { argv: [5], resolved: ["/token"], env: ["GITHUB_TOKEN"] } })).toBe(true);
       expect(head({ ...okHead, redacted: { argv: [-1] } })).toBe(false);
       expect(head({ ...okHead, redacted: { argv: ["5"] } })).toBe(false);
+      expect(head({ ...okHead, redacted: { resolved: [""] } })).toBe(false);
+      expect(head({ ...okHead, redacted: { env: [""] } })).toBe(false);
+      expect(head({ ...okHead, redacted: {} })).toBe(false);
     });
   });
 

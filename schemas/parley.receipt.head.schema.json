@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://flyingrobots.dev/parley/schemas/parley.receipt.head/2.0.0",
   "title": "parley receipt head",
-  "description": "First line of a receipt file. Carries what the bootstrap line deliberately omitted, so stdout stays small while proof stays complete.",
+  "description": "First line of a receipt file. Carries what the bootstrap line deliberately omitted, so stdout stays small while the record stays complete.",
   "type": "object",
   "required": [
     "event",
@@ -48,7 +48,8 @@
     },
     "inv": {
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "description": "Content-addressed identity of the question (spec \u00a72.2); never includes a declared secret."
     },
     "session": {
       "type": "string"
@@ -58,7 +59,7 @@
       "items": {
         "type": "string"
       },
-      "description": "Raw, as received."
+      "description": "As received, after \u00a75.3 redaction: a declared secret appears as the literal [redacted]."
     },
     "resolved": {
       "type": "object",
@@ -127,7 +128,8 @@
     },
     "redacted": {
       "type": "object",
-      "description": "Where the program replaced a secret with the literal [redacted] before writing this line (spec \u00a75.3). Absent when nothing was redacted.",
+      "minProperties": 1,
+      "description": "Where the program replaced a declared secret with the literal [redacted] before writing this line (spec \u00a75.3). Present and non-empty whenever any redaction occurred; absent otherwise.",
       "properties": {
         "argv": {
           "type": "array",
@@ -142,14 +144,16 @@
           "items": {
             "type": "string",
             "minLength": 1
-          }
+          },
+          "description": "JSON Pointers (RFC 6901) into resolved."
         },
         "env": {
           "type": "array",
           "items": {
             "type": "string",
             "minLength": 1
-          }
+          },
+          "description": "Names of environment variables whose values were present and redacted."
         }
       }
     }

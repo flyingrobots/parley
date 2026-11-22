@@ -34,8 +34,8 @@
     },
     "code": {
       "type": "string",
-      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
-      "description": "Stable, dotted, lowercase identifier such as contrast.unsatisfiable. Never a prose message."
+      "pattern": "^[a-z0-9_]+(\\.[a-z0-9_]+)+$",
+      "description": "Stable identifier: two or more dot-separated segments of lowercase letters, digits and underscores (spec \u00a76). Never a prose message."
     },
     "problem": {
       "type": "string",

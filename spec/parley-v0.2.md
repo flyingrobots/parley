@@ -63,7 +63,7 @@ Every emitted line **MUST** carry:
 | Field | Meaning |
 | --- | --- |
 | `event` | Discriminator naming the line's kind |
-| `t` | POSIX time in **integer milliseconds**. No timezone, sortable as an integer |
+| `t` | POSIX time in **integer milliseconds**, never negative. No timezone, sortable as an integer |
 | `seq` | Position in the run's single sequence, from `0`. See below |
 | `run` | The execution this line belongs to (§2.1) |
 | `_schema` | `{ "id": …, "version": … }` identifying the schema this line validates against |
@@ -105,7 +105,8 @@ required. But knowing they *were* the same question is what buys replay and chan
 `inv` is required too. Collapsing them loses one or the other.
 
 `session` is optional. A program **MUST** carry it when the caller supplies one and **MUST NOT**
-invent one.
+invent one. `run`, `inv`, `session`, `tool` and `v` are never empty strings; an identity with no
+content identifies nothing.
 
 ### 2.2 Computing `inv`
 
@@ -117,6 +118,13 @@ invent one.
 
 `inv` **MUST NOT** incorporate wall-clock time, process id, working directory, temporary paths,
 session id, or any value that varies between otherwise identical invocations.
+
+`inv` **MUST NOT** incorporate the value of any declared secret (§5.3). It **MAY** incorporate the
+fact that the secret was supplied, by name. A receipt carries `inv` beside every other component of
+its preimage, so a secret inside the preimage would be recoverable from the receipt by anyone who
+can guess it; a four-digit PIN falls in milliseconds. Excluding it means two invocations that
+differ only in a secret share one `inv`, which is why §5.3 forbids replaying from a redacted
+receipt.
 
 > **The trap.** Hashing input *paths* rather than input *bytes* makes `inv` stable across an edit
 > to the file. "Idempotent" then silently means "stale", and any cache built on it serves wrong
@@ -132,7 +140,9 @@ session id, or any value that varies between otherwise identical invocations.
 A program **MAY** short-circuit on a known `inv`. If it does, it **MUST** emit the hit as an
 event rather than silently serving a cached answer, and **MUST** offer a way to force recompute.
 Short-circuiting **SHOULD NOT** be the default, because inputs can be identical while the world is
-not — a declared input set never captures everything.
+not — a declared input set never captures everything. A program **MUST NOT** short-circuit on a
+receipt that carries `redacted` (§5.3): the answer may have depended on which secret was used, and
+`inv` cannot tell.
 
 ---
 
@@ -145,8 +155,8 @@ first line is the receipt head (§5).
 ```json
 {"event":"run","t":1795326412345,"seq":0,
  "tool":"theme-book","v":"0.2.1",
- "inv":"inv_7f3a…","run":"01JD3K…","session":"ses_9c…",
- "paths":{"receipt":".parley/receipts/01JD3K….jsonl"},
+ "inv":"inv_7f3a9c1e","run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8","session":"ses_9c4f",
+ "paths":{"receipt":".parley/receipts/01JD3KQ8Z6V9X2M4N7P1R3T5W8.jsonl"},
  "_schema":{"id":"parley.run.bootstrap","version":"1.1.1"}}
 ```
 
@@ -185,8 +195,13 @@ for its success output and the schema for **every error type it can produce**.
 A command's description **MUST** declare its effects:
 
 ```json illustrative
-{"effects":{"reads":["<cwd>/**/*.css"],"writes":[],"network":false,"idempotent":true}}
+{"effects":{"reads":["<cwd>/**/*.css"],"writes":[],"network":false,"idempotent":true},
+ "secrets":["--token","THEME_BOOK_TOKEN"]}
 ```
+
+`secrets` names the arguments and environment variables whose values are credentials (§5.3). It
+is part of the same declaration, so a caller learns before running what the receipt will not
+contain. A command with no secrets declares an empty list.
 
 A caller needs to know whether something mutates **before** running it. Every command **SHOULD**
 accept `--dry-run`, reporting what it would do without doing it.
@@ -226,9 +241,12 @@ rejects a line of a different major. Validating a line against the schema its ow
 names is what stops a line from claiming a contract it does not meet.
 
 A schema version whose changelog entry is still under `Unreleased` is a draft and **MAY** change
-in place; the promise above attaches to a version when a release publishes it.
+in place; a draft change is recorded in that entry rather than as a bump. A release is a version
+heading in `CHANGELOG.md`, and the promise above attaches to a schema version when a release
+publishes it. Until then a reader built from `main` holds a draft and the identifier alone cannot
+say so.
 
-This promise binds from the first version of each schema published under this rule:
+Once released, this promise binds from the first version of each schema published under this rule:
 `parley.run.bootstrap` `1.1.0`, `parley.error` `2.0.0`, `parley.receipt.head` `2.0.0`. All three
 `1.0.0` schemas predate it, and the `1.0.0` bootstrap schema was closed; a reader built against
 any of them is outside the promise, and the `1.0.0` to `1.1.0` bootstrap transition is governed
@@ -245,7 +263,8 @@ history; the `CHANGELOG.md` entry that records a bump is the pointer to them.
 
 A reader that ships no schema for a line's `_schema.id`, for example a tool-owned result such as
 `theme-book.count`, **MUST NOT** validate that line against any other schema. It **MAY** parse the
-line and pass it through, and **SHOULD** report that it did not validate it.
+line and pass it through, and **SHOULD** report that it did not validate it. Checking that the line
+carries the §1.3 envelope fields is not validation against a schema and is permitted.
 
 ---
 
@@ -254,8 +273,9 @@ line and pass it through, and **SHOULD** report that it did not validate it.
 A receipt is a JSON Lines file written for every run, at the path the bootstrap line declared.
 It is written **whether or not anyone asked for it**.
 
-Its first line **MUST** carry what the bootstrap line omitted: the raw `argv`, the `resolved`
-interpretation after defaults and environment are applied, and a digest per declared input.
+Its first line **MUST** carry `tool` and `v`, and what the bootstrap line omitted: the raw `argv`
+as received, after §5.3 redaction; the `resolved` interpretation after defaults and environment are
+applied; and a digest per declared input.
 
 > Echo both raw and resolved. The gap between them is where the bugs live: a relative path
 > resolved somewhere surprising, a default silently filled in, an environment variable overriding
@@ -266,7 +286,7 @@ interpretation after defaults and environment are applied, and a digest per decl
  "tool":"theme-book","v":"0.2.1","inv":"inv_7f3a9c1e","session":"ses_9c4f",
  "argv":["theme-book","count","--format","css","--token","[redacted]"],
  "resolved":{"command":"count","format":"css","cwd":"/work/site","token":"[redacted]"},
- "redacted":{"argv":[5],"resolved":["token"]},
+ "redacted":{"argv":[5],"resolved":["/token"]},
  "inputs":[{"path":"src/tokens.css","sha256":"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"}],
  "effects":{"reads":["src/**/*.css"],"writes":[],"network":false,"idempotent":true},
  "_schema":{"id":"parley.receipt.head","version":"2.0.0"}}
@@ -275,7 +295,8 @@ interpretation after defaults and environment are applied, and a digest per decl
 The head takes `seq: 1` because the bootstrap line took `0` and the run holds one counter (§1.3).
 It names `tool` and `v` again, although the bootstrap line already did, because a receipt is read
 on its own, tomorrow, by a reader that never saw stdout; without them it cannot say what wrote it
-and `inv` cannot be recomputed (§2.2).
+and `inv` cannot be recomputed (§2.2). Recomputation works on a redacted receipt too, because a
+declared secret is never part of the preimage.
 
 Subsequent lines carry the program's reasoning as it works — one line per decision, emitted as it
 happens rather than buffered, so a person watching sees the thing working.
@@ -300,23 +321,38 @@ Raw `argv` and the resolved environment are where credentials arrive, so §5's e
 collide unless the program redacts. Privacy wins:
 
 - A program **MUST** declare which of its arguments and environment variables carry secrets, by
-  name, and **MUST** replace each such value with the literal string `[redacted]` in `argv`, in
-  `resolved` and anywhere else the receipt would carry it, **before** the receipt head is written.
-- It **MUST** record where it redacted, in the head's `redacted` field: `argv` indexes, `resolved`
-  keys and environment variable names. The gap between raw and resolved stays visible; only the
-  secret is gone.
+  name, in the `secrets` list of its command description (§4.3), so the declaration is visible
+  through `--help` before the command runs. A command with no secrets declares an empty list.
+- It **MUST** replace the value of each declared secret with the literal string `[redacted]`
+  **before** the receipt head is written, wherever the receipt would carry it. An argument given as
+  its own `argv` element becomes `[redacted]`; one given as `--name=value` becomes
+  `--name=[redacted]`, so the flag stays visible; a secret embedded in a longer value, such as a
+  path, is replaced within it.
+- It **MUST** record, in the head's `redacted` field, every redaction in `argv` (as indexes), in
+  `resolved` (as JSON Pointers, RFC 6901) and in the environment (as the names of variables whose
+  values were present and redacted). A redaction anywhere else in the receipt, for example in an
+  input path or a later line, is required but has no location field; the presence of `redacted`
+  on the head is what tells a reader the receipt is partial, so `redacted` **MUST** be present and
+  non-empty whenever any redaction occurred and absent otherwise.
 - It **MAY** redact more than it declared. Name-based redaction misses odd names and pattern-based
   redaction misses odd values; the declaration is the floor, not the ceiling.
-- A receipt that carries `redacted` is not a complete record of the question. Two invocations
-  that differ only in a redacted value, for example two tokens selecting two accounts, have
-  different `inv` (§2.2 hashes the real arguments) but identical receipts, so a reader **MUST NOT**
-  treat such receipts as interchangeable and **MUST NOT** replay from one.
+- A reader **MUST NOT** replay from, or serve a cached answer for, a receipt that carries
+  `redacted` (§2.3). Two invocations that differ only in a secret, for example two tokens
+  selecting two accounts, have the same `inv` (§2.2 excludes the secret) and identical receipts,
+  and their answers may differ.
+
+A schema checks the shape of `redacted`, not its truth. Whether an index points at `[redacted]`,
+whether a pointer resolves, and whether a `[redacted]` marker has a matching entry are a reader's
+checks, and a reader that performs them **SHOULD** report a mismatch as a defect in the writer.
 
 ---
 
 ## 6. Errors
 
-Errors go to stderr, as JSON Lines, and **MUST** carry structure rather than prose:
+Errors go to stderr, as JSON Lines, and **MUST** carry structure rather than prose. `code` is a
+stable identifier of at least two dot-separated segments of lowercase letters, digits and
+underscores, such as `contrast.unsatisfiable` or `http.404`, never a sentence; `problem` is one
+sentence and never empty:
 
 ```json
 {"event":"error","t":1795326412380,"seq":4,"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8","code":"contrast.unsatisfiable",
@@ -350,7 +386,7 @@ rather than diffing two payloads.
 Unbounded output **MUST** paginate explicitly with a cursor:
 
 ```json illustrative
-{"event":"page","t":1795326412390,"seq":7,"run":"01JD3K…","cursor":"…","has_more":true,
+{"event":"page","t":1795326412390,"seq":7,"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8","cursor":"…","has_more":true,
  "_schema":{"id":"parley.page","version":"1.0.0"}}
 ```
 

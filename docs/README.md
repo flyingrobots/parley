@@ -3,7 +3,7 @@
 | Page | Job |
 | --- | --- |
 | [The specification](../spec/parley-v0.2.md) | Normative. What a conforming program must do. |
-| [Schemas](../schemas/) | JSON Schema per message type, versioned independently |
+| [Schemas](../schemas/README.md) | JSON Schema per message type, versioned independently; the table lists each schema and its current version |
 | [Output contract](topics/output-contract/README.md) | Why the rules are what they are |
 | [Related work](topics/related-work/README.md) | The neighbouring specifications and formats, what parley borrows from each, and what is its own |
 | [Checking the examples](workflows/check-examples/README.md) | How every JSON example is validated against its schema, and how to label one that is not complete |

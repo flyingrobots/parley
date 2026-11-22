@@ -39,7 +39,7 @@
     },
     "inv": {
       "type": "string",
-      "description": "Content-addressed identity of the question: tool, version, normalised args, and the bytes of every declared input.",
+      "description": "Content-addressed identity of the question: tool, version, normalised args, and the bytes of every declared input; never a declared secret (spec \u00a72.2, \u00a75.3).",
       "minLength": 1
     },
     "run": {

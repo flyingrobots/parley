@@ -27,8 +27,8 @@ that and nobody can use these tools without adopting the whole system.
 ## What a conforming run looks like
 
 ```jsonl
-{"event":"run","t":1795326412345,"seq":0,"tool":"theme-book","v":"0.2.1","inv":"inv_7f3a…","run":"01JD3K…","session":"ses_9c…","paths":{"receipt":".parley/receipts/01JD3K….jsonl"},"_schema":{"id":"parley.run.bootstrap","version":"1.1.1"}}
-{"event":"result","t":1795326412380,"seq":2,"run":"01JD3K…","value":5,"_schema":{"id":"theme-book.count","version":"1.0.0"}}
+{"event":"run","t":1795326412345,"seq":0,"tool":"theme-book","v":"0.2.1","inv":"inv_7f3a9c1e","run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8","session":"ses_9c4f","paths":{"receipt":".parley/receipts/01JD3KQ8Z6V9X2M4N7P1R3T5W8.jsonl"},"_schema":{"id":"parley.run.bootstrap","version":"1.1.1"}}
+{"event":"result","t":1795326412380,"seq":2,"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8","value":5,"_schema":{"id":"theme-book.count","version":"1.0.0"}}
 ```
 
 Two small lines for a one-number answer. The result is `seq: 2` because `seq: 1` went to the

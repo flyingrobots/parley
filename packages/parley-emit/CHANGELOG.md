@@ -34,5 +34,5 @@ The first version, `0.1.0`, is not yet on npm; this entry becomes its heading wh
   throw's stack stays in the receipt; a failed `end` in `--human` mode names the receipt. From the
   blind pass over the repaired head: the default descriptor sinks retry a full pipe and continue a
   partial write; numbers, booleans and object keys are redacted; the longest secret is replaced
-  first, and the writer's own scalars, name and version are never scrubbed; a secret in the
+  first, and the writer's own scalars and the public identity in writer-built records (tool, command and schema names and versions, discovery lines included) are never scrubbed; a secret in the
   session is `startup.secret_in_identity`; a sidecar that cannot be written is kept inline.

@@ -827,6 +827,19 @@ process.exit(await main(tool, ["t", "count"], (run) => { console.log("touch cons
     expect(check(dir, v).receiptLines[0]!.event).toBe("receipt.head");
   });
 
+  test("discovery lines are writer-built: a secret equal to a command name or schema version does not corrupt them", async () => {
+    const { dir, env } = scratch();
+    for (const secret of ["count", "1.0.0"]) {
+      const s = streams();
+      const status = await main(tool(), ["t", "--schema", "--token", secret], async () => {}, { cwd: dir, env, ...s });
+      expect(status).toBe(0);
+      const cmd = s.stdout.objs.find((o) => o.event === "command") as { name: string; emits: { id: string; version: string }[] };
+      expect(cmd.name).toBe("count");
+      expect(cmd.emits[0]).toEqual({ id: "t.count", version: "1.0.0" });
+      expect(check(dir, s).violations).toEqual([]);
+    }
+  });
+
   test("a secret equal to false or a small number leaves the writer's own scalars alone", async () => {
     const { dir, env } = scratch();
     const s = streams();

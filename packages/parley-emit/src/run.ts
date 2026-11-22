@@ -12,11 +12,13 @@ export const SIDECAR_THRESHOLD = 65_536;
 export const CODE = /^[a-z0-9_]+(\.[a-z0-9_]+)+$/;
 const ENVELOPE_KEYS = ["t", "seq", "run", "_schema"] as const;
 /**
- * Writer-owned string fields never scrubbed: digests (a secret cannot occur in one except by hex
- * coincidence, and replacing it would corrupt the digest) and the tool's public name and version,
- * which every startup line prints regardless.
+ * Writer-owned string fields never scrubbed in a writer-built record: digests (a secret cannot
+ * occur in one except by hex coincidence, and replacing it would corrupt the digest) and public
+ * identity the tool declared and every discovery line prints regardless: the tool's name and
+ * version, a command's name, a schema's id and version. Tool-supplied values that reach a
+ * writer-built record (`resolved`, input descriptors) are scrubbed in full before it is built.
  */
-const DIGEST_KEYS = new Set(["sha256", "inv", "tool", "v"]);
+const DIGEST_KEYS = new Set(["sha256", "inv", "tool", "v", "name", "id", "version"]);
 
 export const SCHEMA_IDS = {
   bootstrap: { id: "parley.run.bootstrap", version: "1.1.1" },
@@ -223,6 +225,9 @@ export class Run {
 
   /** Internal: the receipt head, receipt only, never a sidecar (§5). */
   head(fields: Record_): void { this.emit({ to: { receipt: true }, writer: true, noSidecar: true }, { event: "receipt.head", ...fields }, SCHEMA_IDS.head); }
+
+  /** Internal: a discovery line (§4.1), a writer-built record describing public identity. */
+  describe(record: Record_, schema: SchemaRef): number { return this.emit({ to: { stdout: true, receipt: true }, writer: true }, record, schema); }
 
   /** A result: to stdout and the receipt. `receiptExtra` goes to the receipt copy only. */
   result(record: Record_, schema: SchemaRef, receiptExtra?: Record_): number {

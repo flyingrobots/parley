@@ -216,7 +216,7 @@ function discover(run: Run, spec: ToolSpec, discovery: "schema" | "help", comman
     const which = discovery === "help" && commandName ? [commandName] : names;
     for (const name of which) {
       const c = spec.commands[name]!;
-      run.result({ event: "command", name, intent: c.intent, effects: { ...c.effects, bookkeeping }, secrets: [...(c.secrets ?? [])], emits: [...c.emits, ...(c.errors ?? [SCHEMA_IDS.error])].map(({ id, version }) => ({ id, version })) }, SCHEMA_IDS.command);
+      run.describe({ event: "command", name, intent: c.intent, effects: { ...c.effects, bookkeeping }, secrets: [...(c.secrets ?? [])], emits: [...c.emits, ...(c.errors ?? [SCHEMA_IDS.error])].map(({ id, version }) => ({ id, version })) }, SCHEMA_IDS.command);
     }
     const types = new Map<string, EmittedType>();
     const add = (t: EmittedType) => { const k = `${t.id}@${t.version}`; if (!types.has(k)) types.set(k, t); };
@@ -225,7 +225,7 @@ function discover(run: Run, spec: ToolSpec, discovery: "schema" | "help", comman
     for (const t of types.values()) {
       const doc = t.schema ?? SCHEMAS.find((s) => s.id === t.id && s.version === t.version)?.schema;
       if (!doc) { run.warning({ code: "schema.unavailable", problem: `no schema document for ${t.id}@${t.version}`, remedy: "declare the schema on the emitted type" }); continue; }
-      run.result({ event: "schema", id: t.id, version: t.version, schema: doc }, SCHEMA_IDS.schema);
+      run.describe({ event: "schema", id: t.id, version: t.version, schema: doc }, SCHEMA_IDS.schema);
     }
     run.end(0);
   }

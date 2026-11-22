@@ -69,6 +69,17 @@ The spec and each message schema are versioned separately from this package.
 
 ### Added
 
+- `packages/parley-read`: the reader library `@flyingrobots/parley-read`, a Bun workspace package,
+  unreleased and private in its manifest. Its loader lists both receipt locations for a working
+  directory and returns every run's records: newline-buffered over bytes, stray lines and
+  unterminated tails quarantined and reported, copies deduplicated by `(run, seq)`, every
+  `parley.*` line validated against the schema for its exact pair and every tool-owned line passed
+  through as unvalidated, sidecars resolved against their declared digest, and a bundle ruled out
+  for replay when a sidecar is broken, no `end` closes it, its status is non-zero or it is
+  redacted. A library with no command; the doctor's rebuild on it is separate. Its own changelog
+  lives beside it, the living reference is `docs/topics/parley-read/` with its test plan, and the
+  repository's `bun test` and `bun run typecheck` cover it. (flyingrobots/parley#47)
+
 - `.github/workflows/release-parley-emit.yml`: a tag `parley-emit-vX.Y.Z` runs the checks,
   creates the GitHub release with the tarball and publishes to npm through OIDC trusted
   publishing. Documented in `docs/workflows/release-parley-emit/`.

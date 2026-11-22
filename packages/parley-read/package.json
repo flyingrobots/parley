@@ -1,0 +1,38 @@
+{
+  "name": "@flyingrobots/parley-read",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A reader for the Parley output protocol: opens a repository's receipt bundles under the reader rules of the spec.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "scripts": {
+    "test": "bun test",
+    "sync-schemas": "bun run scripts/sync-schemas.ts"
+  },
+  "dependencies": {
+    "@flyingrobots/parley-emit": "workspace:*",
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/flyingrobots/parley.git",
+    "directory": "packages/parley-read"
+  },
+  "author": "James Ross",
+  "engines": {
+    "bun": ">=1.2"
+  }
+}

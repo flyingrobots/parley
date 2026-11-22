@@ -11,8 +11,9 @@ disk whether anyone asked for it or not. A history layer in which reading is its
 act, carrying who is asking and why, is designed but not yet built.
 
 > **Status: proposal.** The [specification](spec/) is written. The writer library,
-> [`@flyingrobots/parley-emit`](packages/parley-emit/README.md), is published; the reader and the
-> history stream are not built. See the
+> [`@flyingrobots/parley-emit`](packages/parley-emit/README.md), is published; the reader library,
+> [`@flyingrobots/parley-read`](packages/parley-read/README.md), loads a repository's receipt
+> bundles and is not published yet; the history stream is not built. See the
 > [open issues](https://github.com/flyingrobots/parley/issues).
 
 ## Two layers, and the dependency runs one way

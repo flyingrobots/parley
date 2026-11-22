@@ -60,10 +60,14 @@ clocks move backwards under clock adjustment. Ordering within a run **MUST** use
 across runs **MAY** use `t`.
 
 A line written to more than one stream, for example an error that goes to stderr and is also
-recorded in the receipt, is one event and **MUST** carry the same `seq` in every copy. The pair
+recorded in the receipt, is one event and **MUST** carry the same `seq`, the same `t` and the same
+`event` in every copy. A copy **MAY** carry fields another copy omits, for example a fuller
+`detail` in the receipt, but copies **MUST** agree on every field they share. The pair
 `(run, seq)` therefore identifies an event uniquely, and a consumer merging streams **MUST** treat
-two lines with the same pair as one event. Because the bootstrap line (§3) is emitted first, it is
-always `seq: 0`; nothing else is pinned.
+two lines with the same pair as one event. Remembering which pairs it has seen is deduplication,
+not interpretation, and does not conflict with the stand-alone rule above. Because the bootstrap
+line (§3) is the first line a run emits on any stream, it is always `seq: 0`; every other line is
+`seq >= 1`, and nothing else is pinned.
 
 ---
 
@@ -115,7 +119,8 @@ not — a declared input set never captures everything.
 
 ## 3. The bootstrap line
 
-The **first** line of stdout, emitted **before work begins**.
+The **first** line the run emits on any stream, and so the first line of stdout, emitted
+**before work begins**.
 
 ```json
 {"event":"run","t":1763790412345,"seq":0,
@@ -186,9 +191,16 @@ Schema versions are SemVer, and the number is a promise to readers:
 - A **patch** bump changes descriptions only.
 
 Because readers ignore unknown fields, parley schemas are **open**: they do not set
-`additionalProperties: false` at the top level. `_schema` itself is closed, and pinned by `const`
-in each message schema to that schema's own id and version, so a line cannot claim a schema it
-was not written to.
+`additionalProperties: false` anywhere, nested objects included, except on `_schema` itself.
+Each message schema pins `_schema.id` by `const` and constrains `_schema.version` to its own
+**major** (`1.x.y`, `2.x.y`). That is the rule above expressed in the schema: a reader validates
+every line whose major matches the schema it ships with, including a newer or older minor, and
+rejects a line of a different major. Validating a line against the schema its own `_schema`
+names is what stops a line from claiming a contract it does not meet.
+
+This promise binds from the first version of each schema published under this rule:
+`parley.run.bootstrap` `1.1.0`, `parley.error` `2.0.0`, `parley.receipt.head` `2.0.0`. The
+`1.0.0` schemas were closed and predate it; a reader built against them is outside the promise.
 
 ### 4.6 Resolution
 
@@ -196,8 +208,8 @@ was not written to.
 to the schema it ships with for that id, and applies the rule in §4.5 to the version. The `$id`
 inside each published schema is `https://flyingrobots.dev/parley/schemas/<id>/<version>` and
 is likewise an identifier; it is not required to be served. Each schema lives at
-`schemas/<id>.schema.json` in this repository at its current version; earlier versions are in
-git history at the tag that published them.
+`schemas/<id>.schema.json` in this repository at its current version. Earlier versions are in git
+history; the `CHANGELOG.md` entry that records a bump names the release that published it.
 
 ---
 
@@ -212,6 +224,18 @@ interpretation after defaults and environment are applied, and a digest per decl
 > Echo both raw and resolved. The gap between them is where the bugs live: a relative path
 > resolved somewhere surprising, a default silently filled in, an environment variable overriding
 > a flag.
+
+```json
+{"event":"receipt.head","t":1763790412346,"seq":1,"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8",
+ "inv":"inv_7f3a9c1e","session":"ses_9c4f",
+ "argv":["theme-book","count","--format","css"],
+ "resolved":{"command":"count","format":"css","cwd":"/work/site"},
+ "inputs":[{"path":"src/tokens.css","sha256":"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"}],
+ "effects":{"reads":["src/**/*.css"],"writes":[],"network":false,"idempotent":true},
+ "_schema":{"id":"parley.receipt.head","version":"2.0.0"}}
+```
+
+The head takes `seq: 1` because the bootstrap line took `0` and the run holds one counter (§1.3).
 
 Subsequent lines carry the program's reasoning as it works — one line per decision, emitted as it
 happens rather than buffered, so a person watching sees the thing working.
@@ -238,8 +262,8 @@ Receipts are durable and may contain file contents, resolved paths and prompts. 
 
 Errors go to stderr, as JSON Lines, and **MUST** carry structure rather than prose:
 
-```json abridged
-{"event":"error","t":…,"seq":…,"run":"01JD3K…","code":"contrast.unsatisfiable",
+```json
+{"event":"error","t":1763790412380,"seq":4,"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8","code":"contrast.unsatisfiable",
  "problem":"No opaque sRGB foreground reaches the required contrast on this background",
  "measured":5.3783,"limit":7,"remedy":"adjust the background",
  "remedy_target":"--destructive",
@@ -273,6 +297,9 @@ Unbounded output **MUST** paginate explicitly with a cursor:
 {"event":"page","t":1763790412390,"seq":7,"run":"01JD3K…","cursor":"…","has_more":true,
  "_schema":{"id":"parley.page","version":"1.0.0"}}
 ```
+
+Illustrative: `parley.page` is not yet published under `schemas/`
+([flyingrobots/parley#10](https://github.com/flyingrobots/parley/issues/10)).
 
 A caller that fears a large payload will truncate it with a pipe, and silent truncation of JSON is
 unparseable at best and quietly wrong at worst.

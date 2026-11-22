@@ -22,7 +22,8 @@
     },
     "seq": {
       "type": "integer",
-      "minimum": 0
+      "minimum": 1,
+      "description": "The run's single counter; 0 is the bootstrap line (spec \u00a71.3)."
     },
     "run": {
       "type": "string",
@@ -65,7 +66,9 @@
           "const": "parley.error"
         },
         "version": {
-          "const": "2.0.0"
+          "type": "string",
+          "pattern": "^2\\.[0-9]+\\.[0-9]+$",
+          "description": "Any 2.x.y: a reader validates every line of the major it was built against and ignores fields it does not know (spec \u00a74.5)."
         }
       }
     }

@@ -13,12 +13,19 @@ The spec and each message schema are versioned separately from this package.
 - `seq` is one counter per run across stdout, stderr and the receipt; a line mirrored to more
   than one stream keeps its `seq`, so `(run, seq)` identifies an event. The receipt head is no
   longer pinned to `0`. (flyingrobots/parley#7)
-- §4.5 and §4.6: minor schema bumps are additive and readers ignore unknown fields; major bumps
-  are rejected by older readers; schemas are open at the top level and `_schema` is pinned by
-  `const`; `_schema` and `$id` are identifiers, not URLs to fetch. (flyingrobots/parley#8)
-- `parley.error` `1.0.0` → `2.0.0`: `run` required, `_schema` pinned.
-- `parley.receipt.head` `1.0.0` → `2.0.0`: `seq` is at least `1`, `_schema` pinned.
-- `parley.run.bootstrap` `1.0.0` → `1.1.0`: top level opened per §4.5, `_schema` pinned.
+- §4.5 and §4.6: minor schema bumps are additive and readers ignore unknown fields; a reader
+  validates any line of the major it was built against and rejects a different major; schemas
+  are open everywhere except `_schema`, which pins its `id` and constrains `version` to the
+  major; `_schema` and `$id` are identifiers, not URLs to fetch. The promise binds from the
+  versions below; the closed `1.0.0` schemas predate it. (flyingrobots/parley#8)
+- §2.1: `session` is optional; a program MUST carry it when supplied and MUST NOT invent one.
+- §3: the bootstrap line is the first line a run emits on any stream, not only on stdout.
+- `parley.error` `1.0.0` → `2.0.0`: `run` required, `seq` at least `1`, `_schema` major-pinned.
+- `parley.receipt.head` `1.0.0` → `2.0.0`: `seq` at least `1`, `_schema` major-pinned.
+- `parley.run.bootstrap` `1.0.0` → `1.1.0`: opened (top level and `paths`), `_schema`
+  major-pinned.
+- §5 gains a complete receipt-head example and §6's error example is now complete, so the
+  example checker validates all three schemas.
 
 ### Added
 

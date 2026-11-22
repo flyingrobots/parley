@@ -31,7 +31,8 @@ that and nobody can use these tools without adopting the whole system.
 {"event":"result","t":1763790412380,"seq":2,"run":"01JD3K…","value":5,"_schema":{"id":"theme-book.count","version":"1.0.0"}}
 ```
 
-Two small lines for a one-number answer. The bulk — the argv echo, the resolved interpretation,
+Two small lines for a one-number answer. The result is `seq: 2` because `seq: 1` went to the
+receipt's first line; a run holds one counter across every stream. The bulk — the argv echo, the resolved interpretation,
 the input hashes — goes in the receipt, because **stdout carries what you need to act and the
 receipt carries what you need to verify**.
 

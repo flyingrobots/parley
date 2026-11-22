@@ -6,8 +6,9 @@ from something that actually went wrong.
 ## Why JSON Lines rather than one JSON document
 
 A document must be complete before it parses. Lines parse as they arrive, so a caller can follow
-a long run, and a crashed run still yields everything up to the crash. Interleaving is safe
-because every line carries its own `run` identity, which §1.3 requires for exactly that reason.
+a long run, and a crashed run still yields everything up to the crash. Interleaved output stays
+attributable because every line carries its own `run` identity, which §1.3 requires for exactly
+that reason.
 
 ## Why stdout stays small
 
@@ -28,7 +29,7 @@ merging them could not tell the two copies were one event, and could not order a
 against a stdout line at all. One counter per run makes `(run, seq)` the event's identity wherever
 it was written.
 
-## Why two identifiers
+## Why `run` and `inv` are both needed
 
 `run` distinguishes two executions of the same question; `inv` recognises that they *were* the
 same question. Both are needed. The pair is what makes change detection a string comparison and

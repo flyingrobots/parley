@@ -51,7 +51,6 @@
       "required": [
         "receipt"
       ],
-      "additionalProperties": false,
       "properties": {
         "receipt": {
           "type": "string"
@@ -76,7 +75,9 @@
           "const": "parley.run.bootstrap"
         },
         "version": {
-          "const": "1.1.0"
+          "type": "string",
+          "pattern": "^1\\.[0-9]+\\.[0-9]+$",
+          "description": "Any 1.x.y: a reader validates every line of the major it was built against and ignores fields it does not know (spec \u00a74.5)."
         }
       }
     }

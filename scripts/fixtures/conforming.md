@@ -5,5 +5,5 @@
 A tool-owned result is parsed but not validated here:
 
 ```jsonl
-{"event":"result","t":1763790412380,"seq":1,"value":5,"_schema":{"id":"theme-book.count","version":"1.0.0"}}
+{"event":"result","t":1763790412380,"seq":2,"run":"01JD3K","value":5,"_schema":{"id":"theme-book.count","version":"1.0.0"}}
 ```

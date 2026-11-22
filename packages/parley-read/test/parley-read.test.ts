@@ -946,6 +946,18 @@ describe("RD-15 an accepted query is recorded and reads back", () => {
     expect(load.bundles.some((b) => b.run === answer.run)).toBe(true);
     expect(answer.load.bundles.length).toBe(60 + 1);
   });
+
+  test("a read with PARLEY_TASK set and no stated task records no asker.task", async () => {
+    const { dir, env } = scratch();
+    const withTask = { ...env, PARLEY_TASK: "flyingrobots/parley#999" };
+    const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: WIDE }, { cwd: dir, env: withTask }));
+    // flyingrobots/parley#61: a task id is always supplied by the caller, never inferred. Nothing
+    // reads an environment variable for it, so a stated environment value must not leak in.
+    expect(answer.asker).toEqual({ tool: "t", cwd: dir });
+    expect(answer.asker).not.toHaveProperty("task");
+    const recorded = loadReceipts({ cwd: dir, env: withTask }).bundles.flatMap((b) => b.records).find((r) => r.event === "query")!;
+    expect((recorded.record as { asker: unknown }).asker).toEqual({ tool: "t", cwd: dir });
+  });
 });
 
 describe("RD-16 the window, echoed verbatim, with nothing excluded", () => {

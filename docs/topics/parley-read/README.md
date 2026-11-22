@@ -199,11 +199,11 @@ parley tool can hand one to `run.error` — with the `field` it is about and the
 measured against. Every refusal that applies is returned, not just the first, so one round trip
 tells a caller everything that is missing.
 
-Two fields are inferred rather than refused, as the decision has it: `asker.cwd` is the directory
+One field is inferred rather than refused, as the decision has it: `asker.cwd` is the directory
 the read was made against when the caller does not state it, and the recorded query says so.
-`asker.task` is "from the environment" in that decision without a variable named, so it comes from
-the request and is omitted when absent — this library does not read a variable it would be
-inventing (§2.1).
+`asker.task` is never inferred — there is no environment variable for it, and none is read for
+it — it is always supplied by the caller and omitted from the record when they do not state it
+([flyingrobots/parley#61](https://github.com/flyingrobots/parley/issues/61)).
 
 ### A refused read is not a run
 

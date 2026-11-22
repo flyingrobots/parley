@@ -59,7 +59,7 @@
         "task": {
           "type": "string",
           "minLength": 1,
-          "description": "The caller's current task id, inferred from the environment and omitted when absent. Not the session: a session is a working period, a task is a unit of work inside one."
+          "description": "The caller's current task id, supplied by the caller and never inferred (flyingrobots/parley#61); omitted when the caller does not state it. Not the session: a session is a working period, a task is a unit of work inside one."
         }
       },
       "description": "Who the read is for, and the context the budget is inferred from. The asker is not the view: two askers requesting the same view under the same budget get the same answer."

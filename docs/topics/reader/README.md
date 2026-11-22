@@ -70,7 +70,7 @@ versions. The vocabulary is not extensible by a caller.
 | --- | --- | --- |
 | `asker.tool` | The calling program's own identity | **Refused.** Spec §2.1 forbids inventing an identity; a read whose caller cannot be named is not recorded under a guess |
 | `asker.cwd` | The process working directory | Omitted |
-| `asker.task` | The caller's current task id in the environment | Omitted |
+| `asker.task` | Nothing. There is no environment variable for it; the caller always supplies it ([flyingrobots/parley#61](https://github.com/flyingrobots/parley/issues/61)) | Omitted |
 | `view` | Nothing | **Refused.** There is no privileged view to fall back on, and a guessed view is one the caller cannot see in the lens |
 | `budget` | One documented default, `{"records": 20}` | n/a — the default applies, and the result's lens carries the budget that was actually applied |
 | `note` | Nothing | Omitted. Free text, recorded, never parsed; nothing in the answer branches on it |
@@ -85,7 +85,7 @@ would be a different answer to a different question, reported as the answer to t
 One argument each, each argument one token, and nothing positional:
 
 ```text
---asker <tool>                     # fills asker.tool; cwd and task come from context
+--asker <tool>                     # fills asker.tool; cwd comes from context, task from the caller
 --view <token>                     # one of the five
 --budget <kind>=<n>[,<kind>=<n>]   # records, bytes, ms; --budget 20 means records=20
 --note <text>                      # optional, free text, never parsed

@@ -55,7 +55,7 @@ describe("schemas/", () => {
 
     test(`${f}: t is a non-negative integer and identities are non-empty (§1.3, §2.1)`, () => {
       expect(s.properties.t.minimum).toBe(0);
-      for (const k of ["run", "tool", "v", "inv"]) if (s.properties[k]) expect(s.properties[k].minLength).toBe(1);
+      for (const k of ["run", "tool", "v", "inv", "session"]) if (s.properties[k]) expect(s.properties[k].minLength).toBe(1);
     });
 
     test(`${f}: seq is const 0 only for the bootstrap line, otherwise minimum 1 (§1.3)`, () => {
@@ -109,11 +109,14 @@ describe("schemas/", () => {
       expect(head({ ...okHead, inv: "" })).toBe(false);
       expect(head({ ...okHead, t: -1 })).toBe(false);
       expect(boot({ ...okBoot, t: -1 })).toBe(false);
+      expect(boot({ ...okBoot, session: "" })).toBe(false);
+      expect(head({ ...okHead, session: "" })).toBe(false);
     });
     test("code grammar permits digits and underscores, rejects uppercase, hyphens and one segment", () => {
       expect(error({ ...okError, code: "http.404" })).toBe(true);
       expect(error({ ...okError, code: "fs.not_found" })).toBe(true);
       expect(error({ ...okError, code: "ENOENT" })).toBe(false);
+      expect(error({ ...okError, code: "Contrast.Unsatisfiable" })).toBe(false);
       expect(error({ ...okError, code: "contrast-unsatisfiable" })).toBe(false);
       expect(error({ ...okError, code: "a.b." })).toBe(false);
     });
@@ -132,6 +135,9 @@ describe("schemas/", () => {
       expect(head({ ...okHead, redacted: { resolved: [""] } })).toBe(false);
       expect(head({ ...okHead, redacted: { env: [""] } })).toBe(false);
       expect(head({ ...okHead, redacted: {} })).toBe(false);
+      expect(head({ ...okHead, redacted: { resolved: ["token"] } })).toBe(false);
+      expect(head({ ...okHead, redacted: { resolved: ["/auth/token"], inputs: [0] } })).toBe(true);
+      expect(head({ ...okHead, redacted: "argv" })).toBe(false);
     });
   });
 

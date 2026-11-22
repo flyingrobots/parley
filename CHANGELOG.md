@@ -66,8 +66,8 @@ The spec and each message schema are versioned separately from this package.
 - `schemas/README.md` lists each schema and its current version. (flyingrobots/parley#9)
 - §5.3 redaction rule: secrets are declared in the command description's `secrets` list (§4.3);
   their values are replaced with `[redacted]` before the head is written; the head's new
-  `redacted` field records argv indexes, resolved JSON Pointers and env names and is present
-  whenever any redaction occurred. §2.2: `inv` never incorporates a declared secret, so a receipt
+  `redacted` field records argv indexes, resolved JSON Pointers, input indexes and env names and is
+  present whenever a declared secret was supplied. §2.2: `inv` never incorporates a declared secret, so a receipt
   is not an oracle for it; §2.3 and §5.3: a redacted receipt is never replayed from or served
   from cache. (flyingrobots/parley#13)
 - §4.5: a schema version still under `Unreleased` is a draft and may change in place. The

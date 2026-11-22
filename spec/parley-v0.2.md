@@ -132,6 +132,9 @@ receipt.
 
 ### 2.3 What `inv` buys
 
+Each of these holds for receipts that carry no `redacted` (§5.3); a redacted receipt shares its
+`inv` with every run that differed only in a secret, so none of them applies to it.
+
 - **Change detection.** Same `inv`, same result ⇒ nothing moved.
 - **Non-determinism detection, free.** Same `inv`, *different* result ⇒ the program is not
   deterministic, which is a defect worth knowing about.
@@ -247,7 +250,7 @@ publishes it. Until then a reader built from `main` holds a draft and the identi
 say so.
 
 Once released, this promise binds from the first version of each schema published under this rule:
-`parley.run.bootstrap` `1.1.0`, `parley.error` `2.0.0`, `parley.receipt.head` `2.0.0`. All three
+`parley.run.bootstrap` `1.1.1`, `parley.error` `2.0.0`, `parley.receipt.head` `2.0.0`. All three
 `1.0.0` schemas predate it, and the `1.0.0` bootstrap schema was closed; a reader built against
 any of them is outside the promise, and the `1.0.0` to `1.1.0` bootstrap transition is governed
 by this paragraph rather than by the minor rule above.
@@ -328,20 +331,25 @@ collide unless the program redacts. Privacy wins:
   its own `argv` element becomes `[redacted]`; one given as `--name=value` becomes
   `--name=[redacted]`, so the flag stays visible; a secret embedded in a longer value, such as a
   path, is replaced within it.
-- It **MUST** record, in the head's `redacted` field, every redaction in `argv` (as indexes), in
-  `resolved` (as JSON Pointers, RFC 6901) and in the environment (as the names of variables whose
-  values were present and redacted). A redaction anywhere else in the receipt, for example in an
-  input path or a later line, is required but has no location field; the presence of `redacted`
-  on the head is what tells a reader the receipt is partial, so `redacted` **MUST** be present and
-  non-empty whenever any redaction occurred and absent otherwise.
-- It **MAY** redact more than it declared. Name-based redaction misses odd names and pattern-based
-  redaction misses odd values; the declaration is the floor, not the ceiling.
+- The head's `redacted` field **MUST** be present, and non-empty, whenever any declared secret was
+  supplied to the run, and absent otherwise. Whether a declared secret was supplied is known from
+  `argv` and the environment before the head is written, so this is decidable in time. It records
+  every redaction in the head: in `argv` (as indexes), in `resolved` (as JSON Pointers, RFC 6901),
+  in `inputs` (as indexes) and in the environment (as the names of declared variables that were
+  present, whether or not the receipt carried their values). A declared secret that reaches a
+  later receipt line is replaced there too; that line needs no entry on the head, because the
+  head already says the receipt is partial.
+- It **MAY** redact more than it declared, in the head or in any later line, by replacing the value
+  in place. Name-based redaction misses odd names and pattern-based redaction misses odd values;
+  the declaration is the floor, not the ceiling. An undeclared value redacted this way is still in
+  the `inv` preimage (§2.2 excludes declared secrets only), so declaring it is the real protection.
 - A reader **MUST NOT** replay from, or serve a cached answer for, a receipt that carries
   `redacted` (§2.3). Two invocations that differ only in a secret, for example two tokens
   selecting two accounts, have the same `inv` (§2.2 excludes the secret) and identical receipts,
   and their answers may differ.
 
-A schema checks the shape of `redacted`, not its truth. Whether an index points at `[redacted]`,
+A schema checks the shape of `redacted`, not its truth. Whether an indexed element contains
+`[redacted]`,
 whether a pointer resolves, and whether a `[redacted]` marker has a matching entry are a reader's
 checks, and a reader that performs them **SHOULD** report a mismatch as a defect in the writer.
 

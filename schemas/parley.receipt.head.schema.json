@@ -44,7 +44,7 @@
     "v": {
       "type": "string",
       "minLength": 1,
-      "description": "That program's own version; with tool, enough to recompute inv (spec \u00a72.2)."
+      "description": "That program's own version; with tool, a component of the inv preimage (spec \u00a72.2) that a receipt read alone must carry."
     },
     "inv": {
       "type": "string",
@@ -52,7 +52,8 @@
       "description": "Content-addressed identity of the question (spec \u00a72.2); never includes a declared secret."
     },
     "session": {
-      "type": "string"
+      "type": "string",
+      "minLength": 1
     },
     "argv": {
       "type": "array",
@@ -129,7 +130,7 @@
     "redacted": {
       "type": "object",
       "minProperties": 1,
-      "description": "Where the program replaced a declared secret with the literal [redacted] before writing this line (spec \u00a75.3). Present and non-empty whenever any redaction occurred; absent otherwise.",
+      "description": "Present and non-empty whenever a declared secret was supplied to the run; absent otherwise (spec \u00a75.3). Lists where the head carries a replaced value.",
       "properties": {
         "argv": {
           "type": "array",
@@ -143,6 +144,7 @@
           "type": "array",
           "items": {
             "type": "string",
+            "format": "json-pointer",
             "minLength": 1
           },
           "description": "JSON Pointers (RFC 6901) into resolved."
@@ -153,7 +155,15 @@
             "type": "string",
             "minLength": 1
           },
-          "description": "Names of environment variables whose values were present and redacted."
+          "description": "Names of declared environment variables that were present."
+        },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "description": "Indexes into inputs whose path carried a replaced value."
         }
       }
     }

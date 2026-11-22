@@ -252,8 +252,9 @@ token counts as supplied when the program has a credential from it, and the head
 rule and invisible to a reader; a program that uses such credentials **MUST** declare the source or
 **MUST NOT** short-circuit at all. The same two-sided rule binds a reader that serves cached answers
 (§5.3): it decides the current side from that invocation's own receipt head, whose `redacted` is
-mandatory when a declared secret was supplied, or from its declaration together with its `argv` and
-environment, and **MUST NOT** serve when it holds neither.
+mandatory when a declared secret was supplied, or, when the declaration names no credential source,
+from its declaration together with its `argv` and environment, and **MUST NOT** serve when it
+holds neither.
 
 ---
 
@@ -589,14 +590,15 @@ receipt then carries a `sidecar` event in the record's place:
 
 ```json
 {"event":"sidecar","t":1795326412400,"seq":8,"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8",
- "source":2,"path":"01JD3KQ8Z6V9X2M4N7P1R3T5W8/2.json","bytes":2097152,
+ "source":7,"path":"01JD3KQ8Z6V9X2M4N7P1R3T5W8/7.json","bytes":2097152,
  "sha256":"3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855b",
  "_schema":{"id":"parley.sidecar","version":"1.0.0"}}
 ```
 
-- `source` is the `seq` of the record the sidecar holds (here the run's result at `seq: 2`, whose
-  stdout copy is small and whose receipt copy carries the full table); the sidecar event has its
-  own `seq` and schema and does not pretend to be the record. A `redaction` event (§5.3) that names a value
+- `source` is the `seq` of the record the sidecar holds. Here it is the run's `page` at `seq: 7`:
+  its stdout copy carries the cursor and nothing else, and its receipt copy, which §1.3 lets be
+  the fuller one, carries the page's rows, which is why it is large. The sidecar event has its own
+  `seq` and schema and does not pretend to be the record. A `redaction` event (§5.3) that names a value
   inside a sidecar's stored record uses that record's `seq`, the `source`, as its `in`.
 - `path` **MUST** be relative to the receipt's directory and **MUST NOT** leave it; the bundle
   moves as one.

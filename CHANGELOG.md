@@ -27,7 +27,9 @@ The spec and each message schema are versioned separately from this package.
   top-level handler converts throws before `end` only; `.parley/.gitignore` must contain a line
   consisting of `*`; sidecar paths must not leave the receipt directory; paths are POSIX; the
   examples drop `inv` for the run that never had one, list every declared input on the head, and
-  give the cache-hit, README and doctor runs their own run ids.
+  give the cache-hit, README and doctor runs their own run ids; the sidecar example holds the
+  page at `seq: 7`, whose receipt copy is the fuller one; a cache-serving reader falls back to the
+  declaration only when it names no credential source.
 
 - §4.1, §4.2: discovery is a run. `--schema` and `--help` bootstrap, write a receipt, carry the
   envelope and close with `end`; they emit `command` lines (name, intent, effects, secrets, the

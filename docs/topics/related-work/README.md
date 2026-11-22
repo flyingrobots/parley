@@ -9,8 +9,8 @@ Read this before claiming novelty for any part of the [specification](../../../s
 **[CLI Agent Spec](https://cli-agent-spec.github.io/)** documents failure modes of tools called
 by agents and states requirements to remove them, with machine-readable schemas and a deterministic
 conformance kit that reports pass or fail per check. It covers input (argument schemas, an
-idempotency key), exit codes and a terminal envelope, which parley's v0.2 does not. Where parley
-differs: receipts on disk by default, content-addressed invocation identity, and the no-TTY rule.
+idempotency key), which parley's v0.2 does not, and exit codes and a terminal envelope, which
+parley now has (§3.3, §3.4). Where parley differs: receipts on disk by default, content-addressed invocation identity, and the no-TTY rule.
 Check its position on TTY detection before citing it as a contrast; one external review reported
 it as the opposite of parley's.
 
@@ -44,8 +44,8 @@ history stream of §8, applied to data pipelines rather than command lines.
 
 **[Bazel's build event protocol](https://bazel.build/remote/bep)** opens a stream with a
 started event and closes it with a finished event, carries an invocation id, and records the
-command line and parsed options. parley has the opening line and, at v0.2, not yet the closing one
-([flyingrobots/parley#15](https://github.com/flyingrobots/parley/issues/15)). Bazel's action
+command line and parsed options. parley has both: the bootstrap line opens a run and `end` closes
+it, carrying the exit status (§3). Bazel's action
 digests are the nearest prior art for `inv`: identity computed over the inputs, not their paths.
 
 **[Terraform's machine-readable output](https://developer.hashicorp.com/terraform/internals/machine-readable-ui)**

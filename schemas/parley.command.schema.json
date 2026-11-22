@@ -107,7 +107,7 @@
         "type": "string",
         "minLength": 1
       },
-      "description": "Arguments, environment variables and credential files whose values are secrets (spec \u00a75.3)."
+      "description": "Arguments by flag, environment variables by name, and credential sources by logical name, whose values are secrets (spec \u00a74.3, \u00a75.3)."
     },
     "emits": {
       "type": "array",

@@ -38,7 +38,8 @@ of evidence establishes. The doctor is a reader; it reads records.
 
 ## Fixtures
 
-`scripts/fixtures/doctor/conforming/` is a complete run assembled from the spec's own examples,
+`scripts/fixtures/doctor/conforming/` is a complete run modelled on the spec's examples (a successful, warning-only run, distinct from
+the failed run the spec shows),
 and `startup-failed/` is a run that could not bootstrap. `scripts/doctor.test.ts` mutates the
 conforming run one rule at a time and asserts the doctor names that rule.
 

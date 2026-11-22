@@ -37,16 +37,20 @@
       "type": "integer",
       "minimum": 0,
       "maximum": 255,
-      "description": "The exit status the process is about to exit with (spec \u00a73.4)."
+      "not": {
+        "const": 3
+      },
+      "description": "The exit status the process is about to exit with (spec \u00a73.4); never 3, since a run that could not bootstrap has no end."
     },
     "receipt": {
       "type": "string",
-      "minLength": 1,
-      "description": "The receipt path, as the bootstrap line declared it."
+      "pattern": "^/",
+      "minLength": 2,
+      "description": "The receipt path, absolute, as the bootstrap line declared it."
     },
     "redacted": {
       "type": "boolean",
-      "description": "True when the head carries redacted, any redaction event was emitted, or a sidecar holds a replaced value (spec \u00a73.3, \u00a75.3)."
+      "description": "True exactly when the head carries redacted or any redaction event was emitted (spec \u00a73.3)."
     },
     "_schema": {
       "type": "object",

@@ -17,7 +17,7 @@ Released versions are snapshotted, immutable, under `released/<id>/<version>.sch
 | `parley.startup.failed` | 1.0.0 (draft) | The single stderr line of a run that could not bootstrap; exit 3 | §3.2 |
 | `parley.end` | 1.0.0 (draft) | The terminal event, on stdout and in the receipt | §3.3 |
 | `parley.sidecar` | 1.0.0 (draft) | A receipt line standing in for a record stored beside the receipt | §5 |
-| `parley.redaction` | 1.0.0 (draft) | A receipt line recording a redaction decided after the head | §5.3 |
+| `parley.redaction` | 1.0.0 (draft) | A receipt line recording a redaction the head's `redacted` field does not cover | §5.3 |
 | `parley.receipt.step` | 1.0.0 (draft) | One decision and its reason; receipt only | §5 |
 | `parley.receipt.inputs` | 1.0.0 (draft) | Late input digests and `inv` once settled | §2.2 |
 | `parley.cache.hit` | 1.0.0 (draft) | The program answered from a prior receipt | §2.3 |

@@ -101,7 +101,7 @@ describe("schemas/", () => {
     const boot = validate("parley.run.bootstrap.schema.json");
     const okError = { event: "error", t: 1, seq: 4, run: "r", code: "a.b", problem: "p", _schema: { id: "parley.error", version: "2.0.0" } };
     const okHead = { event: "receipt.head", t: 1, seq: 1, run: "r", tool: "x", v: "1", inv: "i", argv: [], resolved: {}, inputs: [], _schema: { id: "parley.receipt.head", version: "2.0.0" } };
-    const okBoot = { event: "run", t: 1, seq: 0, run: "r", tool: "x", v: "1", inv: "i", paths: { receipt: "p" }, _schema: { id: "parley.run.bootstrap", version: "1.1.1" } };
+    const okBoot = { event: "run", t: 1, seq: 0, run: "r", tool: "x", v: "1", inv: "i", paths: { receipt: "/p/r.jsonl" }, _schema: { id: "parley.run.bootstrap", version: "1.1.1" } };
 
     test("baselines validate", () => {
       expect(error(okError)).toBe(true);
@@ -152,6 +152,45 @@ describe("schemas/", () => {
       expect(boot(bootNoInv)).toBe(true);
       expect(head({ ...okHead, inputs: [{ path: "vendor/", role: "tree", error: "input.unreadable" }] })).toBe(true);
       expect(head({ ...okHead, inputs: [{ role: "tree" }] })).toBe(false);
+    });
+    test("each new schema's own constraints reject what the spec forbids", () => {
+      const end = validate("parley.end.schema.json"), side = validate("parley.sidecar.schema.json"), start = validate("parley.startup.failed.schema.json"), warn = validate("parley.warning.schema.json"), red = validate("parley.redaction.schema.json");
+      const okEnd = { event: "end", t: 1, seq: 9, run: "r", status: 0, receipt: "/w/r.jsonl", redacted: false, _schema: { id: "parley.end", version: "1.0.0" } };
+      expect(end(okEnd)).toBe(true);
+      for (const status of [-1, 256, 3, "0"]) expect(end({ ...okEnd, status })).toBe(false);
+      const { redacted: _r, ...noRedacted } = okEnd; expect(end(noRedacted)).toBe(false);
+      const { receipt: _p, ...noReceipt } = okEnd; expect(end(noReceipt)).toBe(false);
+      expect(end({ ...okEnd, receipt: "rel/r.jsonl" })).toBe(false);
+      const okSide = { event: "sidecar", t: 1, seq: 8, run: "r", source: 7, path: "r/7.json", bytes: 10, sha256: "a".repeat(64), _schema: { id: "parley.sidecar", version: "1.0.0" } };
+      expect(side(okSide)).toBe(true);
+      expect(side({ ...okSide, sha256: "zz" })).toBe(false);
+      expect(side({ ...okSide, source: 0 })).toBe(false);
+      expect(side({ ...okSide, path: "/abs/7.json" })).toBe(false);
+      expect(side({ ...okSide, path: "../escape.json" })).toBe(false);
+      expect(side({ ...okSide, bytes: -1 })).toBe(false);
+      const okStart = { event: "startup.failed", t: 1, seq: 0, run: "r", tool: "x", v: "1", code: "startup.receipt_unwritable", problem: "p", _schema: { id: "parley.startup.failed", version: "1.0.0" } };
+      expect(start(okStart)).toBe(true);
+      expect(start({ ...okStart, code: "args.unparseable" })).toBe(false);
+      const okWarn = { event: "warning", t: 1, seq: 3, run: "r", code: "a.b", problem: "p", _schema: { id: "parley.warning", version: "1.0.0" } };
+      expect(warn(okWarn)).toBe(true);
+      expect(warn({ ...okWarn, code: "Something went wrong" })).toBe(false);
+      expect(warn({ ...okWarn, problem: "" })).toBe(false);
+      const okRed = { event: "redaction", t: 1, seq: 6, run: "r", in: 4, at: "/detail/url", _schema: { id: "parley.redaction", version: "1.0.0" } };
+      expect(red(okRed)).toBe(true);
+      expect(red({ ...okRed, in: 0 })).toBe(false);
+      expect(red({ ...okRed, at: "token" })).toBe(false);
+      expect(head({ ...okHead, dry_run: "yes" })).toBe(false);
+      expect(boot({ ...okBoot, dry_run: "yes" })).toBe(false);
+      expect(boot({ ...okBoot, paths: { receipt: "rel.jsonl" } })).toBe(false);
+      expect(head({ ...okHead, redacted: { argv: [], env: [] } })).toBe(false);
+      expect(head({ ...okHead, redacted: { sources: ["netrc"] } })).toBe(true);
+      expect(head({ ...okHead, inputs: [{ path: "x", sha256: "a".repeat(64), error: "input.unreadable" }] })).toBe(false);
+      expect(head({ ...okHead, redacted: { sources: [""] } })).toBe(false);
+      const inputs = validate("parley.receipt.inputs.schema.json");
+      const okInputs = { event: "receipt.inputs", t: 1, seq: 5, run: "r", inputs: [{ path: "x", sha256: "a".repeat(64) }], _schema: { id: "parley.receipt.inputs", version: "1.0.0" } };
+      expect(inputs(okInputs)).toBe(true);
+      expect(inputs({ ...okInputs, inputs: [{ path: "x", sha256: "a".repeat(64), error: "input.unreadable" }] })).toBe(false);
+      expect(inputs({ ...okInputs, inputs: [{ path: "x", sha256: "zz" }] })).toBe(false);
     });
     test("a page with has_more needs a cursor; the last page does not (§7.2)", () => {
       const page = validate("parley.page.schema.json");

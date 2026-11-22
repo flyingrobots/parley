@@ -33,7 +33,9 @@ it was written.
 
 `run` distinguishes two executions of the same question; `inv` recognises that they *were* the
 same question. Both are needed. The pair is what makes change detection a string comparison and
-makes an identical `inv` with a differing result a visible non-determinism defect.
+makes an identical `inv` with a differing result visible as divergence under the recorded input
+boundary, which hidden context, live data or a defect can each explain; the digest shows the
+divergence, it does not pick the cause.
 
 ## Why `inv` hashes bytes, not paths
 

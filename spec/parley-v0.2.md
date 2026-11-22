@@ -48,7 +48,7 @@ schema, or any plain text on any stream, is a **bug** — not a cosmetic one.
 
 | Stream | Carries |
 | --- | --- |
-| **stdout** | The result. The smallest payload that answers the question, plus the bootstrap line. |
+| **stdout** | The result. The smallest payload that answers the question, plus the bootstrap line that opens the run and the `end` event that closes it (§3). |
 | **stderr** | Errors and warnings (§6), both structured. Nothing else. |
 | **receipt file** | The record: argv, resolved interpretation, input digests, per-step reasoning, progress, and copies of every result, error and warning (§5). |
 
@@ -192,16 +192,17 @@ carried by one receipt metadata-finalisation record, `receipt.inputs`, emitted w
 are settled and before `end`:
 
 ```json
-{"event":"receipt.inputs","t":1795326412360,"seq":5,"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8",
+{"event":"receipt.inputs","t":1795326412385,"seq":5,"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8",
  "inputs":[{"path":"src/tokens.css","sha256":"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"},
            {"path":"-","role":"stdin","sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
            {"path":"vendor/","role":"tree","error":"input.unreadable"}],
- "inv":"inv_7f3a9c1e",
  "_schema":{"id":"parley.receipt.inputs","version":"1.0.0"}}
 ```
 
 An input the program could not read is recorded with an `error` code and no digest; a run that
 then fails still closes a complete failed receipt (§3.3) without that digest and without `inv`.
+That is the run shown across this specification's examples: stdin was an input, so `inv` was not
+known at the bootstrap line or the head, and `vendor/` was unreadable, so the run never had one.
 
 > **The trap.** Hashing input *paths* rather than input *bytes* makes `inv` stable across an edit
 > to the file. "Idempotent" then silently means "stale", and any cache built on it serves wrong
@@ -209,9 +210,10 @@ then fails still closes a complete failed receipt (§3.3) without that digest an
 
 ### 2.3 What `inv` buys
 
-Each of these holds only where no declared secret is involved on either side: the receipt carries
-no `redacted` (§5.3) and the invocation comparing against it supplied none. A redacted receipt
-shares its `inv` with every run that differed only in a secret, so none of them applies to it.
+Each of these holds only where no declared secret is involved on either side: the receipt's
+`end.redacted` is `false` (§3.3, §5.3) and the invocation comparing against it supplied none. A
+redacted receipt shares its `inv` with every run that differed only in a secret, so none of them
+applies to it.
 
 - **Change detection.** Same `inv`, same result ⇒ nothing moved within the declared input
   boundary.
@@ -224,12 +226,14 @@ shares its `inv` with every run that differed only in a secret, so none of them 
 
 A program **MAY** short-circuit on a known `inv`. If it does, it **MUST** emit the hit as an
 event rather than silently serving a cached answer, and **MUST** offer a way to force recompute.
-The event names the receipt it answered from and that receipt's run:
+The event names the receipt it answered from and that receipt's run, which must itself have been
+eligible: a successful, unredacted run, not the failed one the rest of this specification's
+examples show:
 
 ```json
 {"event":"cache.hit","t":1795326412350,"seq":2,"run":"01JD3KS9T4U8V1W5X2Y7Z3A6B9",
- "inv":"inv_7f3a9c1e","served_run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8",
- "receipt":"/work/site/.parley/receipts/01JD3KQ8Z6V9X2M4N7P1R3T5W8.jsonl",
+ "inv":"inv_7f3a9c1e","served_run":"01JD3KP5W2X8Y4Z1A7B3C9D6E2",
+ "receipt":"/work/site/.parley/receipts/01JD3KP5W2X8Y4Z1A7B3C9D6E2.jsonl",
  "_schema":{"id":"parley.cache.hit","version":"1.0.0"}}
 ```
 Short-circuiting **SHOULD NOT** be the default, because inputs can be identical while the world is
@@ -237,18 +241,20 @@ not — a declared input set never captures everything. A matching `inv` on its 
 authorises skipping an effect or reusing an answer; it is one input to that decision.
 
 Eligibility is checked on **both** sides. A program **MUST NOT** short-circuit when a declared
-secret was supplied to the current invocation, or when the cached receipt carries `redacted`
-(§5.3). Either run may have depended on which secret was used, and `inv` cannot tell, because
-§2.2 keeps secrets out of it. Whether a declared secret was supplied is known from `argv` and the
-environment before the head is written (§5.3), so both sides are decidable at the moment of
-choice. The rule reaches declared secrets. A credential the program obtains some other way, from
-a keychain, a credential helper or a token refresh, is outside it; a program that uses such
-credentials **MUST** route them through a declared argument or environment variable (§4.3) or
-**MUST NOT** short-circuit at all, because a reader cannot see them and this rule offers it no
-protection for them. The same two-sided rule binds a reader that serves cached answers (§5.3): it
-decides the current side from that invocation's own receipt head, whose `redacted` is mandatory
-when a declared secret was supplied, or from its declaration together with its `argv` and
-environment, and **MUST NOT** serve when it holds neither.
+secret was supplied to the current invocation, or when the cached receipt carries `redacted` (§5.3).
+Either run may have depended on which secret was used, and `inv` cannot tell, because §2.2 keeps
+secrets out of it. Whether a declared secret was supplied is known from `argv` and the environment,
+and from resolving every declared credential source, before the head is written (§5.3), so both
+sides are decidable at the moment of choice. The rule reaches declared secrets, which include a
+credential source declared by logical name (§4.3): a `.netrc` entry, a keychain item or a helper's
+token counts as supplied when the program has a credential from it, and the head records that in
+`redacted.sources`. A credential the program obtains from a source it did not declare is outside the
+rule and invisible to a reader; a program that uses such credentials **MUST** declare the source or
+**MUST NOT** short-circuit at all. The same two-sided rule binds a reader that serves cached answers
+(§5.3): it decides the current side from that invocation's own receipt head, whose `redacted` is
+mandatory when a declared secret was supplied, or, when the declaration names no credential source,
+from its declaration together with its `argv` and environment, and **MUST NOT** serve when it
+holds neither.
 
 ---
 
@@ -273,7 +279,7 @@ and the command's output, in that order.
 ```json
 {"event":"run","t":1795326412345,"seq":0,
  "tool":"theme-book","v":"0.2.1",
- "inv":"inv_7f3a9c1e","run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8","session":"ses_9c4f",
+ "run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8","session":"ses_9c4f",
  "paths":{"receipt":"/work/site/.parley/receipts/01JD3KQ8Z6V9X2M4N7P1R3T5W8.jsonl"},
  "_schema":{"id":"parley.run.bootstrap","version":"1.1.1"}}
 ```
@@ -298,15 +304,19 @@ a bootstrap line naming a receipt that does not exist. It emits exactly one line
 exits `3` (§3.4):
 
 ```json
-{"event":"startup.failed","t":1795326412345,"seq":0,"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8",
+{"event":"startup.failed","t":1795326412345,"seq":0,"run":"01JD3KT1F6G2H8J4K9L3M7N5P1",
  "tool":"theme-book","v":"0.2.1","code":"startup.receipt_unwritable",
- "problem":"No writable receipt location: .parley is read-only and $XDG_STATE_HOME is unset",
- "remedy":"set XDG_STATE_HOME or make .parley writable",
+ "problem":"No writable receipt location: .parley is read-only and ~/.local/state is not writable",
+ "remedy":"make .parley writable or set XDG_STATE_HOME to a writable absolute path",
  "_schema":{"id":"parley.startup.failed","version":"1.0.0"}}
 ```
 
 It carries `run` because the execution still has an identity, `seq: 0` because it is the only line
-the run emits, and the §6 error fields because it is an error. There is no receipt and no `end`.
+the run emits, and the §6 error fields because it is an error. Its `code` is in the `startup.`
+namespace, so a reader can tell a startup failure from a command's own error codes without
+reading the event name. A receipt file that cannot be created although its directory is usable
+is a startup failure too (§3.1 makes creation a precondition of the bootstrap line), so it exits
+`3`, not `4`. There is no receipt and no `end`.
 This is the one line a run may emit without a bootstrap line before it.
 
 ### 3.3 The terminal event
@@ -317,21 +327,24 @@ is the run's final sequence number; there is no separate field for it.
 
 ```json
 {"event":"end","t":1795326412401,"seq":9,"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8",
- "status":0,"receipt":"/work/site/.parley/receipts/01JD3KQ8Z6V9X2M4N7P1R3T5W8.jsonl","redacted":true,
+ "status":2,"receipt":"/work/site/.parley/receipts/01JD3KQ8Z6V9X2M4N7P1R3T5W8.jsonl","redacted":true,
  "_schema":{"id":"parley.end","version":"1.0.0"}}
 ```
 
-- `status` is the exit status the process is about to exit with (§3.4).
+- `status` is the exit status the process is about to exit with (§3.4). The run shown across this
+  specification's examples reported an error (§6) and closes with `2`.
 - `receipt` repeats the receipt path, so the last line a reader sees names it as well as the
   first.
-- `redacted` is `true` when any redaction occurred anywhere in the run: the head carries
-  `redacted` (§5.3), or a `redaction` event was emitted (§5.3), or a sidecar holds a replaced value.
-  A replay decision (§2.3) reads this field, not the writer's memory.
+- `redacted` is `true` exactly when the receipt head carries `redacted` or any `redaction` event
+  was emitted (§5.3). Every redaction in the run is recorded by one of those two, so this one flag
+  is the aggregate a replay decision (§2.3) reads, not the writer's memory.
 
 Once emission of `end` begins its contents are fixed. A program **MUST NOT** emit a replacement
-`end` and **MUST NOT** emit ordinary events after it. If a write or close fails after `end` was
-emitted, the process's observed exit status may differ from `end.status`; a reader holding both
-**MUST** report the disagreement rather than pick one.
+`end` and **MUST NOT** emit any line after it, on any stream, an error line included. A write or
+close failure during or after the emission of `end` is carried by the exit status alone: the
+process exits `4` (§3.4), the `end` already written keeps the status it carried, and a reader
+holding both **MUST** report the disagreement rather than pick one. A sink failure **before**
+`end` is reported as an error line where a sink still works (§5.4), and `end` then carries `4`.
 
 A failed command still finishes: an `end` with a non-zero `status` closes a **complete failed
 receipt**. A receipt or stdout capture with no `end` is **incomplete lifecycle evidence**: the
@@ -348,12 +361,14 @@ named exceptions to the two-copy guarantee.
 | `0` | The command completed and succeeded. |
 | `2` | The command failed and reported a structured error (§6). |
 | `3` | Setup failed before the bootstrap line; the only output is the §3.2 diagnostic. |
-| `4` | Protocol output, receipt writing or finalisation failed, including a failure while writing the bootstrap line. Whatever remained possible through working sinks was preserved, subject to the immutable `end`. |
+| `4` | Protocol output, receipt writing or finalisation failed, including a failure while writing the bootstrap line. Whatever remained possible through working sinks was preserved, subject to the immutable `end`: a run whose bootstrap write failed still closes its receipt with `end` carrying `4`, since the receipt was created first (§3.1). |
 | signal-derived | Termination by signal: the documented exception. Terminal output may be absent. |
 | other | Tool-owned and documented by the tool. A tool **MUST NOT** redefine `0`, `2`, `3` or `4`. |
 
 A condition the program recovered from, so that the command still succeeded, is a warning (§6),
-not a terminal error, and does not change the status.
+not a terminal error, and does not change the status. When a run both reported a structured
+error and suffered a sink failure, `4` takes precedence: the protocol failed, and the reader can
+still see the error line where it was written.
 
 ---
 
@@ -402,8 +417,9 @@ A command's description, its `command` line (§4.1), **MUST** declare its effect
  "effects":{"reads":["<cwd>/**/*.css"],"writes":[],"network":false,"idempotent":true,
             "bookkeeping":[{"op":"create","scope":".parley/receipts/"},
                            {"op":"create","scope":".parley/.gitignore"},
-                           {"op":"delete","scope":".parley/receipts/"}]},
- "secrets":["--token","THEME_BOOK_TOKEN"],
+                           {"op":"delete","scope":".parley/receipts/"},
+                           {"op":"create","scope":"$XDG_STATE_HOME/parley/"}]},
+ "secrets":["--token","THEME_BOOK_TOKEN","netrc"],
  "emits":[{"id":"theme-book.count","version":"1.0.0"},{"id":"parley.error","version":"2.0.0"}],
  "_schema":{"id":"parley.command","version":"1.0.0"}}
 ```
@@ -417,9 +433,11 @@ so creation and deletion are distinguishable and nothing a program does to the f
 undeclared. Bookkeeping is observable behaviour, not an exemption; it cannot cover a mutation the
 command was asked to make.
 
-`secrets` names the arguments, environment variables and credential files whose values are
-secrets (§5.3). It is part of the same declaration, so a caller learns before running what the
-receipt will not contain. A command with no secrets declares an empty list.
+`secrets` names the arguments, environment variables and credential sources whose values are secrets
+(§5.3): an argument by its flag, a variable by its name, and a file or other implicit source by a
+logical name such as `netrc` or `keychain:github`. It is part of the same declaration, so a caller
+learns before running what the receipt will not contain. A command with no secrets declares an empty
+list.
 
 A caller needs to know whether something mutates **before** running it. Every command **SHOULD**
 accept `--dry-run`. A dry run emits the bootstrap line, writes its receipt and any evidence
@@ -476,9 +494,11 @@ the repository that holds the draft **MUST** pin a source commit or the schema's
 reader built from a draft holds whichever bytes it shipped and **SHOULD** state their commit or
 digest until a release exists.
 
-Nothing is released yet: no changelog heading names a schema version. The `1.0.0` schemas in git
-history predate every rule in this section and were never released; a reader built against any
-of them is outside the promise.
+Nothing is released yet: no changelog heading names a schema version. The original `1.0.0`
+drafts of `parley.run.bootstrap`, `parley.error` and `parley.receipt.head`, in git history before
+this section existed, predate every rule in it and were never released; a reader built against
+any of those three is outside the promise. The message types added since start at `1.0.0` under
+this section's rules.
 
 ### 4.6 Resolution
 
@@ -506,17 +526,20 @@ It is written **whether or not anyone asked for it**.
 **Where it goes.** The default location is `.parley/receipts/<run>.jsonl` under the invocation's
 **initial** working directory, resolved once at startup and unaffected by any later `chdir`. The
 bootstrap line's `paths.receipt` **MUST** be absolute, so the path means the same thing to every
-reader. When that location is unavailable, because the directory is read-only or cannot be
-created, the program falls back to `$XDG_STATE_HOME/parley/<repo-hash>/receipts/<run>.jsonl`,
-honouring `XDG_STATE_HOME` only when it is set, non-empty and absolute, and otherwise using
-`~/.local/state`. `<repo-hash>` is a digest of the canonical path of the git worktree root, or of
-the canonical initial working directory outside git; it keys storage and **MUST NOT** enter `inv`
-(§2.2). If no permitted location is writable, the run fails at startup (§3.2, exit `3`): a
-fallback improves availability, it does not promise that somewhere writable exists.
+reader. Paths in this specification are POSIX paths; v0.2 does not define the Windows form. When
+that location is unavailable, because the directory is read-only or cannot be created, or because
+§5.2's hygiene cannot be established there, the program falls back to
+`$XDG_STATE_HOME/parley/<repo-hash>/receipts/<run>.jsonl`, honouring `XDG_STATE_HOME` only when it
+is set, non-empty and absolute, and otherwise using `~/.local/state`. `<repo-hash>` is a digest of
+the canonical path of the git worktree root, or of the canonical initial working directory outside
+git; it keys storage and **MUST NOT** enter `inv` (§2.2). If no permitted location is writable, the
+run fails at startup (§3.2, exit `3`): a fallback improves availability, it does not promise that
+somewhere writable exists.
 
 Its first line **MUST** carry `tool` and `v`, and what the bootstrap line omitted: the raw `argv`
 as received, after §5.3 redaction; the `resolved` interpretation after defaults and environment are
-applied; and a digest per declared input.
+applied; and a descriptor per declared input, with a digest for each input already read (§2.2:
+digests that arrive later ride `receipt.inputs`).
 
 > Echo both raw and resolved. The gap between them is where the bugs live: a relative path
 > resolved somewhere surprising, a default silently filled in, an environment variable overriding
@@ -524,19 +547,22 @@ applied; and a digest per declared input.
 
 ```json
 {"event":"receipt.head","t":1795326412346,"seq":1,"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8",
- "tool":"theme-book","v":"0.2.1","inv":"inv_7f3a9c1e","session":"ses_9c4f",
+ "tool":"theme-book","v":"0.2.1","session":"ses_9c4f",
  "argv":["theme-book","count","--format","css","--token","[redacted]"],
  "resolved":{"command":"count","format":"css","cwd":"/work/site","token":"[redacted]"},
  "redacted":{"argv":[5],"resolved":["/token"]},
-"inputs":[{"path":"src/tokens.css","sha256":"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"}],
- "effects":{"reads":["src/**/*.css"],"writes":[],"network":false,"idempotent":true},
+ "inputs":[{"path":"src/tokens.css","sha256":"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"},
+           {"path":"-","role":"stdin"},{"path":"vendor/","role":"tree"}],
+ "effects":{"reads":["src/**/*.css"],"writes":[],"network":false,"idempotent":true,
+            "bookkeeping":[{"op":"create","scope":"/work/site/.parley/receipts/"}]},
  "_schema":{"id":"parley.receipt.head","version":"2.0.0"}}
 ```
 
 The head takes `seq: 1` because the bootstrap line took `0` and the run holds one counter (§1.3).
 It names `tool` and `v` again, although the bootstrap line already did, because a receipt is read
 on its own, tomorrow, by a reader that never saw stdout; without them it cannot say what wrote it,
-and a reader that knows the tool's documented derivation (§2.2) cannot recompute `inv`.
+and a reader that knows the tool's documented derivation (§2.2) cannot recompute `inv` when the
+receipt carries one.
 Recomputation works on a redacted receipt too, because a declared secret is never part of the
 preimage.
 
@@ -557,20 +583,25 @@ stdout and stderr lines (§1.3: same `seq`, `t` and `event`), and closes with th
 (§3.3). A reader tomorrow then has the answer, not only the reasoning that led to it. These copies
 are subject to §5.3 like everything else in the receipt.
 
-**Sidecars.** A result record whose UTF-8 serialisation, excluding its terminating newline,
-exceeds **65,536 bytes** **MAY** be stored beside the receipt instead of inside it. The stdout copy
-is unaffected. The receipt then carries a `sidecar` event in the record's place:
+**Sidecars.** A record whose UTF-8 serialisation, excluding its terminating newline, exceeds
+**65,536 bytes** **MAY** be stored beside the receipt instead of inside it; a result is the usual
+case, a large error or reasoning record is the same. The stdout or stderr copy is unaffected. The
+receipt then carries a `sidecar` event in the record's place:
 
 ```json
-{"event":"sidecar","t":1795326412395,"seq":8,"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8",
+{"event":"sidecar","t":1795326412400,"seq":8,"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8",
  "source":7,"path":"01JD3KQ8Z6V9X2M4N7P1R3T5W8/7.json","bytes":2097152,
  "sha256":"3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855b",
  "_schema":{"id":"parley.sidecar","version":"1.0.0"}}
 ```
 
-- `source` is the `seq` of the record the sidecar holds; the sidecar event has its own `seq` and
-  schema and does not pretend to be the result.
-- `path` is relative to the receipt's directory.
+- `source` is the `seq` of the record the sidecar holds. Here it is the run's `page` at `seq: 7`:
+  its stdout copy carries the cursor and nothing else, and its receipt copy, which §1.3 lets be
+  the fuller one, carries the page's rows, which is why it is large. The sidecar event has its own
+  `seq` and schema and does not pretend to be the record. A `redaction` event (§5.3) that names a value
+  inside a sidecar's stored record uses that record's `seq`, the `source`, as its `in`.
+- `path` **MUST** be relative to the receipt's directory and **MUST NOT** leave it; the bundle
+  moves as one.
 - `bytes` and `sha256` describe the **stored bytes**, which is not the semantic `digest` of §7.1.
 - The receipt and its sidecars are one bundle: copied together, retained together (§5.1), and
   deleted together.
@@ -589,10 +620,14 @@ failure mode worth designing out rather than discovering.
 ### 5.2 Repository hygiene
 
 A program writing into `.parley/` **MUST** first ensure that `.parley/.gitignore` exists and
-contains `*`, creating it if absent and never overwriting a file that is already there, whether
-a user wrote it or git tracks it. Two programs starting at once **MUST** both end with the file
-in place; create-if-absent is the rule, not create-or-replace. A program **MUST NOT** edit the
-user's tracked `.gitignore` or any other tracked file to achieve this.
+contains a line consisting of `*`, creating it if absent and never overwriting a file that is
+already there, whether a user wrote it or git tracks it. Two programs starting at once **MUST** both
+end with the file in place; create-if-absent is the rule, not create-or-replace. A program **MUST
+NOT** edit the user's tracked `.gitignore` or any other tracked file to achieve this.
+
+If the file exists and has no such line, it is a user's file: the program **MUST NOT** edit it,
+**MUST** use the state-directory fallback (§5) for this run, and **SHOULD** emit a warning (§6.1)
+saying why the receipt went elsewhere. The bootstrap line's absolute `paths.receipt` says where.
 
 Be clear about what that buys. The file ignores itself, so it does not travel through a clone;
 each conforming writer establishes hygiene locally on first use, and a collaborator's first run
@@ -608,27 +643,35 @@ Receipts are durable and may contain file contents, resolved paths and prompts. 
 Raw `argv` and the resolved environment are where credentials arrive, so §5's echo and this rule
 collide unless the program redacts. Privacy wins:
 
-- A program **MUST** declare which of its arguments, environment variables and credential files
+- A program **MUST** declare which of its arguments, environment variables and credential sources
   carry secrets, by name, in the `secrets` list of its command description (§4.3), so the
   declaration is visible through `--help` before the command runs. A command with no secrets
-  declares an empty list. A credential file is a secret source, never a declared input (§2.2).
+  declares an empty list. A credential file is a secret source, never a declared input (§2.2); it
+  is declared by a logical name, and the path by which it was supplied is not itself the secret
+  and stays in `argv` and `resolved`.
 - It **MUST** replace the value of each declared secret with the literal string `[redacted]`
   **before** the receipt head is written, wherever the receipt would carry it. An argument given as
   its own `argv` element becomes `[redacted]`; one given as `--name=value` becomes
   `--name=[redacted]`, so the flag stays visible; a secret embedded in a longer value, such as a
   path, is replaced within it.
 - The head's `redacted` field **MUST** be present, and non-empty, whenever any declared secret was
-  supplied to the run, and absent otherwise. Whether a declared secret was supplied is known from
-  `argv` and the environment before the head is written, so this is decidable in time. It records
+  supplied to the run, and absent otherwise. Whether a declared argument or variable was supplied
+  is known from `argv` and the environment; a declared credential source is supplied when the
+  program has a credential from it, and the program **MUST** resolve every declared source before
+  the head is written, so that presence is known in time rather than discovered after the head
+  can no longer say so. It records
   every redaction in the head: in `argv` (as indexes), in `resolved` (as JSON Pointers, RFC 6901),
-  in `inputs` (as indexes) and in the environment (as the names of declared variables that were
-  present, whether or not the receipt carried their values). A declared secret that reaches a
+  in `inputs` (as indexes), in the environment (as the names of declared variables that were
+  present, whether or not the receipt carried their values) and in `sources` (the logical names
+  of credential sources that were present, such as `netrc`). A declared secret that reaches a
   later receipt line is replaced there too; that line needs no entry on the head, because the
   head already says the receipt is partial.
 - It **MAY** redact more than it declared, in the head or in any later line, by replacing the value
-  in place. Name-based redaction misses odd names and pattern-based redaction misses odd values;
-  the declaration is the floor, not the ceiling. An undeclared value redacted this way is still in
-  the `inv` preimage (§2.2 excludes declared secrets only), so declaring it is the real protection.
+  before the record is written and recording it with a `redaction` event (below), which for the
+  head names `in: 1`. Name-based redaction misses odd names and pattern-based redaction misses odd
+  values; the declaration is the floor, not the ceiling. An undeclared value redacted this way is
+  still in the `inv` preimage (§2.2 excludes declared secrets only), so declaring it is the real
+  protection.
 - A reader **MUST NOT** replay from, or serve a cached answer for, a receipt that carries
   `redacted`, nor serve one to an invocation that supplied a declared secret (§2.3). Two
   invocations
@@ -636,10 +679,13 @@ that differ only in a secret, for example two tokens
   selecting two accounts, have the same `inv` (§2.2 excludes the secret) and identical receipts,
   and their answers may differ.
 
-**Late redaction.** A redaction decided after the head is written, under the MAY above or because
-a declared secret surfaced in a later record or a sidecar, **MUST** be discoverable from the
-completed receipt and not only from the writer's memory. The program replaces the value in place
-and emits a `redaction` event into the receipt naming where:
+**Redaction events.** A redaction not recorded in the head's `redacted` field, under the MAY above
+or because a declared secret surfaced in a later record or a sidecar, **MUST** be discoverable
+from the completed receipt and not only from the writer's memory. Redaction is decided as the
+record is written: the value is replaced in every copy of that record before any copy leaves the
+process, and a record already written is never rewritten, since the receipt is append-only and
+the stdout or stderr copy has already gone. The program then emits a `redaction` event into the
+receipt naming where, after the record it names:
 
 ```json
 {"event":"redaction","t":1795326412398,"seq":6,"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8",
@@ -647,23 +693,24 @@ and emits a `redaction` event into the receipt naming where:
  "_schema":{"id":"parley.redaction","version":"1.0.0"}}
 ```
 
-`in` is the `seq` of the affected record (a result, an error, a reasoning line or a sidecar event)
-and `at` is a JSON Pointer within it. The `end` event's `redacted` flag (§3.3) is `true` whenever
-the head carries `redacted` or any `redaction` event was emitted, so a replay decision has one
-place to look.
+`in` is the `seq` of the affected record (the head, a result, an error, a reasoning line, or the
+stored record a sidecar holds, by its `source`) and `at` is a JSON Pointer within it. The `end`
+event's `redacted` flag (§3.3) is `true` whenever the head carries `redacted` or any `redaction`
+event was emitted, so a replay decision has one place to look.
 
 A schema checks the shape of `redacted`, not its truth. Whether an indexed element contains
-`[redacted]`,
-whether a pointer resolves, and whether a `[redacted]` marker in the head has a matching entry
-while `redacted` is present are a reader's checks, and a reader that performs them **SHOULD**
-report a mismatch as a defect in the writer.
+`[redacted]`, whether a pointer resolves, and whether a `[redacted]` marker in the head has a
+matching entry in `redacted` or a `redaction` event naming `in: 1` are a reader's checks, and a
+reader that performs them **SHOULD** report a mismatch as a defect in the writer.
 
 ### 5.4 Persistence
 
 "Durable" here means ordinary-path persistence, not crash-safe durability. On every path that is
 not a hard crash the program **MUST** write and close the receipt and its sidecars; it makes no
 `fsync` or power-loss promise. A write or close error is an outcome, not something to swallow: it
-**MUST** produce exit status `4` (§3.4) and, where a sink still works, an error line saying so.
+**MUST** produce exit status `4` (§3.4) and, when it happens before `end`, an error line where a
+sink still works. After `end` has begun, nothing follows it (§3.3); the exit status carries the
+failure alone.
 
 A reader **MUST** ignore a final line that is not newline-terminated, including an otherwise
 parseable `end`. A newline-terminated `end` establishes that the run reported termination.
@@ -692,7 +739,8 @@ The fields that matter are **`measured`, `limit` and `remedy`**. An error naming
 the distance from it, and the lever is actionable in one step. An error reading `make failed with
 exit code: 2` costs its reader several calls to trace.
 
-A top-level handler **MUST** convert every uncaught throw into a conforming error line. The cases
+A top-level handler **MUST** convert every uncaught throw before `end` into a conforming error
+line; after `end` has begun, nothing is written and the process exits `4` (§3.3). The cases
 that genuinely cannot be constrained — a hard crash inside a native dependency, a signal kill —
 **MUST** be documented as exceptions rather than papered over. "No surprises" is only credible if
 the places it cannot hold are named.
@@ -729,7 +777,7 @@ rather than diffing two payloads.
 Unbounded output **MUST** paginate explicitly with a cursor:
 
 ```json
-{"event":"page","t":1795326412390,"seq":7,"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8",
+{"event":"page","t":1795326412399,"seq":7,"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8",
  "cursor":"eyJhZnRlciI6NTB9","has_more":true,
  "_schema":{"id":"parley.page","version":"1.0.0"}}
 ```

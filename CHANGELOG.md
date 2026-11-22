@@ -121,6 +121,15 @@ The spec and each message schema are versioned separately from this package.
   schema `parley.tooling.doctor` moves to **1.1.0** for the three new line types
   (`doctor.projection`, `doctor.gap`, `doctor.segment`) and the widened `stream` enum.
 
+- **A built-in history transform, `declaredProjection(values)`** (flyingrobots/parley#59): the
+  common case for the transform above is a declared list the caller already knows is wrong on a
+  shared timeline — a username in a path, a hostname, a private repository name — so this ships
+  the writer's own §5.3 scrubber for it rather than leaving every caller to get longest-first
+  replacement or key renaming subtly wrong a second time. An empty declared set configures no
+  transform at all (`declaredProjection([])` is `undefined`), and the transform's name and digest
+  on the stream's opening line never disclose what was declared. No schema moves. PE-24a to
+  PE-24e, with the doctor as the oracle.
+
 - **The purpose orders a read's answer** (flyingrobots/parley#49). Spec §9 asks the purpose to
   shape the result and says it is the ranking function, not a filter applied afterwards.
   `parley-read` now ranks the records of a read by its `view`, under one total order stated as a

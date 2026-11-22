@@ -132,6 +132,13 @@ The spec and each message schema are versioned separately from this package.
 
 ### Added
 
+- `scripts/doctor.ts` (`bun run doctor`): a conformance checker that takes a captured run's
+  stdout, stderr and receipt and reports every violated rule with its spec section, stream and
+  line, as JSON Lines. Nine rules cover line discipline, the envelope, exact-pair validation, the
+  bootstrap and startup failure, the receipt head, the one-counter rule, the terminal event and
+  exit status, the redaction aggregate and receipt retention. Fixtures and a mutation test per
+  rule. (flyingrobots/parley#23)
+
 - `scripts/check-examples.ts`: validates every fenced JSON example in `README.md`, `spec/` and
   `docs/` against the schema its `_schema` names, with `abridged` and `illustrative` fence labels
   for examples that are deliberately not complete messages. Runs under `bun test` and in CI.

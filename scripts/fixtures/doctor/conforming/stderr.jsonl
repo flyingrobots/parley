@@ -1,0 +1,1 @@
+{"event":"warning","t":1795326412370,"seq":3,"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8","code":"input.encoding_guessed","problem":"src/tokens.css has no BOM or charset; read as UTF-8","remedy":"declare the file's encoding","remedy_target":"src/tokens.css","_schema":{"id":"parley.warning","version":"1.0.0"}}

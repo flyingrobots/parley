@@ -20,9 +20,9 @@ first.
 ## What conforms and what does not
 
 The writer and reader libraries, once they exist, are conforming implementations of the spec. The
-repository's own tooling under `scripts/` is not: the example checker emits JSON Lines with a
-`parley.tooling.*` schema so it is parseable, but it carries no run identity and makes no claim
-to the protocol.
+repository's own tooling under `scripts/` is not: the example checker and the doctor emit JSON
+Lines with a `parley.tooling.*` schema so they are parseable, but they carry no run identity and
+make no claim to the protocol. The doctor will be rebuilt on the writer library when it exists.
 
 ## Checks
 

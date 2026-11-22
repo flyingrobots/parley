@@ -7,7 +7,8 @@
   "type": "module",
   "scripts": {
     "check": "bun run scripts/check-examples.ts",
-    "test": "bun test"
+    "test": "bun test",
+    "doctor": "bun run scripts/doctor.ts"
   },
   "devDependencies": {
     "ajv": "^8.17.1",

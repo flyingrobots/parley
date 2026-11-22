@@ -1407,7 +1407,7 @@ describe("RD-19 ranking reorders and never filters", () => {
 // that run, so the rule is about what a source says about a run and never about which file was
 // read first — the failure mode flyingrobots/parley#58 names.
 
-const DROP_DETAIL = sha("drop-detail");
+const NARROW_NAMES = sha("narrow-names");
 const WHAT_RAN = sha("what-ran");
 
 /** The opening line of a projected copy: stream only, at a `seq` of its own (§8). */
@@ -1428,11 +1428,13 @@ function writeSegment(dir: string, name: string, lines: (object | string)[]): st
 
 const histDir = (cwd: string) => join(cwd, "history");
 const NAMES = { names: ["a.txt", "b.txt"] };
+/** What the projection leaves of `NAMES`: a narrowed value, not an omitted field. */
+const NARROWED = { names: ["a.txt"] };
 
 /**
  * One projected run, in the layout the writer's own produces: the stream copy opens with the
  * transform line at `seq: 1`, so the receipt has no line at that `seq` and starts at 2. The
- * stream's step is narrowed and its `result` is withheld altogether.
+ * stream's step carries a narrowed `detail` and its `result` is withheld altogether.
  */
 function projectedRun(dir: string, run = RUN_A) {
   const receipts = repoReceipts(dir);
@@ -1441,8 +1443,8 @@ function projectedRun(dir: string, run = RUN_A) {
     { ...head(run), seq: 2 }, step(run, 3, { detail: NAMES }), toolResult(run, 4), end(run, 5, receipt),
   ]);
   const segment = writeSegment(histDir(dir), "2026-11-22.jsonl", [
-    transformLine(run, 1, "drop-detail", DROP_DETAIL),
-    { ...head(run), seq: 2 }, step(run, 3), end(run, 5, receipt),
+    transformLine(run, 1, "narrow-names", NARROW_NAMES),
+    { ...head(run), seq: 2 }, step(run, 3, { detail: NARROWED }), end(run, 5, receipt),
   ]);
   return { receipt, segment };
 }
@@ -1467,8 +1469,8 @@ describe("RD-20 the least-projected copy", () => {
 
     expect(bundle!.projections.length).toBe(1);
     const note = bundle!.projections[0]!;
-    expect(note.name).toBe("drop-detail");
-    expect(note.sha256).toBe(DROP_DETAIL);
+    expect(note.name).toBe("narrow-names");
+    expect(note.sha256).toBe(NARROW_NAMES);
     expect(note.file).toBe(segment);
     expect(note.where).toBe("history");
     expect(note.seq).toBe(1);
@@ -1481,7 +1483,7 @@ describe("RD-20 the least-projected copy", () => {
     const opening = atSeq(bundle!, 1);
     expect(opening.event).toBe("history.transform");
     expect(opening.projected).toBe(true);
-    expect(opening.projectedBy).toEqual(["drop-detail"]);
+    expect(opening.projectedBy).toEqual(["narrow-names"]);
     expect(opening.validation.state).toBe("validated");
   });
 
@@ -1541,9 +1543,9 @@ describe("RD-20 the least-projected copy", () => {
     const bundle = loadReceipts({ cwd: dir, env, history: [segment] }).bundles[0]!;
     expect(seqs(bundle)).toEqual([1, 2, 3, 5]);
     const narrowed = atSeq(bundle, 3);
-    expect("detail" in narrowed.record).toBe(false);
+    expect(detailOf(narrowed)).toEqual(NARROWED);
     expect(narrowed.projected).toBe(true);
-    expect(narrowed.projectedBy).toEqual(["drop-detail"]);
+    expect(narrowed.projectedBy).toEqual(["narrow-names"]);
     expect(bundle.projections.length).toBe(1);
     expect(bundle.projections[0]!.sole).toBe(true);
     expect(bundle.projections[0]!.superseded).toEqual([]);
@@ -1588,8 +1590,8 @@ describe("RD-20 the least-projected copy", () => {
       { ...head(RUN_A), seq: 2 }, step(RUN_A, 3, { detail: NAMES }), end(RUN_A, 4, receipt),
     ];
     const narrow = (receipt: string) => [
-      transformLine(RUN_A, 1, "drop-detail", DROP_DETAIL),
-      { ...head(RUN_A), seq: 2 }, step(RUN_A, 3), end(RUN_A, 4, receipt),
+      transformLine(RUN_A, 1, "narrow-names", NARROW_NAMES),
+      { ...head(RUN_A), seq: 2 }, step(RUN_A, 3, { detail: NARROWED }), end(RUN_A, 4, receipt),
     ];
     // The two receipt locations stand in for "whichever source is read first": the repo location
     // is always read before the state one, so each arrangement puts a different copy first.
@@ -1620,8 +1622,8 @@ describe("RD-20 the least-projected copy", () => {
     writeReceipt(receipts, RUN_A, [{ ...head(RUN_A), seq: 2 }, step(RUN_A, 3, { detail: NAMES }), end(RUN_A, 4, pathA)]);
     writeReceipt(receipts, RUN_B, runB);
     const segment = writeSegment(histDir(dir), "2026-11-22.jsonl", [
-      transformLine(RUN_A, 1, "drop-detail", DROP_DETAIL),
-      { ...head(RUN_A), seq: 2 }, step(RUN_A, 3), end(RUN_A, 4, pathA),
+      transformLine(RUN_A, 1, "narrow-names", NARROW_NAMES),
+      { ...head(RUN_A), seq: 2 }, step(RUN_A, 3, { detail: NARROWED }), end(RUN_A, 4, pathA),
       ...runB,
     ]);
     const load = loadReceipts({ cwd: dir, env, history: [segment] });

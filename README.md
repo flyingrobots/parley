@@ -32,7 +32,8 @@ that and nobody can use these tools without adopting the whole system.
 ```
 
 Two small lines for a one-number answer. The result is `seq: 2` because `seq: 1` went to the
-receipt's first line; a run holds one counter across every stream. The bulk — the argv echo, the resolved interpretation,
+receipt's first line; a run holds one counter across every stream. The receipt is a record of what
+the program reports it did, not a proof; the spec says what each kind of evidence establishes. The bulk — the argv echo, the resolved interpretation,
 the input hashes — goes in the receipt, because **stdout carries what you need to act and the
 receipt carries what you need to verify**.
 
@@ -54,10 +55,11 @@ parley is the same idea as [`echo`](https://github.com/flyingrobots/echo),
 [`graft`](https://github.com/flyingrobots/graft) and `jedit` — record what happened, carry the
 provenance, read it as history — applied to the narrowest surface there is: what a program prints.
 
-That narrowness is deliberate. Conforming means changing how you write to stdout. No substrate,
-no daemon, no graph. And nothing you emit has to change later if the same records flow into
-something richer, because the shape is already causal: identified, ordered, provenanced,
-replayable.
+That narrowness is deliberate. Conforming means changing what a program writes: JSON Lines on
+stdout and stderr, a receipt on disk, and the hygiene around it. No substrate, no daemon, no
+graph. And nothing you emit has to change later if the same records flow into something richer,
+because every line is already identified, ordered within its run, provenanced, and attributable
+to the run that produced it.
 
 A doorway, sized so you can walk through it without agreeing to anything larger.
 

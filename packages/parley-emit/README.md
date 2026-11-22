@@ -85,6 +85,7 @@ conforming (`bun run doctor --stdout ... --stderr ... --receipt ...`).
 | §5.4, §3.3 | The default stdout and stderr sinks deliver whole lines: a partial write continues and a full pipe (EAGAIN on a descriptor the runtime left non-blocking) waits and retries, as a blocking write would. A sink failure before `end` is an `error` on the sinks still working and status 4; a failed bootstrap write is reported after the head, so the head stays the receipt's first line; after `end` nothing is written and the status alone carries a failure; emitting after `end` throws `ParleyClosed`. A record or `receiptExtra` carrying `t`, `seq`, `run` or `_schema` is a `TypeError` |
 | §1.2 | Every function on `console`, called from the moment `main` starts until it returns, is captured into the run's receipt as a step; text captured before the receipt exists is held and written after the head. This contains libraries that log through `console`; it does not contain a library that writes to a file descriptor directly, or a timer that fires after `end` (see the exceptions below) |
 | §1.1 | `--human` (alias `--humanize`) renders stdout and stderr through the tool's `human` function, falling back to one line per event; the bootstrap line and a successful `end` render as nothing, so `tool --human \| gh pr comment --body-file -` posts only the tool's prose, and a failed `end` names the receipt path; the receipt is unchanged |
+| §8 (informative) | An opt-in second sink: with `PARLEY_HISTORY` set or `$XDG_STATE_HOME/parley/history` present, every line of the receipt is also appended to a dated daily segment shared by every tool, repository and agent on the machine, named in `paths.history` and declared in `effects.bookkeeping`. Same bytes, so the same redaction; one whole line per write under `O_APPEND`; retention by whole segment; a stream that cannot be written is a warning and never an error, a sink failure or a different exit status. With nothing configured, none of this happens (see below) |
 
 ## Arguments and flags
 
@@ -147,6 +148,124 @@ directory together, and the deletion is recorded.
 Everything the handler passes to `result`, `step`, `warning` and `error`, the raw and resolved
 arguments, input paths and digests, captured console text, and copies of every result. Declared
 secrets are replaced before writing; an undeclared secret is not, so declare it.
+
+## The shared history stream
+
+Spec §8, which is **informative**: a layer that consumes the format. The dependency runs one way.
+Nobody needs this to use a conforming tool, and with no stream configured the writer behaves
+exactly as it did before the stream existed — no extra path on the bootstrap line, no extra
+bookkeeping, no file, no warning, no change to the exit status.
+
+Turn it on in one of two ways:
+
+| | |
+| --- | --- |
+| `PARLEY_HISTORY=/abs/dir` | That directory, created if absent, owner-only |
+| `$XDG_STATE_HOME/parley/history` exists | Used when `PARLEY_HISTORY` is unset, so you opt in once with `mkdir -p` and never by surprise |
+| `PARLEY_HISTORY=off` | Off, even when the state directory exists (`0`, `false`, `no`, `none` and empty do the same) |
+| `PARLEY_HISTORY_DAYS=N` | How many daily segments to keep, today's included; the default is 14 |
+
+What the stream receives is **the bytes of the local receipt**, each line appended as the receipt
+takes it: the head, every reasoning step, every `redaction` and `sidecar` event, every copy of a
+result, error and warning, and `end`. The bootstrap line names the segment it is writing to
+alongside the receipt, under the `paths.history` this package documents (§3.1 defines `receipt`
+and lets a program add paths of its own), and the head declares the stream in
+`effects.bookkeeping` as `create`, `append` and `delete` scopes.
+
+Two tools, two repositories, two agents, one segment. Captured from `count` 0.1.0 in one
+repository under `PARLEY_SESSION=ses_agent_one` and `greet` 0.3.1 in another under
+`ses_agent_two`, sharing one `PARLEY_HISTORY`, on 2026-11-22. The repository doctor reports both
+runs conforming. Their two `receipt.head` lines, as the segment holds them:
+
+```jsonl
+{"event":"receipt.head","t":1795386946090,"seq":1,"run":"01M82PDCH4QHRWVEWYJK07T512","tool":"count","v":"0.1.0","inv":"638c446f866624d00aed41b516d92549f87b0197871ae5db312b7edaa8051a16","session":"ses_agent_one","argv":["count","files"],"resolved":{"command":"files","args":[]},"inputs":[],"effects":{"reads":["<cwd>/*"],"writes":[],"network":false,"idempotent":true,"bookkeeping":[{"op":"create","scope":"/private/tmp/parley-history.SLUQ/repo-a/.parley/receipts/"},{"op":"create","scope":"/private/tmp/parley-history.SLUQ/repo-a/.parley/.gitignore"},{"op":"delete","scope":"/private/tmp/parley-history.SLUQ/repo-a/.parley/receipts/"},{"op":"create","scope":"/tmp/parley-history.SLUQ/state/parley/8a2e93acd522d682/receipts/"},{"op":"delete","scope":"/tmp/parley-history.SLUQ/state/parley/8a2e93acd522d682/receipts/"},{"op":"create","scope":"/tmp/parley-history.SLUQ/history/"},{"op":"append","scope":"/tmp/parley-history.SLUQ/history/2026-11-22.jsonl"},{"op":"delete","scope":"/tmp/parley-history.SLUQ/history/"}]},"_schema":{"id":"parley.receipt.head","version":"2.0.0"}}
+{"event":"receipt.head","t":1795386946127,"seq":1,"run":"01M82PDCJ8A47H44PWS0XHGA6Q","tool":"greet","v":"0.3.1","inv":"af313858639aa04f3d587b63ac15db6066c7377a70e4539650a45ae4b8e12337","session":"ses_agent_two","argv":["greet","hello"],"resolved":{"command":"hello","args":[]},"inputs":[],"effects":{"reads":[],"writes":[],"network":false,"idempotent":true,"bookkeeping":[{"op":"create","scope":"/private/tmp/parley-history.SLUQ/repo-b/.parley/receipts/"},{"op":"create","scope":"/private/tmp/parley-history.SLUQ/repo-b/.parley/.gitignore"},{"op":"delete","scope":"/private/tmp/parley-history.SLUQ/repo-b/.parley/receipts/"},{"op":"create","scope":"/tmp/parley-history.SLUQ/state/parley/71a5d393d36afaa2/receipts/"},{"op":"delete","scope":"/tmp/parley-history.SLUQ/state/parley/71a5d393d36afaa2/receipts/"},{"op":"create","scope":"/tmp/parley-history.SLUQ/history/"},{"op":"append","scope":"/tmp/parley-history.SLUQ/history/2026-11-22.jsonl"},{"op":"delete","scope":"/tmp/parley-history.SLUQ/history/"}]},"_schema":{"id":"parley.receipt.head","version":"2.0.0"}}
+```
+
+The whole segment, eight lines, sorted by `t` and `seq` and abridged to the fields a timeline
+reads:
+
+```text
+2026-11-22T22:35:46.090Z  01M82PDCH4…  receipt.head  count  ses_agent_one
+2026-11-22T22:35:46.090Z  01M82PDCH4…  receipt.step         counted 2 regular file(s)
+2026-11-22T22:35:46.090Z  01M82PDCH4…  result
+2026-11-22T22:35:46.090Z  01M82PDCH4…  end
+2026-11-22T22:35:46.127Z  01M82PDCJ8…  receipt.head  greet  ses_agent_two
+2026-11-22T22:35:46.127Z  01M82PDCJ8…  receipt.step         greeted the caller
+2026-11-22T22:35:46.127Z  01M82PDCJ8…  result
+2026-11-22T22:35:46.128Z  01M82PDCJ8…  end
+```
+
+Every line carries its own `run` (§1.3), so a line read out of the shared segment is attributable
+without state, and `(run, seq)` finds the rest of its run.
+
+### Appending under concurrent writers
+
+The segment is opened `O_APPEND` and **one whole line goes out in one write**, which is what
+orders this writer's line against every other writer's and keeps either from splitting the other.
+A write that reports fewer bytes than the line is **abandoned rather than continued**: continuing
+would let another process's append land inside this line, which is the failure mode worth
+designing out. The stream is then dropped for the rest of the run and the failure is reported
+once.
+
+Two honest limits. The single-write guarantee is a property of local filesystems, not of POSIX:
+put the stream on a local disk, not on NFS. And if a line is ever torn anyway, by a signal or a
+full disk mid-write, it is one unparseable line in an otherwise fine file — a reader quarantines
+it and reports it (§1.4) rather than losing the segment.
+
+### Retention, by whole segments
+
+The stream is one file per UTC day, `2026-11-22.jsonl`, and retention **deletes whole segments**:
+it keeps `PARLEY_HISTORY_DAYS` of them, today's included, and unlinks the rest, recording the
+deletion as a `receipt.step`. An append-only file with concurrent writers cannot be expired by
+rewriting it, which is the whole reason the segments are dated; with `days` at least 1, today's
+segment is never a candidate and the newest deletable one is already `days` days old, so no run
+is holding it open. A dry run deletes nothing and says what it would have deleted.
+
+### What the stream can contain, and why credentials cannot
+
+**The stream is the receipt's bytes, so a credential cannot reach it unless it reached the receipt
+first.** Every declared secret is replaced with `[redacted]` before any copy of a record leaves
+the process (§5.3), and the sink is handed the same string the receipt was handed — not a
+re-serialisation, not a second pass with its own idea of what a secret looks like. That is the
+guarantee by construction, and the only one worth making: a stream whose bytes differed from the
+receipt's would no longer be evidence of the same run.
+
+What is left to protect is reach rather than content, because the same bytes now live longer and
+in one place:
+
+- The directory is created `0700` and segments `0600`, so another user on the machine cannot read
+  the timeline.
+- A record stored as a sidecar reaches the stream as its `sidecar` event, never as its stored
+  bytes: the large payloads stay in the repository they came from.
+- Nothing is sent anywhere. The stream is a local file; cross-machine sync is not part of it.
+
+The limit to be clear about: an **undeclared** secret is exactly as exposed in the stream as in
+the receipt, for longer and across repositories. Declaring it is the fix, as it always was.
+
+### A broken stream never breaks a run
+
+A path that cannot be opened is one `history.unavailable` warning; an append that fails is one
+`history.write_failed` warning and the stream is dropped. Neither is an error, neither is a sink
+failure, and neither changes the exit status: §8 is informative and opt-in, so the extra sink
+cannot be the thing that fails the program. The receipt is the record; the stream is a
+convenience.
+
+### Two decisions the owner may overrule
+
+flyingrobots/parley#3 left scope, expiry and redaction open and asked for a recommendation.
+These are the recommendations, implemented:
+
+1. **Scope and expiry: one stream per user per machine, as dated daily segments, keeping
+   `PARLEY_HISTORY_DAYS` of them (default 14).** Scope is the machine and the user because that is
+   what makes the timeline worth reading — every tool, repository, agent and session on the
+   machine in one place. Expiry is by age in whole files because an append-only file with
+   concurrent writers can be expired by unlinking and not by rewriting. Overrule by changing
+   `HISTORY_DEFAULT_DAYS` in `src/history.ts`, or `resolveHistory`'s state path for a different
+   scope; nothing else depends on either.
+2. **Redaction: none of the stream's own, with owner-only permissions, no sidecar bodies and no
+   network instead.** The reasoning is the section above. Overrule by filtering in `Run`'s mirror
+   in `src/run.ts`, the single place the receipt's bytes are handed to the sink.
 
 ## Exceptions the protocol names
 

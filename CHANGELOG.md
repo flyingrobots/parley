@@ -7,6 +7,21 @@ The spec and each message schema are versioned separately from this package.
 
 ### Added
 
+- The shared history stream of spec §8, inside the writer: `packages/parley-emit` appends every
+  line of the receipt to a dated daily segment when one is configured, by `PARLEY_HISTORY` or by
+  `$XDG_STATE_HOME/parley/history` existing, so one timeline spans tools, repositories, agents
+  and people. The sink receives the receipt's bytes, which is why a credential cannot reach it
+  that did not reach the receipt; scope is one stream per user per machine and expiry unlinks
+  whole segments, keeping `PARLEY_HISTORY_DAYS` of them (default 14). A run with no stream
+  configured is unchanged in every byte, and a stream that cannot be written is a warning rather
+  than an error, a sink failure or a different exit status: the dependency runs one way. §8 and
+  §9 stay informative in v0.2 — §8's rules now have an implementation and tests behind them, and
+  promoting them to normative is a spec version's decision, taken on its own. No schema version
+  moves and no message type is added: `parley.run.bootstrap`'s `paths` is already open and
+  already says a program may add paths it documents, so `paths.history` needs no version, and
+  segment retention is recorded with `parley.receipt.step`. Twelve cases, PE-22a to PE-22l, with
+  the doctor as the oracle. (flyingrobots/parley#3)
+
 - `.github/workflows/release-parley-emit.yml`: a tag `parley-emit-vX.Y.Z` runs the checks,
   creates the GitHub release with the tarball and publishes to npm through OIDC trusted
   publishing. Documented in `docs/workflows/release-parley-emit/`.

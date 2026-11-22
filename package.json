@@ -1,0 +1,16 @@
+{
+  "name": "parley",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A protocol for programs that talk to agents. This package holds the repository's own checks; the spec and schemas are the product.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "check": "bun run scripts/check-examples.ts",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1"
+  }
+}

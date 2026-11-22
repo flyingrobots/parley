@@ -1,0 +1,202 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flyingrobots.dev/parley/tooling/parley.tooling.check_examples/1.0.0",
+  "title": "check-examples output line",
+  "description": "One line of output from scripts/check-examples.ts. Tooling output, not a protocol message; lives beside the script rather than under schemas/.",
+  "type": "object",
+  "required": [
+    "event",
+    "_schema"
+  ],
+  "properties": {
+    "_schema": {
+      "$ref": "#/$defs/stamp"
+    },
+    "event": {
+      "type": "string"
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "event": {
+          "const": "example.ok"
+        },
+        "file": {
+          "type": "string"
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "schema": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "_schema": {
+          "$ref": "#/$defs/stamp"
+        }
+      },
+      "required": [
+        "file",
+        "line",
+        "schema",
+        "version"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "properties": {
+        "event": {
+          "const": "example.skipped"
+        },
+        "file": {
+          "type": "string"
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "reason": {
+          "enum": [
+            "abridged",
+            "illustrative",
+            "tool_owned"
+          ]
+        },
+        "schema": {
+          "type": "string"
+        },
+        "_schema": {
+          "$ref": "#/$defs/stamp"
+        }
+      },
+      "required": [
+        "file",
+        "line",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "properties": {
+        "event": {
+          "const": "example.invalid"
+        },
+        "file": {
+          "type": "string"
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "reason": {
+          "enum": [
+            "parse",
+            "no_schema",
+            "unknown_schema",
+            "invalid"
+          ]
+        },
+        "detail": {
+          "type": "string"
+        },
+        "_schema": {
+          "$ref": "#/$defs/stamp"
+        }
+      },
+      "required": [
+        "file",
+        "line",
+        "reason",
+        "detail"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "properties": {
+        "event": {
+          "const": "summary"
+        },
+        "files": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "examples": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "invalid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "passed": {
+          "type": "boolean"
+        },
+        "_schema": {
+          "$ref": "#/$defs/stamp"
+        }
+      },
+      "required": [
+        "files",
+        "examples",
+        "ok",
+        "skipped",
+        "invalid",
+        "passed"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "properties": {
+        "event": {
+          "const": "error"
+        },
+        "code": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$"
+        },
+        "problem": {
+          "type": "string",
+          "minLength": 1
+        },
+        "_schema": {
+          "$ref": "#/$defs/stamp"
+        }
+      },
+      "required": [
+        "code",
+        "problem"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "$defs": {
+    "stamp": {
+      "type": "object",
+      "required": [
+        "id",
+        "version"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "const": "parley.tooling.check_examples"
+        },
+        "version": {
+          "const": "1.0.0"
+        }
+      }
+    }
+  }
+}

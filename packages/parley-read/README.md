@@ -5,6 +5,10 @@ a repository has accumulated and hands back every run's records, each labelled b
 established: validated against the schema for its exact pair, partially checked, or passed through
 unvalidated because its type is not ours to validate.
 
+A read over those records states who it is for, what shape of answer it wants and how big an
+answer it will accept, is refused when it cannot, and is itself recorded as a run with a receipt
+(§9) — so the next read can see what was asked.
+
 The rules it keeps are the ones the specification binds a *reader* to — §1.4 buffering and
 quarantine, §5.4's unterminated tail, §1.3's `(run, seq)`, §4.5 and §4.6 on exact-pair resolution,
 and §5 on sidecars — because the cases §6 calls unconstrainable will happen, and a reader that
@@ -97,11 +101,117 @@ validate against another (§4.6), so it is returned and reported as unvalidated 
 across the two runs, which is where `counts.unvalidated` comes from. The four `parley.*` lines in
 each receipt were validated against the schema for their exact advertised pair.
 
+## Making a read
+
+A read states an `asker`, a `view` and a `window`. The first two are never inferred — §2.1 forbids
+inventing an identity and there is no privileged view — so a read that cannot state them is
+refused rather than answered under a guess. The shapes and the vocabulary are
+[the reader representation](../../docs/topics/reader/README.md).
+
+```ts
+import { queryReceipts } from "@flyingrobots/parley-read";
+
+const now = Date.now();
+const outcome = await queryReceipts({
+  asker: { tool: "claude-code", cwd: "/work/site", task: "flyingrobots/parley#48" },
+  view: "what-ran",
+  window: { from: now - 86_400_000, to: now },
+  note: "what has run in this directory today",
+}, { cwd: "/work/site" });
+
+if (outcome.refused) for (const r of outcome.refusals) console.error(r.code, r.problem, r.remedy);
+else console.log(outcome.query, outcome.window, outcome.records.length);
+```
+
+An accepted read is a run: it emits `parley.query` through
+[`@flyingrobots/parley-emit`](../parley-emit/README.md) into a receipt beside the ones it read, so
+the loader finds the question on the next read and a result can name the query it answers by
+`(run, seq)`. A **refused** read is not a run and records nothing — no receipt, no `.parley`
+directory, nothing written — because §9 records a question that was asked, and a question nobody
+could state has no asker to attribute it to. Its refusals carry §6's fields, so a caller that is
+itself a parley tool can hand one straight to `run.error`:
+
+```json illustrative
+{
+  "code": "query.view_missing",
+  "field": "view",
+  "problem": "the read states no view, and there is no privileged view to fall back on",
+  "remedy": "state one of: what-ran, what-failed, what-changed, how-it-decided, everything; a guessed view is a different answer to a different question, and the caller cannot see it",
+  "section": "§9"
+}
+```
+
+### What a read records, and what it applies
+
+| Field | Recorded | Applied |
+| --- | --- | --- |
+| `asker` | Verbatim, `tool` required | Nothing branches on it: two askers asking the same thing get the same answer |
+| `view` | Verbatim, one of five tokens | **Not yet.** The answer is the window, unprojected; shaping it to the view is [flyingrobots/parley#49](https://github.com/flyingrobots/parley/issues/49) |
+| `budget` | Verbatim, defaulted to `{"records": 20}` and the answer says it defaulted | **Not yet.** Nothing is truncated and no excluded count is claimed; bounding an answer is [flyingrobots/parley#50](https://github.com/flyingrobots/parley/issues/50) |
+| `window` | Verbatim, two timestamps inclusive at both ends | Yes: the answer is the records inside it, ascending by `t` with `(run, seq)` breaking a tie |
+| `note` | Verbatim | Never parsed |
+
+No `parley.lens` is emitted. A lens states a loss bound and the records a result was built from;
+a read that returns the records themselves has no loss to state, and the lens belongs to the
+digest (#50).
+
+## A captured read
+
+Two runs of the writer's own `count` example in one directory, then one `queryReceipts` over it
+asking what ran in the last day, on 2026-11-22. The read's own receipt holds five lines; this is
+the `query` event it recorded at `seq: 2`, as the receipt holds it:
+
+```jsonl
+{"event":"query","t":1795388936981,"seq":2,"run":"01M82RA4RCSBF4F4P9NHM8650K","asker":{"tool":"claude-code","cwd":"/tmp/parley-query-readme.4xkfaK/work","task":"flyingrobots/parley#48"},"view":"what-ran","budget":{"records":20},"window":{"from":1795302536970,"to":1795388936970},"note":"what has run in this directory today","_schema":{"id":"parley.query","version":"1.0.0"}}
+```
+
+What the read returned, whole. It is a fragment of a JavaScript value and not a protocol message,
+so it carries no `_schema`, and each record is projected to the five fields a timeline reads; a
+real record also carries the file and line it came from, how many copies carried it, whether it
+came from a sidecar, and the record itself:
+
+```json illustrative
+{
+  "run": "01M82RA4RCSBF4F4P9NHM8650K",
+  "query": { "run": "01M82RA4RCSBF4F4P9NHM8650K", "seq": 2 },
+  "view": "what-ran",
+  "budget": { "records": 20 },
+  "budgetDefaulted": true,
+  "window": { "from": 1795302536970, "to": 1795388936970 },
+  "counts": { "scanned": 11, "inWindow": 8, "undated": 0, "own": 3 },
+  "records": [
+    { "run": "01M82RA4PNDJDYZ51K4GFGK06D", "seq": 1, "event": "receipt.head", "t": 1795388936929, "validation": "validated" },
+    { "run": "01M82RA4PNDJDYZ51K4GFGK06D", "seq": 2, "event": "receipt.step", "t": 1795388936929, "validation": "validated" },
+    { "run": "01M82RA4PNDJDYZ51K4GFGK06D", "seq": 3, "event": "result", "t": 1795388936929, "validation": "unvalidated" },
+    { "run": "01M82RA4PNDJDYZ51K4GFGK06D", "seq": 4, "event": "end", "t": 1795388936929, "validation": "validated" },
+    { "run": "01M82RA4QYCB94DVW87TMBDBQE", "seq": 1, "event": "receipt.head", "t": 1795388936967, "validation": "validated" },
+    { "run": "01M82RA4QYCB94DVW87TMBDBQE", "seq": 2, "event": "receipt.step", "t": 1795388936968, "validation": "validated" },
+    { "run": "01M82RA4QYCB94DVW87TMBDBQE", "seq": 3, "event": "result", "t": 1795388936968, "validation": "unvalidated" },
+    { "run": "01M82RA4QYCB94DVW87TMBDBQE", "seq": 4, "event": "end", "t": 1795388936968, "validation": "validated" }
+  ]
+}
+```
+
+Eight records in the window, from the two `count` runs, ascending by `t`. The two `result` lines
+are `count.result`, a type this reader ships no schema for and must not validate against another
+(§4.6), so they come back unvalidated — the same rule the loader follows.
+
+`counts.own` is 3: the read's own head, its query and its first step, as they stood when it
+loaded. They are not in the answer, because **a read does not answer itself**. The record of it is
+there for the next read, which loads it as validated against the exact pair:
+
+```json illustrative
+{ "run": "01M82RA4RCSBF4F4P9NHM8650K", "seq": 2, "event": "query", "validation": { "state": "validated", "schema": { "id": "parley.query", "version": "1.0.0" } } }
+```
+
 ## Surface
 
 | Export | Job |
 | --- | --- |
 | `loadReceipts(opts)` | Every run in both receipt locations for a working directory, as bundles |
+| `queryReceipts(request, opts)` | A read: refused without an asker, a view and a window, else recorded as a `parley.query` event and answered with the window's records in time order |
+| `planQuery(request)`, `queryRecord(query)` | The refusal rules and the recorded payload, without any reading or writing |
+| `VIEWS`, `DEFAULT_BUDGET`, `QUERY_SCHEMA`, `NO_RETENTION` | The five view tokens, the one documented budget default, the pair a read emits, and the retention policy a read states |
 | `readReceiptFile(path, opts)` | One receipt file; a file holding more than one run yields one bundle per run |
 | `receiptLocations(opts)`, `repoReceiptDir`, `stateReceiptDir` | Where receipts are, present or absent; creates nothing |
 | `LineBuffer`, `splitLines`, `readFileLines` | Newline buffering: bytes in, complete lines out, the unterminated tail kept apart (§1.4, §5.4) |
@@ -128,7 +238,8 @@ secret, whether its `inv` matches — is the caller's to decide, and this reader
 
 ## What it does not do
 
-- Query or rank. It returns what the receipts say; choosing among runs is the caller's.
+- Rank, project or truncate. A read returns its window in time order; the view and the budget are
+  recorded and applied to nothing yet (flyingrobots/parley#49, flyingrobots/parley#50).
 - Recompute `inv` or any semantic digest (§7.1). It checks a sidecar's stored bytes against the
   digest the receipt declared, and nothing else.
 - Judge conformance. The doctor under `scripts/` names violated rules; this is a loader, and a

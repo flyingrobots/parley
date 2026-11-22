@@ -69,6 +69,17 @@ The spec and each message schema are versioned separately from this package.
 
 ### Added
 
+- The query entry point in the reader library (flyingrobots/parley#48): `queryReceipts` in
+  `packages/parley-read` takes the asker, view, budget and window decided in
+  flyingrobots/parley#46, refuses a read that states no asker, no view or no window with a
+  structured refusal per field rather than guessing one, and records every accepted read as a
+  `parley.query` 1.0.0 event through the writer — so a read is a run with a receipt of its own and
+  the loader reads the question back as validated against the exact pair. The answer is the
+  window's records in time order, the window echoed verbatim, the read excluded from its own
+  answer. Nothing projects to the view and nothing is bounded by the budget yet
+  (flyingrobots/parley#49, flyingrobots/parley#50): both are recorded, the limits are stated on
+  the reader's and the library's reference pages, and a test pins two views over one window
+  answering the same so the limit cannot drift unnoticed. No schema moved.
 - The shared history stream of spec §8, inside the writer: `packages/parley-emit` appends every
   line of the receipt to a dated daily segment when one is configured, by `PARLEY_HISTORY` or by
   `$XDG_STATE_HOME/parley/history` existing, so one timeline spans tools, repositories, agents

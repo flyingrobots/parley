@@ -767,10 +767,16 @@ describe("RD-14 a query without an asker, a view or a window is refused", () => 
     for (const token of VIEWS) expect(refused(outcome)[0]!.remedy).toContain(token);
   });
 
-  test("a missing window and an inverted window are both refused", async () => {
+  test("a missing, half-stated, malformed or inverted window is refused", async () => {
     const { dir, env } = scratch();
     const missing = await queryReceipts({ asker: { tool: "t" }, view: "everything" }, { cwd: dir, env });
     expect(codes(missing)).toEqual(["query.window_missing"]);
+    const half = await queryReceipts({ asker: { tool: "t" }, view: "everything", window: { from: 0 } }, { cwd: dir, env });
+    expect(codes(half)).toEqual(["query.window_missing"]);
+    const fractional = await queryReceipts({ asker: { tool: "t" }, view: "everything", window: { from: 0.5, to: T0 } }, { cwd: dir, env });
+    expect(codes(fractional)).toEqual(["query.window_invalid"]);
+    const negative = await queryReceipts({ asker: { tool: "t" }, view: "everything", window: { from: -1, to: T0 } }, { cwd: dir, env });
+    expect(codes(negative)).toEqual(["query.window_invalid"]);
     const inverted = await queryReceipts({ asker: { tool: "t" }, view: "everything", window: { from: T0, to: T0 - DAY } }, { cwd: dir, env });
     expect(codes(inverted)).toEqual(["query.window_inverted"]);
   });

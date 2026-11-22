@@ -7,6 +7,14 @@ The spec and each message schema are versioned separately from this package.
 
 ### Changed
 
+- §8 and §9 are informative in v0.2: their conformance obligations are removed and each says it
+  describes a layer that is designed (flyingrobots/parley#2, #3) and not built. §9a's lineage
+  prose moves to an unnumbered preface. The README marks the history layer as planned. The
+  normative core is §1 to §7. (flyingrobots/parley#17)
+- Name: the specification and repository keep Parley; libraries get distinct names
+  (`parley-emit`, `parley-read`, `@flyingrobots/*`); "the Parley output protocol" where ambiguity
+  matters. Recorded on the related-work page. (flyingrobots/parley#20)
+
 - §2.1, §2.2: `inv` is SHOULD and tool-defined in v0.2; a program that supplies it documents its
   derivation and scope, omits it when unavailable (never a placeholder), and keeps declared
   secrets out of it. A shared derivation is targeted for v0.3 from a real implementation. The

@@ -78,6 +78,10 @@ database, is the proposition.
 
 ## Name
 
-`parley` is also the name of [Linebender's Rust text-layout crate](https://github.com/linebender/parley).
-Whether this project keeps the name is
-[flyingrobots/parley#20](https://github.com/flyingrobots/parley/issues/20).
+`parley` is also the name of [Linebender's Rust text-layout crate](https://github.com/linebender/parley),
+so the unqualified crate name is not available. Decision
+([flyingrobots/parley#20](https://github.com/flyingrobots/parley/issues/20), 2026-11-22): the
+specification and this repository keep the name Parley; libraries are published under distinct
+names such as `parley-emit` and `parley-read`, subject to availability, and as scoped npm packages
+under `@flyingrobots`; where ambiguity matters the descriptive name is "the Parley output
+protocol". The project is not renamed to solve a package-name collision.

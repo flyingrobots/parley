@@ -63,6 +63,15 @@ to the run that produced it.
 
 A doorway, sized so you can walk through it without agreeing to anything larger.
 
+## Related work
+
+parley is not the first specification for agent-facing command lines, and it does not pretend to
+be. [Related work](docs/topics/related-work/README.md) names the neighbours (CLI Agent Spec,
+ChaosRealmsAI's agent-cli-spec, agent-cli/v2, MCP, OpenLineage, Bazel's build event protocol,
+Terraform's machine-readable output, SARIF), what parley borrows from each, and the short list of
+what is its own: the receipt on disk announced first, `inv` over input bytes for ordinary tools,
+raw and resolved argv, actionable errors, and the no-TTY rule.
+
 ## Documents
 
 - [The specification](spec/) — normative, versioned independently of any implementation

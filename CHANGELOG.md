@@ -49,6 +49,10 @@ The spec and each message schema are versioned separately from this package.
   for examples that are deliberately not complete messages. Runs under `bun test` and in CI.
   (flyingrobots/parley#4)
 
+- `docs/topics/related-work/README.md`: the neighbouring specifications and formats, what parley
+  borrows from each, and what is its own; routed from the README and the docs index.
+  (flyingrobots/parley#19)
+
 ### Fixed
 
 - The README bootstrap example emitted a top-level `receipt`; the schema requires

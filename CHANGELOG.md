@@ -399,6 +399,23 @@ so a receipt
 
 - The README bootstrap example emitted a top-level `receipt`; the schema requires
   `paths.receipt`. (flyingrobots/parley#5)
+- The spec's introduction, §8's opening paragraph and §9's opening paragraph still said the
+  history layer did not exist and the §9 reader was designed but not built. Both claims had gone
+  stale: §8's writer side — the shared stream, its segments and retention, and the transform that
+  projects a copy of it — has an implementation and tests in `packages/parley-emit`
+  (flyingrobots/parley#3, flyingrobots/parley#57), and §9's query entry point and the ranking that
+  orders a result by purpose have an implementation and tests in `packages/parley-read`
+  (flyingrobots/parley#48, flyingrobots/parley#49). The three paragraphs are corrected to say so.
+  Nothing else in either section changed: each still says it is informative and becomes normative
+  only when an implementation and tests support its rules in full, which neither does yet —
+  preferring the least-projected copy (flyingrobots/parley#58), bounding an answer and its detail
+  (flyingrobots/parley#50, flyingrobots/parley#51) remain design, and the reader optic as a whole
+  (flyingrobots/parley#2) is still open. The root README's matching sentence is corrected the same
+  way. **Decided: no, nothing moves to normative.** This is a documentation correction, not a
+  promotion — the gap between "has an implementation and tests" and "normative" is deliberate
+  (§4.5), and moving either section is a separate decision for a separate issue, should one ever
+  be opened. **The spec version does not move**: no normative sentence changed, so `0.2.0` still
+  names exactly the rules it always did. (flyingrobots/parley#65)
 
 ## [0.1.0] — 2026-11-22
 

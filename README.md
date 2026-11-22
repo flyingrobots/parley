@@ -9,8 +9,12 @@ parley says: output is a **contract**. Every line is JSON, carries a versioned s
 validates. Every run announces itself, says where its receipt went, and leaves that receipt on
 disk whether anyone asked for it or not. Configure a shared history stream and the same receipt
 lines collect into one timeline across tools, repositories and agents. The layer above that, in
-which reading is itself a recorded act carrying who is asking and why, is designed but not yet
-built.
+which reading is itself a recorded act carrying who is asking and why, has a query entry point and
+a ranking that orders a result by purpose, built and tested
+([#48](https://github.com/flyingrobots/parley/issues/48),
+[#49](https://github.com/flyingrobots/parley/issues/49)); bounding an answer and its detail are
+still design, not built ([#50](https://github.com/flyingrobots/parley/issues/50),
+[#51](https://github.com/flyingrobots/parley/issues/51)).
 
 > **Status: proposal.** The [specification](spec/) is written. The writer library,
 > [`@flyingrobots/parley-emit`](packages/parley-emit/README.md), is published and appends to the

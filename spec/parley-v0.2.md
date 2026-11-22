@@ -6,7 +6,27 @@ interpreted as described in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119) a
 [RFC 8174](https://www.rfc-editor.org/rfc/rfc8174) when, and only when, they appear in bold.
 
 A protocol for programs whose primary caller is an agent. It defines how a program speaks on its
-output streams, how it describes itself, what it leaves behind, and how that record is read.
+output streams, how it describes itself, and what it leaves behind. Sections 1 to 7 are the
+normative core; §8 and §9 describe a history layer that consumes this format and is not yet
+built, and are informative.
+
+## Lineage
+
+parley is not a new idea. It is the same idea as `echo`, `graft`, `jedit` and the witness work:
+that a system should record what happened as it happens, carry its provenance, and let that
+record be read as history rather than reconstructed from guesswork. Those apply it to code,
+structure, editing and proof. parley applies it to the narrowest surface there is — what a
+program prints.
+
+That narrowness is the point. A tool conforms to parley by changing what it writes: JSON Lines
+on stdout and stderr, a receipt on disk, and the hygiene and retention around it. It needs no
+substrate, no daemon, no causal graph. If the same tool later writes into a richer history,
+nothing it emits has to change, because every line is already identified, ordered within its
+run, provenanced, and attributable to the run that produced it.
+
+It is a doorway, deliberately sized so someone can walk through it without agreeing to anything
+larger.
+
 
 ---
 
@@ -648,12 +668,17 @@ unparseable at best and quietly wrong at worst.
 
 ---
 
-## 8. The history stream — optional
+## 8. The history stream (informative)
+
+This section is informative. It describes a layer that consumes the format above and does not
+yet exist ([flyingrobots/parley#3](https://github.com/flyingrobots/parley/issues/3)); nothing in
+it is a conformance requirement in v0.2, and it becomes normative only when an implementation and
+tests support its rules.
 
 Everything above works with no infrastructure. This layer is opt-in.
 
-A program **SHOULD** additionally append its receipt lines to a shared stream when one is
-configured, via an environment variable or a known state path. Present, the caller gets a
+The intent is that a program additionally appends its receipt lines to a shared stream when one
+is configured, via an environment variable or a known state path. Present, the caller gets a
 cross-repository, cross-agent timeline; absent, the program writes locally and nothing breaks.
 
 **The dependency runs one way.** The stream consumes the format. The format never requires the
@@ -665,26 +690,30 @@ timeline.
 
 ---
 
-## 9. Reading history is an act
+## 9. Reading history is an act (informative)
 
-A read against the stream is **not** a passive lookup. It is itself an event, and it is
-task-oriented.
+This section is informative, for the same reason as §8: the reader it describes is designed
+([flyingrobots/parley#2](https://github.com/flyingrobots/parley/issues/2)), not built. The
+direction is kept here so the format above stays shaped for it.
 
-- A query **MUST** declare its **observer** (who is asking) and its **purpose** (why).
+A read against the stream is not a passive lookup. It is itself an event, and it is
+task-oriented. The intended rules:
+
+- A query declares its **observer** (who is asking) and its **purpose** (why).
 - The purpose **shapes the result**. "I am about to change this program's audit path" should
   return records touching that surface, not the last fifty things in chronological order.
   Without a declared purpose, relevance is a guess.
-- A query **MUST** be recorded as an event. The store then learns which questions are actually
-  asked, which is the signal for what to index and roll up.
-- A result **MUST** carry its own lens — the observer, the purpose and the window that produced
-  it — so a later reader knows what it is looking at and cannot mistake a digest for the whole.
-- A result **MUST** report what it excluded, at least as a count, so a caller can widen
-  deliberately rather than never learning what it missed.
+- A query is recorded as an event. The store then learns which questions are actually asked,
+  which is the signal for what to index and roll up.
+- A result carries its own lens — the observer, the purpose and the window that produced it — so
+  a later reader knows what it is looking at and cannot mistake a digest for the whole.
+- A result reports what it excluded, at least as a count, so a caller can widen deliberately
+  rather than never learning what it missed.
 
 Two failure modes to design against:
 
 - **Ceremony.** If declaring purpose is expensive, callers will skip it or write noise. It
-  **SHOULD** be mostly inferable from context — tool, working directory, current task id — with
+  should be mostly inferable from context — tool, working directory, current task id — with
   free text optional.
 - **Over-filtering.** A purpose-shaped result can hide the very thing the caller needed because
   they did not know to ask for it. This is why the excluded count is required.
@@ -693,23 +722,6 @@ Two failure modes to design against:
 > Foundations Series, which has not yet been read against this spec. Expect it to change.
 
 ---
-
-## 9a. Lineage
-
-parley is not a new idea. It is the same idea as `echo`, `graft`, `jedit` and the witness work:
-that a system should record what happened as it happens, carry its provenance, and let that
-record be read as history rather than reconstructed from guesswork. Those apply it to code,
-structure, editing and proof. parley applies it to the narrowest surface there is — what a
-program prints.
-
-That narrowness is the point. A tool conforms to parley by changing what it writes: JSON Lines
-on stdout and stderr, a receipt on disk, and the hygiene and retention around it. It needs no
-substrate, no daemon, no causal graph. If the same tool later writes into a richer history,
-nothing it emits has to change, because every line is already identified, ordered within its
-run, provenanced, and attributable to the run that produced it.
-
-It is a doorway, deliberately sized so someone can walk through it without agreeing to anything
-larger.
 
 ## 10. Open questions
 

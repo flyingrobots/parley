@@ -7,8 +7,8 @@ an agent, that rendering is a surface to be scraped — and scraping is guessing
 
 parley says: output is a **contract**. Every line is JSON, carries a versioned schema id, and
 validates. Every run announces itself, says where its receipt went, and leaves that receipt on
-disk whether anyone asked for it or not. Reading history is itself an act that gets recorded,
-and it carries who is asking and why.
+disk whether anyone asked for it or not. A history layer in which reading is itself a recorded
+act, carrying who is asking and why, is designed but not yet built.
 
 > **Status: proposal.** The [specification](spec/) is written; the libraries are not. See the
 > [open issues](https://github.com/flyingrobots/parley/issues).
@@ -18,7 +18,7 @@ and it carries who is asking and why.
 | Layer | What it is | Requires |
 | --- | --- | --- |
 | **The output contract** | How a program speaks: JSON Lines, published schemas, a bootstrap line, a durable receipt | **Nothing.** A conforming tool is useful on its own |
-| **The history stream** | An optional shared sink where receipts from every tool, agent and session collect into one timeline | Opt in by configuring a path |
+| **The history stream** (planned) | An optional shared sink where receipts from every tool, agent and session collect into one timeline | Opt in by configuring a path; not yet built ([#3](https://github.com/flyingrobots/parley/issues/3)) |
 
 This order matters. A tool that conforms is fully useful with zero infrastructure — no daemon, no
 database, no setup. The stream is a *consumer* of the format, never a prerequisite for it. Invert
@@ -44,9 +44,11 @@ The moment you want a receipt is *after* something went wrong, which is exactly 
 stream is gone. A receipt on disk can be read by a session that did not run the command, tomorrow,
 by a different agent. Streams are only available to whoever knew in advance to capture them.
 
-## Reading is an act
+## Reading is an act (planned)
 
-A query against history declares **who is asking and why**, and the answer is shaped by that.
+This layer is designed and not yet built ([#2](https://github.com/flyingrobots/parley/issues/2),
+[#3](https://github.com/flyingrobots/parley/issues/3)); spec §8 and §9 are informative. A query
+against history declares **who is asking and why**, and the answer is shaped by that.
 There is no view-from-nowhere: purpose is what makes relevance computable, and a reading carries
 the lens it came through so a later reader knows what it was.
 

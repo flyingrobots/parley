@@ -185,6 +185,12 @@ describe("schemas/", () => {
       expect(head({ ...okHead, redacted: { argv: [], env: [] } })).toBe(false);
       expect(head({ ...okHead, redacted: { sources: ["netrc"] } })).toBe(true);
       expect(head({ ...okHead, inputs: [{ path: "x", sha256: "a".repeat(64), error: "input.unreadable" }] })).toBe(false);
+      expect(head({ ...okHead, redacted: { sources: [""] } })).toBe(false);
+      const inputs = validate("parley.receipt.inputs.schema.json");
+      const okInputs = { event: "receipt.inputs", t: 1, seq: 5, run: "r", inputs: [{ path: "x", sha256: "a".repeat(64) }], _schema: { id: "parley.receipt.inputs", version: "1.0.0" } };
+      expect(inputs(okInputs)).toBe(true);
+      expect(inputs({ ...okInputs, inputs: [{ path: "x", sha256: "a".repeat(64), error: "input.unreadable" }] })).toBe(false);
+      expect(inputs({ ...okInputs, inputs: [{ path: "x", sha256: "zz" }] })).toBe(false);
     });
     test("a page with has_more needs a cursor; the last page does not (§7.2)", () => {
       const page = validate("parley.page.schema.json");

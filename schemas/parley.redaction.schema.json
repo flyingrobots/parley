@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://flyingrobots.dev/parley/schemas/parley.redaction/1.0.0",
   "title": "parley redaction",
-  "description": "A receipt line recording a redaction decided after the head was written (spec \u00a75.3).",
+  "description": "A receipt line recording a redaction not covered by the head's redacted field: in the head itself (in: 1) or in any later record or sidecar (spec \u00a75.3).",
   "type": "object",
   "required": [
     "event",
@@ -35,7 +35,7 @@
     "in": {
       "type": "integer",
       "minimum": 1,
-      "description": "The seq of the affected record or sidecar event."
+      "description": "The seq of the affected record: the head, a result, an error, a reasoning line, or the stored record a sidecar holds (its source)."
     },
     "at": {
       "type": "string",

@@ -196,12 +196,13 @@ are settled and before `end`:
  "inputs":[{"path":"src/tokens.css","sha256":"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"},
            {"path":"-","role":"stdin","sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
            {"path":"vendor/","role":"tree","error":"input.unreadable"}],
- "inv":"inv_7f3a9c1e",
  "_schema":{"id":"parley.receipt.inputs","version":"1.0.0"}}
 ```
 
 An input the program could not read is recorded with an `error` code and no digest; a run that
 then fails still closes a complete failed receipt (§3.3) without that digest and without `inv`.
+That is the run shown across this specification's examples: stdin was an input, so `inv` was not
+known at the bootstrap line or the head, and `vendor/` was unreadable, so the run never had one.
 
 > **The trap.** Hashing input *paths* rather than input *bytes* makes `inv` stable across an edit
 > to the file. "Idempotent" then silently means "stale", and any cache built on it serves wrong
@@ -209,9 +210,10 @@ then fails still closes a complete failed receipt (§3.3) without that digest an
 
 ### 2.3 What `inv` buys
 
-Each of these holds only where no declared secret is involved on either side: the receipt carries
-no `redacted` (§5.3) and the invocation comparing against it supplied none. A redacted receipt
-shares its `inv` with every run that differed only in a secret, so none of them applies to it.
+Each of these holds only where no declared secret is involved on either side: the receipt's
+`end.redacted` is `false` (§3.3, §5.3) and the invocation comparing against it supplied none. A
+redacted receipt shares its `inv` with every run that differed only in a secret, so none of them
+applies to it.
 
 - **Change detection.** Same `inv`, same result ⇒ nothing moved within the declared input
   boundary.
@@ -224,12 +226,14 @@ shares its `inv` with every run that differed only in a secret, so none of them 
 
 A program **MAY** short-circuit on a known `inv`. If it does, it **MUST** emit the hit as an
 event rather than silently serving a cached answer, and **MUST** offer a way to force recompute.
-The event names the receipt it answered from and that receipt's run:
+The event names the receipt it answered from and that receipt's run, which must itself have been
+eligible: a successful, unredacted run, not the failed one the rest of this specification's
+examples show:
 
 ```json
 {"event":"cache.hit","t":1795326412350,"seq":2,"run":"01JD3KS9T4U8V1W5X2Y7Z3A6B9",
- "inv":"inv_7f3a9c1e","served_run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8",
- "receipt":"/work/site/.parley/receipts/01JD3KQ8Z6V9X2M4N7P1R3T5W8.jsonl",
+ "inv":"inv_7f3a9c1e","served_run":"01JD3KP5W2X8Y4Z1A7B3C9D6E2",
+ "receipt":"/work/site/.parley/receipts/01JD3KP5W2X8Y4Z1A7B3C9D6E2.jsonl",
  "_schema":{"id":"parley.cache.hit","version":"1.0.0"}}
 ```
 Short-circuiting **SHOULD NOT** be the default, because inputs can be identical while the world is
@@ -237,17 +241,18 @@ not — a declared input set never captures everything. A matching `inv` on its 
 authorises skipping an effect or reusing an answer; it is one input to that decision.
 
 Eligibility is checked on **both** sides. A program **MUST NOT** short-circuit when a declared
-secret was supplied to the current invocation, or when the cached receipt carries `redacted`
-(§5.3). Either run may have depended on which secret was used, and `inv` cannot tell, because
-§2.2 keeps secrets out of it. Whether a declared secret was supplied is known from `argv` and the
-environment before the head is written (§5.3), so both sides are decidable at the moment of
-choice. The rule reaches declared secrets. A credential the program obtains some other way, from
-a keychain, a credential helper or a token refresh, is outside it; a program that uses such
-credentials **MUST** route them through a declared argument or environment variable (§4.3) or
-**MUST NOT** short-circuit at all, because a reader cannot see them and this rule offers it no
-protection for them. The same two-sided rule binds a reader that serves cached answers (§5.3): it
-decides the current side from that invocation's own receipt head, whose `redacted` is mandatory
-when a declared secret was supplied, or from its declaration together with its `argv` and
+secret was supplied to the current invocation, or when the cached receipt carries `redacted` (§5.3).
+Either run may have depended on which secret was used, and `inv` cannot tell, because §2.2 keeps
+secrets out of it. Whether a declared secret was supplied is known from `argv` and the environment,
+and from resolving every declared credential source, before the head is written (§5.3), so both
+sides are decidable at the moment of choice. The rule reaches declared secrets, which include a
+credential source declared by logical name (§4.3): a `.netrc` entry, a keychain item or a helper's
+token counts as supplied when the program has a credential from it, and the head records that in
+`redacted.sources`. A credential the program obtains from a source it did not declare is outside the
+rule and invisible to a reader; a program that uses such credentials **MUST** declare the source or
+**MUST NOT** short-circuit at all. The same two-sided rule binds a reader that serves cached answers
+(§5.3): it decides the current side from that invocation's own receipt head, whose `redacted` is
+mandatory when a declared secret was supplied, or from its declaration together with its `argv` and
 environment, and **MUST NOT** serve when it holds neither.
 
 ---
@@ -273,7 +278,7 @@ and the command's output, in that order.
 ```json
 {"event":"run","t":1795326412345,"seq":0,
  "tool":"theme-book","v":"0.2.1",
- "inv":"inv_7f3a9c1e","run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8","session":"ses_9c4f",
+ "run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8","session":"ses_9c4f",
  "paths":{"receipt":"/work/site/.parley/receipts/01JD3KQ8Z6V9X2M4N7P1R3T5W8.jsonl"},
  "_schema":{"id":"parley.run.bootstrap","version":"1.1.1"}}
 ```
@@ -427,10 +432,11 @@ so creation and deletion are distinguishable and nothing a program does to the f
 undeclared. Bookkeeping is observable behaviour, not an exemption; it cannot cover a mutation the
 command was asked to make.
 
-`secrets` names the arguments, environment variables and credential sources whose values are
-secrets (§5.3): an argument by its flag, a variable by its name, and a file or other implicit
-source by a logical name such as `netrc` or `keychain:github`. It is part of the same declaration, so a caller learns before running what the
-receipt will not contain. A command with no secrets declares an empty list.
+`secrets` names the arguments, environment variables and credential sources whose values are secrets
+(§5.3): an argument by its flag, a variable by its name, and a file or other implicit source by a
+logical name such as `netrc` or `keychain:github`. It is part of the same declaration, so a caller
+learns before running what the receipt will not contain. A command with no secrets declares an empty
+list.
 
 A caller needs to know whether something mutates **before** running it. Every command **SHOULD**
 accept `--dry-run`. A dry run emits the bootstrap line, writes its receipt and any evidence
@@ -519,13 +525,15 @@ It is written **whether or not anyone asked for it**.
 **Where it goes.** The default location is `.parley/receipts/<run>.jsonl` under the invocation's
 **initial** working directory, resolved once at startup and unaffected by any later `chdir`. The
 bootstrap line's `paths.receipt` **MUST** be absolute, so the path means the same thing to every
-reader. When that location is unavailable, because the directory is read-only or cannot be
-created, the program falls back to `$XDG_STATE_HOME/parley/<repo-hash>/receipts/<run>.jsonl`,
-honouring `XDG_STATE_HOME` only when it is set, non-empty and absolute, and otherwise using
-`~/.local/state`. `<repo-hash>` is a digest of the canonical path of the git worktree root, or of
-the canonical initial working directory outside git; it keys storage and **MUST NOT** enter `inv`
-(§2.2). If no permitted location is writable, the run fails at startup (§3.2, exit `3`): a
-fallback improves availability, it does not promise that somewhere writable exists.
+reader. Paths in this specification are POSIX paths; v0.2 does not define the Windows form. When
+that location is unavailable, because the directory is read-only or cannot be created, or because
+§5.2's hygiene cannot be established there, the program falls back to
+`$XDG_STATE_HOME/parley/<repo-hash>/receipts/<run>.jsonl`, honouring `XDG_STATE_HOME` only when it
+is set, non-empty and absolute, and otherwise using `~/.local/state`. `<repo-hash>` is a digest of
+the canonical path of the git worktree root, or of the canonical initial working directory outside
+git; it keys storage and **MUST NOT** enter `inv` (§2.2). If no permitted location is writable, the
+run fails at startup (§3.2, exit `3`): a fallback improves availability, it does not promise that
+somewhere writable exists.
 
 Its first line **MUST** carry `tool` and `v`, and what the bootstrap line omitted: the raw `argv`
 as received, after §5.3 redaction; the `resolved` interpretation after defaults and environment are
@@ -538,11 +546,12 @@ digests that arrive later ride `receipt.inputs`).
 
 ```json
 {"event":"receipt.head","t":1795326412346,"seq":1,"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8",
- "tool":"theme-book","v":"0.2.1","inv":"inv_7f3a9c1e","session":"ses_9c4f",
+ "tool":"theme-book","v":"0.2.1","session":"ses_9c4f",
  "argv":["theme-book","count","--format","css","--token","[redacted]"],
  "resolved":{"command":"count","format":"css","cwd":"/work/site","token":"[redacted]"},
  "redacted":{"argv":[5],"resolved":["/token"]},
-"inputs":[{"path":"src/tokens.css","sha256":"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"}],
+ "inputs":[{"path":"src/tokens.css","sha256":"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"},
+           {"path":"-","role":"stdin"},{"path":"vendor/","role":"tree"}],
  "effects":{"reads":["src/**/*.css"],"writes":[],"network":false,"idempotent":true,
             "bookkeeping":[{"op":"create","scope":"/work/site/.parley/receipts/"}]},
  "_schema":{"id":"parley.receipt.head","version":"2.0.0"}}
@@ -551,7 +560,8 @@ digests that arrive later ride `receipt.inputs`).
 The head takes `seq: 1` because the bootstrap line took `0` and the run holds one counter (§1.3).
 It names `tool` and `v` again, although the bootstrap line already did, because a receipt is read
 on its own, tomorrow, by a reader that never saw stdout; without them it cannot say what wrote it,
-and a reader that knows the tool's documented derivation (§2.2) cannot recompute `inv`.
+and a reader that knows the tool's documented derivation (§2.2) cannot recompute `inv` when the
+receipt carries one.
 Recomputation works on a redacted receipt too, because a declared secret is never part of the
 preimage.
 
@@ -574,19 +584,22 @@ are subject to §5.3 like everything else in the receipt.
 
 **Sidecars.** A record whose UTF-8 serialisation, excluding its terminating newline, exceeds
 **65,536 bytes** **MAY** be stored beside the receipt instead of inside it; a result is the usual
-case, a large error or reasoning record is the same. The stdout or stderr copy is unaffected. The receipt then carries a `sidecar` event in the record's place:
+case, a large error or reasoning record is the same. The stdout or stderr copy is unaffected. The
+receipt then carries a `sidecar` event in the record's place:
 
 ```json
 {"event":"sidecar","t":1795326412400,"seq":8,"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8",
- "source":7,"path":"01JD3KQ8Z6V9X2M4N7P1R3T5W8/7.json","bytes":2097152,
+ "source":2,"path":"01JD3KQ8Z6V9X2M4N7P1R3T5W8/2.json","bytes":2097152,
  "sha256":"3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855b",
  "_schema":{"id":"parley.sidecar","version":"1.0.0"}}
 ```
 
-- `source` is the `seq` of the record the sidecar holds; the sidecar event has its own `seq` and
-  schema and does not pretend to be the record. A `redaction` event (§5.3) that names a value
+- `source` is the `seq` of the record the sidecar holds (here the run's result at `seq: 2`, whose
+  stdout copy is small and whose receipt copy carries the full table); the sidecar event has its
+  own `seq` and schema and does not pretend to be the record. A `redaction` event (§5.3) that names a value
   inside a sidecar's stored record uses that record's `seq`, the `source`, as its `in`.
-- `path` is relative to the receipt's directory.
+- `path` **MUST** be relative to the receipt's directory and **MUST NOT** leave it; the bundle
+  moves as one.
 - `bytes` and `sha256` describe the **stored bytes**, which is not the semantic `digest` of §7.1.
 - The receipt and its sidecars are one bundle: copied together, retained together (§5.1), and
   deleted together.
@@ -605,12 +618,12 @@ failure mode worth designing out rather than discovering.
 ### 5.2 Repository hygiene
 
 A program writing into `.parley/` **MUST** first ensure that `.parley/.gitignore` exists and
-contains `*`, creating it if absent and never overwriting a file that is already there, whether
-a user wrote it or git tracks it. Two programs starting at once **MUST** both end with the file
-in place; create-if-absent is the rule, not create-or-replace. A program **MUST NOT** edit the
-user's tracked `.gitignore` or any other tracked file to achieve this.
+contains a line consisting of `*`, creating it if absent and never overwriting a file that is
+already there, whether a user wrote it or git tracks it. Two programs starting at once **MUST** both
+end with the file in place; create-if-absent is the rule, not create-or-replace. A program **MUST
+NOT** edit the user's tracked `.gitignore` or any other tracked file to achieve this.
 
-If the file exists and does not contain `*`, it is a user's file: the program **MUST NOT** edit it,
+If the file exists and has no such line, it is a user's file: the program **MUST NOT** edit it,
 **MUST** use the state-directory fallback (§5) for this run, and **SHOULD** emit a warning (§6.1)
 saying why the receipt went elsewhere. The bootstrap line's absolute `paths.receipt` says where.
 
@@ -640,8 +653,11 @@ collide unless the program redacts. Privacy wins:
   `--name=[redacted]`, so the flag stays visible; a secret embedded in a longer value, such as a
   path, is replaced within it.
 - The head's `redacted` field **MUST** be present, and non-empty, whenever any declared secret was
-  supplied to the run, and absent otherwise. Whether a declared secret was supplied is known from
-  `argv` and the environment before the head is written, so this is decidable in time. It records
+  supplied to the run, and absent otherwise. Whether a declared argument or variable was supplied
+  is known from `argv` and the environment; a declared credential source is supplied when the
+  program has a credential from it, and the program **MUST** resolve every declared source before
+  the head is written, so that presence is known in time rather than discovered after the head
+  can no longer say so. It records
   every redaction in the head: in `argv` (as indexes), in `resolved` (as JSON Pointers, RFC 6901),
   in `inputs` (as indexes), in the environment (as the names of declared variables that were
   present, whether or not the receipt carried their values) and in `sources` (the logical names
@@ -661,7 +677,7 @@ that differ only in a secret, for example two tokens
   selecting two accounts, have the same `inv` (§2.2 excludes the secret) and identical receipts,
   and their answers may differ.
 
-**Late redaction.** A redaction not recorded in the head's `redacted` field, under the MAY above
+**Redaction events.** A redaction not recorded in the head's `redacted` field, under the MAY above
 or because a declared secret surfaced in a later record or a sidecar, **MUST** be discoverable
 from the completed receipt and not only from the writer's memory. Redaction is decided as the
 record is written: the value is replaced in every copy of that record before any copy leaves the
@@ -675,16 +691,15 @@ receipt naming where, after the record it names:
  "_schema":{"id":"parley.redaction","version":"1.0.0"}}
 ```
 
-`in` is the `seq` of the affected record (a result, an error, a reasoning line or a sidecar event)
-and `at` is a JSON Pointer within it. The `end` event's `redacted` flag (§3.3) is `true` whenever
-the head carries `redacted` or any `redaction` event was emitted, so a replay decision has one
-place to look.
+`in` is the `seq` of the affected record (the head, a result, an error, a reasoning line, or the
+stored record a sidecar holds, by its `source`) and `at` is a JSON Pointer within it. The `end`
+event's `redacted` flag (§3.3) is `true` whenever the head carries `redacted` or any `redaction`
+event was emitted, so a replay decision has one place to look.
 
 A schema checks the shape of `redacted`, not its truth. Whether an indexed element contains
-`[redacted]`,
-whether a pointer resolves, and whether a `[redacted]` marker in the head has a matching entry
-while `redacted` is present are a reader's checks, and a reader that performs them **SHOULD**
-report a mismatch as a defect in the writer.
+`[redacted]`, whether a pointer resolves, and whether a `[redacted]` marker in the head has a
+matching entry in `redacted` or a `redaction` event naming `in: 1` are a reader's checks, and a
+reader that performs them **SHOULD** report a mismatch as a defect in the writer.
 
 ### 5.4 Persistence
 
@@ -722,7 +737,8 @@ The fields that matter are **`measured`, `limit` and `remedy`**. An error naming
 the distance from it, and the lever is actionable in one step. An error reading `make failed with
 exit code: 2` costs its reader several calls to trace.
 
-A top-level handler **MUST** convert every uncaught throw into a conforming error line. The cases
+A top-level handler **MUST** convert every uncaught throw before `end` into a conforming error
+line; after `end` has begun, nothing is written and the process exits `4` (§3.3). The cases
 that genuinely cannot be constrained — a hard crash inside a native dependency, a signal kill —
 **MUST** be documented as exceptions rather than papered over. "No surprises" is only credible if
 the places it cannot hold are named.

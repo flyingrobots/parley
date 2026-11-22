@@ -787,6 +787,17 @@ describe("RD-14 a query without an asker, a view or a window is refused", () => 
     expect(codes(outcome)).toEqual(["query.budget_invalid"]);
   });
 
+  test("an asker that parley.query could not carry is refused", async () => {
+    const { dir, env } = scratch();
+    const relative = await queryReceipts({ asker: { tool: "t", cwd: "work" }, view: "everything", window: WIDE }, { cwd: dir, env });
+    expect(codes(relative)).toEqual(["query.asker_invalid"]);
+    const emptyTask = await queryReceipts({ asker: { tool: "t", task: "" }, view: "everything", window: WIDE }, { cwd: dir, env });
+    expect(codes(emptyTask)).toEqual(["query.asker_invalid"]);
+    const emptyNote = await queryReceipts({ asker: { tool: "t" }, view: "everything", window: WIDE, note: "" }, { cwd: dir, env });
+    expect(codes(emptyNote)).toEqual(["query.note_empty"]);
+    expect(existsSync(join(dir, ".parley"))).toBe(false);
+  });
+
   test("a refusal is structured, and a refused query records nothing", async () => {
     const { dir, env } = scratch();
     const outcome = await queryReceipts({ asker: { cwd: dir } }, { cwd: dir, env });
@@ -876,6 +887,15 @@ describe("RD-15 an accepted query is recorded and reads back", () => {
     expect(recorded).toContainEqual({ records: 5, bytes: 4096 });
   });
 
+  test("a read that states no cwd records the directory it read", async () => {
+    const { dir, env } = scratch();
+    const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: WIDE }, { cwd: dir, env }));
+    expect(answer.asker).toEqual({ tool: "t", cwd: dir });
+    const recorded = loadReceipts({ cwd: dir, env }).bundles.flatMap((b) => b.records).find((r) => r.event === "query")!;
+    expect((recorded.record as { asker: unknown }).asker).toEqual({ tool: "t", cwd: dir });
+    expect(recorded.validation.state).toBe("validated");
+  });
+
   test("the query line the read put on its stream validates on its own", async () => {
     const { dir, env } = scratch();
     const stdout = new Capture();
@@ -885,6 +905,16 @@ describe("RD-15 an accepted query is recorded and reads back", () => {
     expect(validator().validate(line).state).toBe("validated");
     expect(stdout.objs.some((o) => o.event === "query")).toBe(true);
     expect(stdout.objs[0]!.event).toBe("run");
+  });
+
+  test("a read records its own identity at this package's name and version", async () => {
+    const { dir, env } = scratch();
+    const manifest = JSON.parse(readFileSync(resolve(import.meta.dir, "../package.json"), "utf8")) as { name: string; version: string };
+    const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: WIDE }, { cwd: dir, env }));
+    const own = loadReceipts({ cwd: dir, env }).bundles.find((b) => b.run === answer.run)!;
+    const head = own.records.find((r) => r.event === "receipt.head")!.record as { tool: string; v: string };
+    expect(head.tool).toBe(manifest.name.replace(/^@[^/]+\//, ""));
+    expect(head.v).toBe(manifest.version);
   });
 
   test("a read never expires the history it reads", async () => {

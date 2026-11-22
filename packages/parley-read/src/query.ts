@@ -83,6 +83,7 @@ export interface QueryRequest {
 
 export type QueryRefusalCode =
   | "query.asker_unnamed"
+  | "query.asker_invalid"
   | "query.view_missing"
   | "query.view_unknown"
   | "query.window_missing"
@@ -279,6 +280,24 @@ export function planQuery(request: QueryRequest): QueryPlan {
     }
   }
 
+  const cwd = request.asker?.cwd;
+  if (cwd !== undefined && !(cwd.startsWith("/") && cwd.length >= 2)) {
+    refusals.push(refusal(
+      "query.asker_invalid", "asker",
+      `asker.cwd ${JSON.stringify(cwd)} is not an absolute POSIX path`,
+      "give asker.cwd as an absolute path, or omit it and let the read record the directory it read; v0.2 of the spec is POSIX-only",
+      "§4.5",
+    ));
+  }
+  if (request.asker?.task !== undefined && request.asker.task.length === 0) {
+    refusals.push(refusal(
+      "query.asker_invalid", "asker",
+      "asker.task is an empty string, which parley.query does not carry",
+      "omit the task, or give it the caller's task id",
+      "§4.5",
+    ));
+  }
+
   if (request.note !== undefined && request.note.length === 0) {
     refusals.push(refusal(
       "query.note_empty", "note",
@@ -346,11 +365,15 @@ function byTime(a: LoadedRecord, b: LoadedRecord): number {
  * flyingrobots/parley#49 and flyingrobots/parley#50.
  */
 export async function queryReceipts(request: QueryRequest, opts: QueryOptions = {}): Promise<QueryOutcome> {
-  const plan = planQuery(request);
+  const cwd = resolve(opts.cwd ?? process.cwd());
+  // §9's inference, as flyingrobots/parley#46 settled it: `asker.cwd` comes from the process when
+  // the caller does not state it. `asker.task` is "from the environment" in that decision without
+  // a variable named, so it is taken from the request and omitted when absent rather than read out
+  // of a variable this library would be inventing (§2.1).
+  const plan = planQuery({ ...request, asker: { ...request.asker, cwd: request.asker?.cwd ?? cwd } });
   if (plan.refused) return plan;
   const query = plan.query;
 
-  const cwd = resolve(opts.cwd ?? process.cwd());
   const env = opts.env ?? process.env;
   const stdout = new Tee(opts.stdout);
   const stderr = new Tee(opts.stderr);

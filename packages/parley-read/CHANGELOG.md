@@ -18,6 +18,12 @@ its manifest so it cannot be published by accident.
   when it defaulted. Every refusal that applies is returned, each carrying §6's `code`, `problem`
   and `remedy` with the field it is about, so a caller that is itself a parley tool can hand one
   to `run.error`.
+- The inference the decision asks for, and no more: `asker.cwd` is the directory the read was made
+  against when the caller states none, recorded so it is visible. `asker.task` is "from the
+  environment" in flyingrobots/parley#46 without a variable named, so it comes from the request and
+  is omitted when absent rather than read out of a variable this library would be inventing (§2.1).
+  A value `parley.query` could not carry — a relative `asker.cwd`, an empty `task`, an empty
+  `note` — is refused rather than emitted as a line that fails its own schema.
 - A refused read is **not a run**: no receipt, no `.parley` directory, nothing written anywhere.
   §9 records a question that was asked, and a question nobody could state has no asker to
   attribute it to. `planQuery` is the same rules as a pure function, for a caller that wants the

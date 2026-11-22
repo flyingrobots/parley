@@ -123,6 +123,11 @@ if (outcome.refused) for (const r of outcome.refusals) console.error(r.code, r.p
 else console.log(outcome.query, outcome.window, outcome.records.length);
 ```
 
+`asker.cwd` is inferred from the directory the read was made against when the caller states none,
+and `asker.task` comes from the request; everything else is refused rather than guessed. A `cwd`
+that is not absolute, an empty `task` and an empty `note` are refused too, rather than emitted as
+a line that fails its own schema.
+
 An accepted read is a run: it emits `parley.query` through
 [`@flyingrobots/parley-emit`](../parley-emit/README.md) into a receipt beside the ones it read, so
 the loader finds the question on the next read and a result can name the query it answers by

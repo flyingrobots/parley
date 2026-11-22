@@ -184,7 +184,7 @@ entry point, the refusal and the record.
 
 | It states | Or else |
 | --- | --- |
-| `asker` — who the read is for, `tool` required | Refused `query.asker_unnamed`: §2.1 forbids inventing an identity, so a read whose caller cannot be named is not recorded under a guess |
+| `asker` — who the read is for, `tool` required | Refused `query.asker_unnamed`: §2.1 forbids inventing an identity, so a read whose caller cannot be named is not recorded under a guess. A `cwd` that is not an absolute POSIX path, or an empty `task`, is refused `query.asker_invalid` rather than emitted as a line that fails its own schema |
 | `view` — one of `what-ran`, `what-failed`, `what-changed`, `how-it-decided`, `everything` | Refused `query.view_missing`, or `query.view_unknown` for a token outside the five: there is no privileged view, and a guessed view is a different answer to a different question |
 | `window` — `from` and `to`, POSIX milliseconds, inclusive at both ends | Refused `query.window_missing`, `query.window_invalid` for a bound that is not a non-negative integer, or `query.window_inverted` when `to` is below `from` |
 | `budget` — `records` required, `bytes` and `ms` optional | Defaulted to `{"records": 20}`, visibly: the answer carries `budgetDefaulted`. A bound that is not a positive integer is refused `query.budget_invalid` |
@@ -194,6 +194,12 @@ A refusal carries `code`, `problem` and `remedy` — §6's fields, so a caller t
 parley tool can hand one to `run.error` — with the `field` it is about and the `section` it is
 measured against. Every refusal that applies is returned, not just the first, so one round trip
 tells a caller everything that is missing.
+
+Two fields are inferred rather than refused, as the decision has it: `asker.cwd` is the directory
+the read was made against when the caller does not state it, and the recorded query says so.
+`asker.task` is "from the environment" in that decision without a variable named, so it comes from
+the request and is omitted when absent — this library does not read a variable it would be
+inventing (§2.1).
 
 ### A refused read is not a run
 

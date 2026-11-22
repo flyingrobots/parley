@@ -5,6 +5,68 @@ The spec and each message schema are versioned separately from this package.
 
 ## [Unreleased]
 
+### Decided
+
+- **How a read states its observer and its purpose** (flyingrobots/parley#46). §9 asks a query for
+  an observer and a purpose. The observer-geometry treatment §9 cites uses "observer" for the
+  *view* — a map from a history to the shape of an answer — and holds that a view without a
+  resource budget is not a view, because with no bound every view collapses into "return every
+  record". A query therefore carries **three** fields under names that do not collide with the
+  source:
+
+  - `asker` — who the read is for, and the context the rest is inferred from. A record: `tool`
+    required, `cwd` (absolute POSIX) and `task` optional. `tool` comes from the calling program's
+    own identity and is never invented (§2.1), so a read that cannot name its caller is refused;
+    `cwd` comes from the process and `task` from the environment, each omitted when absent.
+  - `view` — the shape of the answer, one token from a closed set of five: `what-ran`,
+    `what-failed`, `what-changed`, `how-it-decided`, `everything`. Four are projections the
+    treatment's taxonomy recognises as distinct families; `everything` is the identity, and is in
+    the set so a caller who suspects the view hid what they needed can widen without learning a
+    second interface. Never inferred: there is no privileged view, and a guessed view is one the
+    caller cannot see in the lens, so a missing view is refused. Changing the vocabulary moves the
+    two schema versions below.
+  - `budget` — the size of answer the asker will accept. A record of bounds: `records` required,
+    `bytes` and `ms` optional. One documented default, `{"records": 20}`, applies when it is not
+    supplied, and the applied budget is carried verbatim by the result's lens, so a default is
+    never invisible. It is the only field with a default, because a defaulted budget can be shown
+    in the lens and a defaulted view cannot be anything but a different answer to a different
+    question.
+
+  Optional free text is `note`: recorded, never parsed, nothing branches on it.
+
+  **Cost.** Supplying all three explicitly costs one argument each and each argument is one token:
+  `--asker <tool>`, `--view <token>`, `--budget <kind>=<n>[,<kind>=<n>]` (`--budget 20` means
+  `records=20`), with `--note <text>` optional. Nothing is positional and no form of the interface
+  requires writing JSON on a command line. In practice a read costs one argument, `--view`, since
+  the asker comes from context and the budget has a default.
+
+  **Schema ids and versions.** Two new draft schemas, each with a validated example:
+  `parley.query` 1.0.0 (the read, recorded as an event: asker, view, budget, window, optional
+  note) and `parley.lens` 1.0.0 (what a result carries: the query it answers by `(run, seq)`, the
+  asker, the view, the budget actually applied, the window, a `loss` bound, and the records it was
+  built from by `(run, seq)`). The budget is in the lens because results computed under different
+  budgets are not comparable. `loss.bound` is `none` (the identity view on its window; `excluded`
+  must then be `0`) or `count-only`; `loss.excluded` ships as the cheapest proxy and the schema
+  says it is a weak one, because what a view loses is worst-case and one withheld record can
+  matter more than fifty. A bound measured from a real translator is a later version of
+  `parley.lens`, written when something exists to measure it.
+
+  Rejected: free text for either field, because free text cannot be refused, compared or stated as
+  a claim; an opaque observer id or registry, because it names a viewer and leaves the shape of the
+  answer undeclared; two fields as §9 has them, because a lens without a budget does not identify
+  the view that produced the result; keeping the word "observer" for the asker, because it is the
+  treatment's term for the view; an open view vocabulary or a predicate language, which is the
+  ceremony failure mode and a view no lens can state; defaulting the view from context; the
+  excluded count as the only loss statement, which a cardinality cannot be; one combined
+  query-and-result message, since the two are emitted at different times by different parties and
+  each message type is versioned on its own; and a shared `$ref`'d lens definition, because every
+  schema in this repository compiles standalone.
+
+  The spec's normative text is unchanged and §9 is still informative: the proposed §9 wording lives
+  on the research page. New living reference: `docs/topics/reader/README.md`. Research:
+  `docs/topics/related-work/observer-geometry.md` (flyingrobots/parley#45). `parley-emit`'s shipped
+  copy of the drafts is re-synced, so discovery serves sixteen schemas; that moves no version.
+
 ### Added
 
 - `packages/parley-read`: the reader library `@flyingrobots/parley-read`, a Bun workspace package,

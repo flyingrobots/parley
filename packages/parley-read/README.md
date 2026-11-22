@@ -106,7 +106,7 @@ each receipt were validated against the schema for their exact advertised pair.
 | `receiptLocations(opts)`, `repoReceiptDir`, `stateReceiptDir` | Where receipts are, present or absent; creates nothing |
 | `LineBuffer`, `splitLines`, `readFileLines` | Newline buffering: bytes in, complete lines out, the unterminated tail kept apart (§1.4, §5.4) |
 | `validator(schemas?)`, `schemaRef`, `envelopeGaps` | Exact-pair validation and the version-independent core (§4.5, §4.6) |
-| `SCHEMAS`, `SCHEMA_SOURCE` | The fourteen draft schemas this reader ships, with the commit and digest of each |
+| `SCHEMAS`, `SCHEMA_SOURCE` | The sixteen draft schemas this reader ships, with the commit and digest of each |
 | `QUARANTINE_CODES` | Which defect codes are a kept line rather than a judgement about a record |
 
 ## What a load says, rule by rule

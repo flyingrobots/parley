@@ -42,4 +42,4 @@ its manifest so it cannot be published by accident.
   `receipt.unreadable` defect in `load.defects`, not a throw that loses the rest of the directory;
   and with `sidecars: false` a sidecar is reported `unchecked` rather than `intact`, since nothing
   about its stored bytes was established (§1.2a), which also rules replay out.
-- The fourteen draft schemas at the pinned commit, with a test that they match the repository.
+- The sixteen draft schemas at the pinned commit, with a test that they match the repository.

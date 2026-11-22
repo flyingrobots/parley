@@ -6,8 +6,18 @@ import addFormats from "ajv-formats";
 import { readdirSync, readFileSync } from "node:fs";
 import { check } from "./check-examples.ts";
 
-const files = readdirSync("schemas").filter((f) => f.endsWith(".schema.json")).sort();
+import { schemaFiles, loadSchemas } from "./check-examples.ts";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+// Drafts at the top level and released snapshots under released/<id>/<version>.schema.json (spec §4.6).
+const paths = schemaFiles("schemas");
+const files = paths.map((p) => p.replace(/^schemas\//, ""));
 const load = (f: string) => JSON.parse(readFileSync(`schemas/${f}`, "utf8"));
+// The id a file's location promises: the basename for a draft, the parent directory for a snapshot.
+const idOf = (f: string) => f.startsWith("released/") ? f.split("/")[1] : f.replace(/\.schema\.json$/, "");
+const versionOf = (f: string) => f.startsWith("released/") ? f.split("/")[2].replace(/\.schema\.json$/, "") : null;
 
 function walk(node: unknown, path: string, visit: (n: Record<string, unknown>, p: string) => void) {
   if (node && typeof node === "object" && !Array.isArray(node)) {
@@ -21,12 +31,14 @@ describe("schemas/", () => {
 
   for (const f of files) {
     const s = load(f);
-    const id = f.replace(/\.schema\.json$/, "");
+    const id = idOf(f);
     const m = /\/schemas\/([^/]+)\/(\d+)\.(\d+)\.(\d+)$/.exec(String(s.$id));
 
-    test(`${f}: $id names its own file and a SemVer version`, () => {
+    test(`${f}: $id names its own location and a SemVer version`, () => {
       expect(m).not.toBeNull();
       expect(m![1]).toBe(id);
+      const v = versionOf(f);
+      if (v) expect(`${m![2]}.${m![3]}.${m![4]}`).toBe(v);
     });
 
     test(`${f}: compiles under strict ajv and meta-validates`, () => {
@@ -148,12 +160,30 @@ describe("schemas/", () => {
     });
   });
 
+  test("no draft and released snapshot claim the same (id, version) pair (§4.5)", () => {
+    expect(() => loadSchemas("schemas")).not.toThrow();
+  });
+
+  test("the loader resolves a released snapshot by its exact pair and rejects a collision", () => {
+    const dir = mkdtempSync(join(tmpdir(), "parley-schemas-"));
+    const draft = load("parley.error.schema.json");
+    writeFileSync(join(dir, "parley.error.schema.json"), JSON.stringify(draft));
+    mkdirSync(join(dir, "released", "parley.error"), { recursive: true });
+    const snap = structuredClone(draft);
+    snap.$id = "https://flyingrobots.dev/parley/schemas/parley.error/1.9.0";
+    snap.properties._schema.properties.version.const = "1.9.0";
+    writeFileSync(join(dir, "released", "parley.error", "1.9.0.schema.json"), JSON.stringify(snap));
+    expect([...loadSchemas(dir).byKey.keys()].sort()).toEqual(["parley.error@1.9.0", "parley.error@2.0.0"]);
+    writeFileSync(join(dir, "released", "parley.error", "2.0.0.schema.json"), JSON.stringify(draft));
+    expect(() => loadSchemas(dir)).toThrow(/both claim parley.error@2.0.0/);
+  });
+
   test("every schema is exercised by a validated example in the repository", () => {
     const ok = new Set(
       check(["README.md", "spec", "docs"], "schemas")
         .filter((v) => v.event === "example.ok")
         .map((v) => (v as { schema: string }).schema),
     );
-    for (const f of files) expect(ok.has(f.replace(/\.schema\.json$/, ""))).toBe(true);
+    for (const f of files) expect(ok.has(idOf(f))).toBe(true);
   });
 });

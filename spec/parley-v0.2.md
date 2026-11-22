@@ -149,8 +149,12 @@ authorises skipping an effect or reusing an answer; it is one input to that deci
 Eligibility is checked on **both** sides. A program **MUST NOT** short-circuit when a declared
 secret was supplied to the current invocation, or when the cached receipt carries `redacted`
 (§5.3). Either run may have depended on which secret was used, and `inv` cannot tell, because
-§2.2 keeps secrets out of it. If the program cannot yet know whether the current invocation will
-use a credential, it **MUST** resolve that before selecting a cached answer, or not cache.
+§2.2 keeps secrets out of it. Whether a declared secret was supplied is known from `argv` and the
+environment before the head is written (§5.3), so both sides are decidable at the moment of
+choice. The rule reaches declared secrets. A credential the program obtains some other way, from
+a keychain, a credential helper or a token refresh, is outside it unless declared; a program that
+uses such credentials **MUST** declare them (§4.3) or **MUST NOT** short-circuit at all. The same
+two-sided rule binds a reader that serves cached answers (§5.3).
 
 ---
 
@@ -247,18 +251,22 @@ objects included, except on `_schema` itself. Each message schema pins both `_sc
 **MUST NOT** run another version's schema over a line and call the result validation, not even
 the latest schema of the same major. When a reader has no schema for the exact pair it **MAY**
 check the version-independent core, which is the §1.3 envelope and the shape of `_schema`, and
-it **MUST** report that result as partial, never as validation of the advertised contract. A
-conformance checker **MUST NOT** turn "the part I recognise passed" into "the contract passed".
+it **MUST** report that result as partial, never as validation of the advertised contract; a
+reader that runs no such check reports the line as unvalidated. A conformance checker **MUST
+NOT** turn "the part I recognise passed" into "the contract passed".
 
 A schema version whose changelog entry is still under `Unreleased` is a draft and **MAY** change
 in place; a draft change is recorded in that entry rather than as a bump. A release is a version
-heading in `CHANGELOG.md`. A released schema version is immutable: the release snapshots it, and
-the snapshot is what the pair resolves to from then on (§4.6). A fixture or test that pins a
-draft **MUST** pin a source commit or the schema's digest, because a draft's version string does
-not identify exact bytes.
+heading in `CHANGELOG.md` that names the schema versions it publishes. A released schema version
+is immutable: the release snapshots it, and the snapshot is what the pair resolves to from then
+on (§4.6). A draft's version string does not identify exact bytes, so a fixture or test outside
+the repository that holds the draft **MUST** pin a source commit or the schema's digest, and a
+reader built from a draft holds whichever bytes it shipped and **SHOULD** state their commit or
+digest until a release exists.
 
-Nothing is released yet. The `1.0.0` schemas in git history predate every rule in this section
-and were never released; a reader built against any of them is outside the promise.
+Nothing is released yet: no changelog heading names a schema version. The `1.0.0` schemas in git
+history predate every rule in this section and were never released; a reader built against any
+of them is outside the promise.
 
 ### 4.6 Resolution
 
@@ -351,7 +359,7 @@ collide unless the program redacts. Privacy wins:
   the declaration is the floor, not the ceiling. An undeclared value redacted this way is still in
   the `inv` preimage (§2.2 excludes declared secrets only), so declaring it is the real protection.
 - A reader **MUST NOT** replay from, or serve a cached answer for, a receipt that carries
-  `redacted` (§2.3). Two invocations that differ only in a secret, for example two tokens
+  `redacted`, nor serve one to an invocation that supplied a declared secret (§2.3). Two invocations that differ only in a secret, for example two tokens
   selecting two accounts, have the same `inv` (§2.2 excludes the secret) and identical receipts,
   and their answers may differ.
 

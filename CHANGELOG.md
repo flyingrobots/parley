@@ -13,9 +13,12 @@ The spec and each message schema are versioned separately from this package.
   is pinned by `const`; a reader without the exact schema may check the version-independent core
   and must report partial, never validation; released versions are snapshotted immutably under
   `schemas/released/`; fixtures pin a commit or digest for drafts. (flyingrobots/parley#8)
-- §2.3: cache eligibility is checked on both sides; a secret supplied to the current invocation
-  or a cached receipt carrying `redacted` disqualifies replay; matching `inv` alone never
-  authorises skipping an effect or reusing an answer. (flyingrobots/parley#13)
+- §2.3: cache eligibility is checked on both sides for declared secrets; a secret supplied to the
+  current invocation or a cached receipt carrying `redacted` disqualifies replay; a program using
+  undeclared credentials declares them or never short-circuits; matching `inv` alone never
+  authorises skipping an effect or reusing an answer. This is amendment (1) on
+  flyingrobots/parley#13; amendment (2), discoverable late redaction, lands with the lifecycle
+  (flyingrobots/parley#15, #21).
 
 - Spec `0.1.0` → `0.2.0`. `run` joins the envelope every line carries (§1.3), so a line read out
   of a shared stream or an interleaved terminal can be attributed without state.
@@ -30,10 +33,10 @@ The spec and each message schema are versioned separately from this package.
 - §2.1: `session` is optional; a program MUST carry it when supplied and MUST NOT invent one.
 - §3: the bootstrap line is the first line a run emits, on whichever stream, not only the first
   line of stdout. It is not itself mirrored into the receipt, whose first line is the head.
-- `parley.error` `1.0.0` → `2.0.0`: `run` required, `seq` at least `1`, `_schema` major-pinned.
-- `parley.receipt.head` `1.0.0` → `2.0.0`: `seq` at least `1`, `_schema` major-pinned.
-- `parley.run.bootstrap` `1.0.0` → `1.1.0`: opened (top level and `paths`), `_schema`
-  major-pinned.
+- `parley.error` `1.0.0` → `2.0.0`: `run` required, `seq` at least `1`, `_schema` pinned (now by `const` to the exact version; see the §4.5 entry above).
+- `parley.receipt.head` `1.0.0` → `2.0.0`: `seq` at least `1`, `_schema` pinned (now by `const` to the exact version; see the §4.5 entry above).
+- `parley.run.bootstrap` `1.0.0` → `1.1.0`: opened (top level and `paths`), `_schema` pinned
+  (now by `const` to the exact version; see the §4.5 entry above).
 - §5 gains a complete receipt-head example and §6's error example is now complete, so the
   example checker validates all three schemas.
 - `parley.run.bootstrap` `1.1.0` → `1.1.1`: `paths.log` and `paths.error` are no longer
@@ -63,8 +66,8 @@ The spec and each message schema are versioned separately from this package.
 - Schema constraints, each stated in the spec text (flyingrobots/parley#9,
   flyingrobots/parley#26): `t` is never negative (§1.3); `tool`, `v`, `run`, `inv` and `session`
   are non-empty (§2.1); `code` is two or more dot-separated segments of lowercase letters, digits
-  and underscores and `problem` is non-empty (§6); `_schema.version` rejects leading-zero
-  components (§4.5). These narrow `parley.run.bootstrap` `1.1.1` in place under the draft rule;
+  and underscores and `problem` is non-empty (§6); `_schema.version` is exact (§4.5), which
+  rejects leading-zero components with everything else. These narrow `parley.run.bootstrap` `1.1.1` in place under the draft rule;
   the earlier `1.1.1` entry below described its first, description-only change. A shared envelope schema file was
   considered and not adopted: `scripts/schemas.test.ts` enforces the envelope uniformly across
   every schema, and a cross-file `$ref` would force every consumer to preload schemas.

@@ -23,7 +23,8 @@ fenced block whose info string starts with `json` or `jsonl`, and for each docum
 
 1. parses it;
 2. reads `_schema.id` and `_schema.version`;
-3. finds `schemas/<file>.schema.json` whose `$id` ends in `/schemas/<id>/<version>`;
+3. finds the schema file under `schemas/` (drafts at the top level, released snapshots under
+   `released/<id>/`) whose `$id` ends in `/schemas/<id>/<version>`;
 4. validates against it with a JSON Schema draft 2020-12 validator.
 
 A `json` block is one document, which may span lines. A `jsonl` block is one document per line.
@@ -46,8 +47,10 @@ A document whose `_schema.id` does not start with `parley.` is tool-owned (for e
 The checker resolves `_schema.version` by exact match against the version in each schema's `$id`.
 That is the same rule a reader follows under spec §4.5 and §4.6: full validation is against the
 schema for the exact advertised `(id, version)` pair, so an example stamped `2.1.0` while the
-only schema is `2.0.0` is reported as `unknown_schema`. Once releases exist, snapshots under
-`schemas/released/` resolve too.
+only schema is `2.0.0` is reported as `unknown_schema`. The loader walks `schemas/` recursively,
+so a released snapshot at `schemas/released/<id>/<version>.schema.json` resolves by the same exact
+pair once one exists; a draft and a snapshot that claim the same pair are a configuration error
+and fail the invariant test.
 
 The checker's own output lines carry a `parley.tooling.*` schema id but no `t`, `seq` or `run`.
 It is repository tooling, not a parley program, and does not claim to conform; `AGENTS.md` says

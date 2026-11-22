@@ -400,7 +400,7 @@ describe("PE-12 one JSON object per line, always", () => {
     }
     const out = r.stdout.objs.filter((o) => o.event === "result");
     expect(out.map((o) => o.note)).toEqual(records.map((o) => o.note));
-    expect(r.violations.filter((v) => !v.rule.startsWith("R3"))).toEqual([]);
+    expect(r.violations).toEqual([]);
   });
 
   test("library console output is captured", async () => {
@@ -814,7 +814,7 @@ process.exit(await main(tool, ["t", "count"], (run) => { console.log("touch cons
     expect(r.receipt.includes("def")).toBe(false);
   });
 
-  test("a secret inside the session, tool name or version is a startup failure", async () => {
+  test("a secret inside the session is a startup failure; one inside the public tool version is not", async () => {
     const { dir, env } = scratch();
     const s = streams();
     const status = await main(tool(), ["t", "count", "--token", "s3s"], async () => {}, { cwd: dir, env, ...s, session: "ses_s3s_1" });
@@ -822,8 +822,24 @@ process.exit(await main(tool, ["t", "count"], (run) => { console.log("touch cons
     expect(s.stderr.objs).toEqual([expect.objectContaining({ event: "startup.failed", code: "startup.secret_in_identity" })]);
     expect(s.stderr.text.includes("s3s")).toBe(false);
     const v = streams();
-    expect(await main(tool(), ["t", "count", "--token", "0.0.1"], async () => {}, { cwd: dir, env, ...v })).toBe(3);
-    expect(v.stderr.objs[0]!.code).toBe("startup.secret_in_identity");
+    expect(await main(tool(), ["t", "count", "--token", "0.0.1"], async () => {}, { cwd: dir, env, ...v })).toBe(0);
+    expect(v.stdout.objs[0]!.v).toBe("0.0.1");
+    expect(check(dir, v).receiptLines[0]!.event).toBe("receipt.head");
+  });
+
+  test("a secret equal to false or a small number leaves the writer's own scalars alone", async () => {
+    const { dir, env } = scratch();
+    const s = streams();
+    const status = await main(tool(), ["t", "count", "--token", "false", "--dry-run"], async (run) => { run.step("s", "b", { flag: false, n: 4729 }); }, { cwd: dir, env: { ...env, T_TOKEN: "4729" }, ...s });
+    expect(status).toBe(0);
+    expect(s.stdout.objs[0]!.dry_run).toBe(true);
+    const { receiptLines, violations } = check(dir, s);
+    expect(receiptLines[0]!.event).toBe("receipt.head");
+    expect((receiptLines[0] as { effects: { network: boolean } }).effects.network).toBe(false);
+    expect(s.stdout.objs.at(-1)).toMatchObject({ event: "end", status: 0, redacted: true });
+    const step = receiptLines.find((o) => o.event === "receipt.step") as { detail: Record<string, unknown> };
+    expect(step.detail).toEqual({ flag: "[redacted]", n: "[redacted]" });
+    expect(violations).toEqual([]);
   });
 
   test("when a sidecar cannot be written the record is kept inline and the bundle is complete", async () => {

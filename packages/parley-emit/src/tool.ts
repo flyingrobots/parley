@@ -119,11 +119,12 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
   };
 
   if (carriesSecret(id, secretValues)) return startupFailed("startup.secret_in_path", "no run id free of a declared secret value could be chosen", "do not pass a value this short as a declared secret");
-  // The identity fields of the bootstrap line are never scrubbed (they are not payload), so none may carry a secret.
+  // The bootstrap line's identity fields are never scrubbed. The tool's name and version are public
+  // and printed on every startup line regardless, so a secret inside them is not protectable and
+  // the run proceeds; a session is caller-supplied and can be withheld, so one carrying a secret
+  // is a startup failure (the startup line omits it).
   const sessionEarly = opts.session ?? env.PARLEY_SESSION;
-  for (const [what, val] of [["tool name", spec.name], ["tool version", spec.version], ["session", sessionEarly ?? ""]] as const) {
-    if (val && carriesSecret(val, secretValues)) return startupFailed("startup.secret_in_identity", `the ${what} contains a declared secret value and cannot be printed`, what === "session" ? "supply a session id that does not contain the secret" : "a declared secret cannot equal part of the tool's own name or version");
-  }
+  if (sessionEarly && carriesSecret(sessionEarly, secretValues)) return startupFailed("startup.secret_in_identity", "the session id contains a declared secret value and cannot be printed", "supply a session id that does not contain the secret");
   if (!commandName && discovery === null) return startupFailed("startup.unknown_command", `no command named; commands are ${names.join(", ")}`, `name one of: ${names.join(", ")}`);
 
   // Console capture starts here, before any tool code runs; captured text is buffered until the receipt exists (§1.2).

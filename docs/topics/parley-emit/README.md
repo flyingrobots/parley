@@ -23,8 +23,10 @@ it. This page is the reference for what the package does on `main`; the package
 
 1. Classify the declared secrets of every command into flags, variables and logical sources;
    collect the values flags and variables carry from `argv` and the environment; call the selected
-   command's source resolvers (spec §5.3). Choose a run id that carries none of those values; a tool
-   name, version or session that carries one is `startup.secret_in_identity`, exit 3.
+   command's source resolvers (spec §5.3); a resolver that throws means not present. Choose a run
+   id that carries none of those values; a session that carries one is
+   `startup.secret_in_identity`, exit 3; the tool's name and version are public and printed as
+   they are.
 2. Reserve the receipt: `.parley/.gitignore` with a line `*`, created whole and linked into
    place if absent; then `.parley/receipts/<run>.jsonl` opened exclusively. On a user's ignore
    file without `*`, a working-directory path carrying a secret value, an unwritable directory or

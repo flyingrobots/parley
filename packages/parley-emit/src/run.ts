@@ -11,8 +11,12 @@ export interface Sink { write(line: string): void }
 export const SIDECAR_THRESHOLD = 65_536;
 export const CODE = /^[a-z0-9_]+(\.[a-z0-9_]+)+$/;
 const ENVELOPE_KEYS = ["t", "seq", "run", "_schema"] as const;
-/** Writer digests; a secret cannot occur in one except by hex coincidence, and replacing it would corrupt the digest. */
-const DIGEST_KEYS = new Set(["sha256", "inv"]);
+/**
+ * Writer-owned string fields never scrubbed: digests (a secret cannot occur in one except by hex
+ * coincidence, and replacing it would corrupt the digest) and the tool's public name and version,
+ * which every startup line prints regardless.
+ */
+const DIGEST_KEYS = new Set(["sha256", "inv", "tool", "v"]);
 
 export const SCHEMA_IDS = {
   bootstrap: { id: "parley.run.bootstrap", version: "1.1.1" },
@@ -154,7 +158,7 @@ export class Run {
   /** Scrub a payload's values; `event` is envelope, named by the writer or the tool's schema, and is never a secret. */
   private scrubPayload(payload: Record_, found: string[], writer: boolean): Record_ {
     const { event, ...rest } = payload;
-    const scrubbed = scrub(rest, this.init.secretValues, "", found, writer ? { skipKeys: DIGEST_KEYS } : {}) as Record_;
+    const scrubbed = scrub(rest, this.init.secretValues, "", found, writer ? { skipKeys: DIGEST_KEYS, scalars: false } : {}) as Record_;
     return event === undefined ? scrubbed : { event, ...scrubbed };
   }
 
@@ -264,7 +268,7 @@ export class Run {
     this.inputsSettled = true;
     const raw = this.init.inputs.map((i) => digestInput(this.cwd, i, this.supplied.get(i.path)));
     // The preimage and the record both take the redacted descriptors (§2.2: no secret value in inv).
-    const inputs = scrub(raw, this.init.secretValues, "", [], { skipKeys: DIGEST_KEYS }) as InputDescriptor[];
+    const inputs = scrub(raw, this.init.secretValues, "", [], { skipKeys: DIGEST_KEYS, scalars: false }) as InputDescriptor[];
     const inv = computeInv({ tool: this.tool, v: this.v, command: this.init.command, resolved: this.init.resolved, inputs });
     this.emit({ to: { receipt: true }, writer: true }, { event: "receipt.inputs", inputs, ...(inv ? { inv } : {}) }, SCHEMA_IDS.inputs);
     return inputs;

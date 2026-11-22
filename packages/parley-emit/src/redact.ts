@@ -72,6 +72,8 @@ function escapePointer(key: string): string { return key.replace(/~/g, "~0").rep
 export interface ScrubOptions {
   /** Keys whose string values are never scrubbed: writer digests, which a secret cannot occur in except by coincidence of hex. */
   readonly skipKeys?: ReadonlySet<string>;
+  /** Scrub numbers, booleans and bigints whose decimal form is a secret (default true). A writer-built record passes false: its scalars (`status`, `dry_run`, `network`, `in`) are the writer's own and never a secret. */
+  readonly scalars?: boolean;
 }
 
 /**
@@ -88,7 +90,7 @@ export function scrub(value: unknown, values: ReadonlySet<string>, pointer = "",
     return r;
   }
   if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
-    if (values.has(String(value))) { found.push(pointer || "/"); return REDACTED; }
+    if (opts.scalars !== false && values.has(String(value))) { found.push(pointer || "/"); return REDACTED; }
     return value;
   }
   if (Array.isArray(value)) return value.map((v, i) => scrub(v, values, `${pointer}/${i}`, found, opts));

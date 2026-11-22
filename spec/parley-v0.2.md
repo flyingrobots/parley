@@ -180,14 +180,18 @@ accept `--dry-run`, reporting what it would do without doing it.
 
 ### 4.5 Compatibility
 
-Schema versions are SemVer, and the number is a promise to readers:
+Schema versions are SemVer in the core `MAJOR.MINOR.PATCH` form only, with no prerelease or
+build metadata, and the number is a promise to readers:
 
-- A **minor** bump is additive. A line valid under `1.1.0` is valid under `1.0.0` with its new
-  fields ignored. A reader **MUST** ignore fields it does not know, so a reader built against
-  `1.0.0` keeps working when a writer moves to `1.1.0`.
-- A **major** bump may remove, rename or retype a field, or add a required one. A reader
-  **MUST** reject a line whose major version is newer than the one it was built against, since it
-  cannot know what changed.
+- A **minor** bump is additive in both directions. A line valid under `1.1.0` is valid under
+  `1.0.0` with its new fields ignored, and every line valid under `1.0.0` is still valid under
+  `1.1.0`. Narrowing any constraint, such as raising a `minimum`, adding a `const` or a
+  `pattern`, or making an optional field required, is therefore a major bump. A reader
+  **MUST** ignore fields it does not know, so a reader built against `1.0.0` keeps working when
+  a writer moves to `1.1.0`.
+- A **major** bump may remove, rename or retype a field, add a required one, or narrow a
+  constraint. A reader **MUST** reject a line of a different major from the one it was built
+  against, newer or older, since it cannot know what changed.
 - A **patch** bump changes descriptions only.
 
 Because readers ignore unknown fields, parley schemas are **open**: they do not set
@@ -199,8 +203,10 @@ rejects a line of a different major. Validating a line against the schema its ow
 names is what stops a line from claiming a contract it does not meet.
 
 This promise binds from the first version of each schema published under this rule:
-`parley.run.bootstrap` `1.1.0`, `parley.error` `2.0.0`, `parley.receipt.head` `2.0.0`. The
-`1.0.0` schemas were closed and predate it; a reader built against them is outside the promise.
+`parley.run.bootstrap` `1.1.0`, `parley.error` `2.0.0`, `parley.receipt.head` `2.0.0`. All three
+`1.0.0` schemas predate it, and the `1.0.0` bootstrap schema was closed; a reader built against
+any of them is outside the promise, and the `1.0.0` to `1.1.0` bootstrap transition is governed
+by this paragraph rather than by the minor rule above.
 
 ### 4.6 Resolution
 
@@ -209,7 +215,7 @@ to the schema it ships with for that id, and applies the rule in §4.5 to the ve
 inside each published schema is `https://flyingrobots.dev/parley/schemas/<id>/<version>` and
 is likewise an identifier; it is not required to be served. Each schema lives at
 `schemas/<id>.schema.json` in this repository at its current version. Earlier versions are in git
-history; the `CHANGELOG.md` entry that records a bump names the release that published it.
+history; the `CHANGELOG.md` entry that records a bump is the pointer to them.
 
 ---
 

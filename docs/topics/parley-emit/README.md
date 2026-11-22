@@ -21,24 +21,34 @@ it. This page is the reference for what the package does on `main`; the package
 
 ## Lifecycle, as the writer performs it
 
-1. Classify the command's declared secrets into flags, variables and logical sources; collect
-   the values flags and variables carry; call each source resolver (spec §5.3).
-2. Reserve the receipt: `.parley/.gitignore` with a line `*`, create-if-absent; then
-   `.parley/receipts/<run>.jsonl` opened exclusively. On a user's ignore file without `*`, an
-   unwritable directory or a failed reservation, the state directory keyed by a digest of the
-   repository root. With neither, one `startup.failed` line on stderr and exit 3 (§3.2, §5, §5.2).
+1. Classify the declared secrets of every command into flags, variables and logical sources;
+   collect the values flags and variables carry from `argv` and the environment; call the selected
+   command's source resolvers (spec §5.3). Choose a run id that carries none of those values.
+2. Reserve the receipt: `.parley/.gitignore` with a line `*`, created whole and linked into
+   place if absent; then `.parley/receipts/<run>.jsonl` opened exclusively. On a user's ignore
+   file without `*`, a working-directory path carrying a secret value, an unwritable directory or
+   a failed reservation, the state directory keyed by a digest of the repository root. With
+   neither, one `startup.failed` line on stderr (`startup.receipt_unwritable`, or
+   `startup.secret_in_path` when the state path would carry the secret too) and exit 3 (§3.2, §5,
+   §5.2, §5.3). A throw from the tool's `resolved` or `inputs` callback here is
+   `startup.arguments_invalid`, exit 3, and the reservation is removed.
 3. Emit the bootstrap line to stdout at `seq: 0`, carrying `inv` only when no inputs are
    declared, then the head to the receipt at `seq: 1` with the redacted `argv`, the redacted
    `resolved`, a descriptor per declared input, `effects` with bookkeeping, and `redacted` when any
    declared secret was supplied (§3.1, §5).
-4. Warn if the receipt was relocated; enforce retention by count unless `--dry-run`; record the
-   deletion as a step (§5.1, §4.3).
+4. Report a bootstrap write failure now that the head is in place; warn if the receipt was
+   relocated; enforce retention by count unless `--dry-run`, deleting only bundles whose receipt
+   ends with `end` or that are incomplete and older than a day; record the decision as a step
+   (§5, §5.1, §4.3).
 5. Discovery: emit `command` lines and `schema` lines, then `end` (§4.1, §4.2). Otherwise run the
-   handler with `console.*` captured into the receipt.
+   handler with every `console` function captured into the receipt; direct descriptor writes and
+   timers after `end` are the named exceptions.
 6. An uncaught throw becomes `error` with code `uncaught.exception` (§6). `end` digests the
-   declared inputs and emits `receipt.inputs` with `inv` if not already done, then writes `end` to
-   stdout and the receipt as one event and closes the file. Status: the one given, else 2 if an
-   error was reported, else 0; 4 if any sink failed (§3.3, §3.4, §5.4).
+   declared inputs, with redacted descriptors in the preimage, and emits `receipt.inputs` with
+   `inv` if not already done, then writes `end` to stdout and the receipt as one event and closes
+   the file. Status: the one given (`0` refused after a reported error), else 2 if an error was
+   reported, else 0; 4 if any sink or sidecar failed (§3.3, §3.4, §5.4). Every record's payload is
+   scrubbed of declared secrets before any copy is written; the envelope never is.
 
 ## What it does not do
 

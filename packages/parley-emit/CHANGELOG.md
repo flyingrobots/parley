@@ -5,7 +5,7 @@ on its own; the spec and each message schema move separately (spec §4.4).
 
 ## [Unreleased]
 
-## [0.1.0] — 2026-11-22
+The first version, `0.1.0`, is not yet on npm; this entry becomes its heading when it is published.
 
 ### Added
 
@@ -18,3 +18,15 @@ on its own; the spec and each message schema move separately (spec §4.4).
   `--dry-run`; `--schema` and `--help` as runs; `--human`; console capture; the top-level handler.
 - `inv` as documented in the README; `ulid` run ids.
 - The fourteen draft schemas at the pinned commit, with a test that they match the repository.
+
+### Changed
+
+- After the review of the first candidate: declared secrets of every command count on every path,
+  the `end` record is scrubbed, the envelope and digests never are, and a run id or receipt path
+  that would carry a secret is never chosen; the `inv` preimage takes redacted input descriptors;
+  a throw before the bootstrap line is `startup.arguments_invalid`; the head is never a sidecar
+  and a bootstrap sink failure is reported after it; a sidecar failure keeps the receipt usable;
+  envelope keys from the tool are refused; `end(0)` after an error is refused; retention deletes
+  only completed bundles; every `console` function is captured; tree inputs skip `.parley` and
+  honour `exclude`; absolute input paths resolve; the ignore file is linked into place whole; the
+  state directory's retention is declared.

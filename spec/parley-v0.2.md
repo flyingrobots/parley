@@ -191,7 +191,7 @@ and whatever else is known. Digests that arrive later, and `inv` once it can be 
 carried by one receipt metadata-finalisation record, `receipt.inputs`, emitted when the inputs
 are settled and before `end`:
 
-```json illustrative
+```json
 {"event":"receipt.inputs","t":1795326412360,"seq":5,"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8",
  "inputs":[{"path":"src/tokens.css","sha256":"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"},
            {"path":"-","role":"stdin","sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
@@ -200,10 +200,8 @@ are settled and before `end`:
  "_schema":{"id":"parley.receipt.inputs","version":"1.0.0"}}
 ```
 
-Illustrative: `parley.receipt.inputs` is defined with the other receipt records in
-[flyingrobots/parley#10](https://github.com/flyingrobots/parley/issues/10). An input the program
-could not read is recorded with an `error` code and no digest; a run that then fails still
-closes a complete failed receipt (§3.3) without that digest and without `inv`.
+An input the program could not read is recorded with an `error` code and no digest; a run that
+then fails still closes a complete failed receipt (§3.3) without that digest and without `inv`.
 
 > **The trap.** Hashing input *paths* rather than input *bytes* makes `inv` stable across an edit
 > to the file. "Idempotent" then silently means "stale", and any cache built on it serves wrong
@@ -226,6 +224,14 @@ shares its `inv` with every run that differed only in a secret, so none of them 
 
 A program **MAY** short-circuit on a known `inv`. If it does, it **MUST** emit the hit as an
 event rather than silently serving a cached answer, and **MUST** offer a way to force recompute.
+The event names the receipt it answered from and that receipt's run:
+
+```json
+{"event":"cache.hit","t":1795326412350,"seq":2,"run":"01JD3KS9T4U8V1W5X2Y7Z3A6B9",
+ "inv":"inv_7f3a9c1e","served_run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8",
+ "receipt":"/work/site/.parley/receipts/01JD3KQ8Z6V9X2M4N7P1R3T5W8.jsonl",
+ "_schema":{"id":"parley.cache.hit","version":"1.0.0"}}
+```
 Short-circuiting **SHOULD NOT** be the default, because inputs can be identical while the world is
 not — a declared input set never captures everything. A matching `inv` on its own never
 authorises skipping an effect or reusing an answer; it is one input to that decision.
@@ -353,30 +359,53 @@ not a terminal error, and does not change the status.
 
 ## 4. Self-description
 
-### 4.1 `--schema`
+### 4.1 Discovery is a run
 
-`app --schema` **MUST** print every message schema the program can emit, then exit `0`. This is
-the machine counterpart of `--help` and makes a program self-describing without a registry.
+`--schema` and `--help` are how a caller learns the contract before it runs anything, so their
+output is held to the contract too. A discovery invocation **is a run**: it bootstraps (§3.1),
+writes its receipt (§5), carries the §1.3 envelope on every line, and closes with `end` (§3.3).
+Its effects are bookkeeping only. Two message types carry discovery:
 
-It **SHOULD** also list the commands with a one-line intent each. Output discovery is not the
-same as **capability** discovery, and a caller that cannot find out what questions a tool answers
-will go read its source and guess.
+- A **`command`** line describes one command: its name, a one-line intent, the effects it
+  declares (§4.3), the secrets it declares (§5.3), and the message types it can emit.
+- A **`schema`** line carries one message schema, with the `id` and `version` the schema pins and
+  the JSON Schema document itself.
 
-### 4.2 `--help`
+### 4.2 `--schema` and `--help`
 
-`app <command> --help` **MUST** emit JSON Lines: a line describing the command, then the schema
-for its success output and the schema for **every error type it can produce**.
+`app --schema` **MUST** emit one `command` line per command and one `schema` line per message
+schema the program can emit, then exit `0`. This is the machine counterpart of `--help` and makes
+a program self-describing without a registry. Output discovery is not the same as **capability**
+discovery, and a caller that cannot find out what questions a tool answers will go read its
+source and guess; the `command` lines are the answer.
+
+`app <command> --help` **MUST** emit the `command` line for that command, then a `schema` line for
+its success output and one for **every error type it can produce**.
+
+```json
+{"event":"schema","t":1795326412402,"seq":2,"run":"01JD3KR2A7B4C9D1E6F3G8H5J2",
+ "id":"theme-book.count","version":"1.0.0",
+ "schema":{"$schema":"https://json-schema.org/draft/2020-12/schema",
+           "$id":"https://flyingrobots.dev/theme-book/schemas/theme-book.count/1.0.0",
+           "type":"object","required":["event","t","seq","run","value","_schema"],
+           "properties":{"event":{"const":"result"},"value":{"type":"integer","minimum":0}}},
+ "_schema":{"id":"parley.schema","version":"1.0.0"}}
+```
 
 ### 4.3 Declared effects
 
-A command's description **MUST** declare its effects:
+A command's description, its `command` line (§4.1), **MUST** declare its effects:
 
-```json illustrative
-{"effects":{"reads":["<cwd>/**/*.css"],"writes":[],"network":false,"idempotent":true,
+```json
+{"event":"command","t":1795326412401,"seq":1,"run":"01JD3KR2A7B4C9D1E6F3G8H5J2",
+ "name":"count","intent":"Count the colour tokens declared under the working directory",
+ "effects":{"reads":["<cwd>/**/*.css"],"writes":[],"network":false,"idempotent":true,
             "bookkeeping":[{"op":"create","scope":".parley/receipts/"},
                            {"op":"create","scope":".parley/.gitignore"},
                            {"op":"delete","scope":".parley/receipts/"}]},
- "secrets":["--token","THEME_BOOK_TOKEN"]}
+ "secrets":["--token","THEME_BOOK_TOKEN"],
+ "emits":[{"id":"theme-book.count","version":"1.0.0"},{"id":"parley.error","version":"2.0.0"}],
+ "_schema":{"id":"parley.command","version":"1.0.0"}}
 ```
 
 `writes` lists **subject-matter** writes: what the command exists to change. `writes: []` means
@@ -512,7 +541,16 @@ Recomputation works on a redacted receipt too, because a declared secret is neve
 preimage.
 
 Subsequent lines carry the program's reasoning as it works — one line per decision, emitted as it
-happens rather than buffered, so a person watching sees the thing working.
+happens rather than buffered, so a person watching sees the thing working. A reasoning line says
+what was chosen **and why**; that is what makes a receipt worth keeping:
+
+```json
+{"event":"receipt.step","t":1795326412352,"seq":2,"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8",
+ "decision":"read src/tokens.css as UTF-8",
+ "because":"no BOM and no @charset; the declared default for this project is UTF-8",
+ "detail":{"bytes":18422},
+ "_schema":{"id":"parley.receipt.step","version":"1.0.0"}}
+```
 
 The receipt also carries every result, error and warning the run emitted, as copies of the
 stdout and stderr lines (§1.3: same `seq`, `t` and `event`), and closes with the `end` event
@@ -690,13 +728,14 @@ rather than diffing two payloads.
 
 Unbounded output **MUST** paginate explicitly with a cursor:
 
-```json illustrative
-{"event":"page","t":1795326412390,"seq":7,"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8","cursor":"…","has_more":true,
+```json
+{"event":"page","t":1795326412390,"seq":7,"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8",
+ "cursor":"eyJhZnRlciI6NTB9","has_more":true,
  "_schema":{"id":"parley.page","version":"1.0.0"}}
 ```
 
-Illustrative: `parley.page` is not yet published under `schemas/`
-([flyingrobots/parley#10](https://github.com/flyingrobots/parley/issues/10)).
+`cursor` is opaque to the caller and required whenever `has_more` is true; the last page carries
+`has_more: false` and no cursor.
 
 A caller that fears a large payload will truncate it with a pipe, and silent truncation of JSON is
 unparseable at best and quietly wrong at worst.

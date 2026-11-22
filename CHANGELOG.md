@@ -7,6 +7,16 @@ The spec and each message schema are versioned separately from this package.
 
 ### Changed
 
+- §4.1, §4.2: discovery is a run. `--schema` and `--help` bootstrap, write a receipt, carry the
+  envelope and close with `end`; they emit `command` lines (name, intent, effects, secrets, the
+  message types the command can emit) and `schema` lines (one message schema each). §4.3's
+  effects example is now a complete `command` line. (flyingrobots/parley#10)
+- Six draft schemas complete the set: `parley.command`, `parley.schema`, `parley.page` (cursor
+  required when `has_more`), `parley.cache.hit`, `parley.receipt.step` (a decision and its
+  reason), `parley.receipt.inputs`. Every message type the spec mandates now has a schema and a
+  validated example; the §2.2, §2.3, §5 and §7.2 examples are complete rather than illustrative.
+  (flyingrobots/parley#10)
+
 - §1.2 and §6.1: stderr carries errors and warnings, both structured; a warning is a recovered
   condition with the error's shape and the event `warning`, retained in the receipt and never
   changing the exit status; progress goes to the receipt only. New draft schema `parley.warning`

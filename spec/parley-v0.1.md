@@ -142,7 +142,7 @@ for its success output and the schema for **every error type it can produce**.
 
 A command's description **MUST** declare its effects:
 
-```json
+```json illustrative
 {"effects":{"reads":["<cwd>/**/*.css"],"writes":[],"network":false,"idempotent":true}}
 ```
 
@@ -198,7 +198,7 @@ Receipts are durable and may contain file contents, resolved paths and prompts. 
 
 Errors go to stderr, as JSON Lines, and **MUST** carry structure rather than prose:
 
-```json
+```json abridged
 {"event":"error","t":…,"seq":…,"code":"contrast.unsatisfiable",
  "problem":"No opaque sRGB foreground reaches the required contrast on this background",
  "measured":5.3783,"limit":7,"remedy":"adjust the background",
@@ -229,7 +229,7 @@ rather than diffing two payloads.
 
 Unbounded output **MUST** paginate explicitly with a cursor:
 
-```json
+```json illustrative
 {"event":"page","cursor":"…","has_more":true}
 ```
 

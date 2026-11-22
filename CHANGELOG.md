@@ -64,7 +64,8 @@ The spec and each message schema are versioned separately from this package.
 
   The spec's normative text is unchanged and §9 is still informative: the proposed §9 wording lives
   on the research page. New living reference: `docs/topics/reader/README.md`. Research:
-  `docs/topics/related-work/observer-geometry.md` (flyingrobots/parley#45).
+  `docs/topics/related-work/observer-geometry.md` (flyingrobots/parley#45). `parley-emit`'s shipped
+  copy of the drafts is re-synced, so discovery serves sixteen schemas; that moves no version.
 
 ### Added
 

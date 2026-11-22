@@ -65,6 +65,11 @@ on its own; the spec and each message schema move separately (spec §4.4).
   Found by review of flyingrobots/parley#3, where a secret that is a substring of `history`
   reached it. (flyingrobots/parley#3)
 
+- `src/schemas.ts` re-synced from the repository drafts: the package now ships sixteen, adding
+  `parley.query` 1.0.0 and `parley.lens` 1.0.0 for the reader's query record and result lens
+  (flyingrobots/parley#46). `--schema` serves the drafts at the newly pinned commit; this moves no
+  schema version and no package version of its own (spec §4.5).
+
 ## [0.1.0] — 2026-11-22
 
 The schemas this version ships are the repository drafts at the commit recorded in

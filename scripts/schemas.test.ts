@@ -192,6 +192,76 @@ describe("schemas/", () => {
       expect(inputs({ ...okInputs, inputs: [{ path: "x", sha256: "a".repeat(64), error: "input.unreadable" }] })).toBe(false);
       expect(inputs({ ...okInputs, inputs: [{ path: "x", sha256: "zz" }] })).toBe(false);
     });
+    test("the query record carries asker, view and budget, and the view is a closed set (§9)", () => {
+      const query = validate("parley.query.schema.json");
+      const okQuery = {
+        event: "query", t: 1, seq: 1, run: "r",
+        asker: { tool: "claude-code", cwd: "/w", task: "owner/repo#1" },
+        view: "what-failed",
+        budget: { records: 20 },
+        window: { from: 0, to: 2 },
+        _schema: { id: "parley.query", version: "1.0.0" },
+      };
+      expect(query(okQuery)).toBe(true);
+      for (const k of ["asker", "view", "budget", "window"]) {
+        const { [k]: _dropped, ...without } = okQuery as Record<string, unknown>;
+        expect(query(without)).toBe(false);
+      }
+      expect(query({ ...okQuery, view: "what-i-feel-like" })).toBe(false);
+      expect(query({ ...okQuery, view: "" })).toBe(false);
+      expect(query({ ...okQuery, asker: { tool: "" } })).toBe(false);
+      expect(query({ ...okQuery, asker: {} })).toBe(false);
+      expect(query({ ...okQuery, asker: "claude-code" })).toBe(false);
+      expect(query({ ...okQuery, asker: { tool: "x", cwd: "rel/dir" } })).toBe(false);
+      expect(query({ ...okQuery, budget: {} })).toBe(false);
+      expect(query({ ...okQuery, budget: { records: 0 } })).toBe(false);
+      expect(query({ ...okQuery, budget: { records: 1.5 } })).toBe(false);
+      expect(query({ ...okQuery, budget: 20 })).toBe(false);
+      expect(query({ ...okQuery, budget: { records: 20, bytes: 0 } })).toBe(false);
+      expect(query({ ...okQuery, budget: { records: 20, bytes: 4096, ms: 250 } })).toBe(true);
+      expect(query({ ...okQuery, window: { from: 0 } })).toBe(false);
+      expect(query({ ...okQuery, window: { from: -1, to: 2 } })).toBe(false);
+      expect(query({ ...okQuery, note: "" })).toBe(false);
+      expect(query({ ...okQuery, session: "" })).toBe(false);
+    });
+    test("a lens names its query, its budget, its loss bound and its records (§9)", () => {
+      const lens = validate("parley.lens.schema.json");
+      const okLens = {
+        event: "lens", t: 1, seq: 2, run: "r",
+        query: { run: "r", seq: 1 },
+        asker: { tool: "claude-code" },
+        view: "what-failed",
+        budget: { records: 20 },
+        window: { from: 0, to: 2 },
+        loss: { bound: "count-only", excluded: 184 },
+        records: [{ run: "q", seq: 4 }],
+        _schema: { id: "parley.lens", version: "1.0.0" },
+      };
+      expect(lens(okLens)).toBe(true);
+      for (const k of ["query", "asker", "view", "budget", "window", "loss", "records"]) {
+        const { [k]: _dropped, ...without } = okLens as Record<string, unknown>;
+        expect(lens(without)).toBe(false);
+      }
+      expect(lens({ ...okLens, view: "what-i-feel-like" })).toBe(false);
+      expect(lens({ ...okLens, budget: {} })).toBe(false);
+      expect(lens({ ...okLens, query: { run: "r" } })).toBe(false);
+      expect(lens({ ...okLens, query: { run: "r", seq: 0 } })).toBe(false);
+      expect(lens({ ...okLens, loss: { bound: "count-only" } })).toBe(false);
+      expect(lens({ ...okLens, loss: { excluded: 1 } })).toBe(false);
+      expect(lens({ ...okLens, loss: { bound: "measured", excluded: 1 } })).toBe(false);
+      expect(lens({ ...okLens, loss: { bound: "count-only", excluded: -1 } })).toBe(false);
+      // A lossless view is the identity on its window: nothing excluded, and it must say 0.
+      expect(lens({ ...okLens, view: "everything", loss: { bound: "none", excluded: 0 } })).toBe(true);
+      expect(lens({ ...okLens, view: "everything", loss: { bound: "none", excluded: 1 } })).toBe(false);
+      // The way back to the records is (run, seq) pairs; seq 0 is the bootstrap line.
+      expect(lens({ ...okLens, records: [] })).toBe(true);
+      expect(lens({ ...okLens, records: [{ run: "q", seq: 0 }] })).toBe(true);
+      expect(lens({ ...okLens, records: [{ run: "", seq: 4 }] })).toBe(false);
+      expect(lens({ ...okLens, records: [{ seq: 4 }] })).toBe(false);
+      expect(lens({ ...okLens, records: [{ run: "q", seq: -1 }] })).toBe(false);
+      expect(lens({ ...okLens, records: [{ run: "q" }] })).toBe(false);
+      expect(lens({ ...okLens, records: "q/4" })).toBe(false);
+    });
     test("a page with has_more needs a cursor; the last page does not (§7.2)", () => {
       const page = validate("parley.page.schema.json");
       const okPage = { event: "page", t: 1, seq: 7, run: "r", has_more: false, _schema: { id: "parley.page", version: "1.0.0" } };

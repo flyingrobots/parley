@@ -24,12 +24,9 @@ The spec and each message schema are versioned separately from this package.
   than one stream is one event: copies MUST carry the same `seq`, `t` and `event`, MAY omit
   fields another copy carries, and MUST agree on every field they share, so `(run, seq)`
   identifies an event. The receipt head is no longer pinned to `0`. (flyingrobots/parley#7)
-- §4.5 and §4.6: minor schema bumps are additive and readers ignore unknown fields; a reader
-  validates any line of the major it was built against and rejects a different major; a minor
-  bump is additive in both directions, so narrowing a constraint is major; schemas are open
-  everywhere except `_schema`, which pins its `id` and constrains `version` to the major;
-  `_schema` and `$id` are identifiers, not URLs to fetch. The promise binds from the versions
-  below; all three `1.0.0` schemas predate it. (flyingrobots/parley#8)
+- §4.5 and §4.6 (as first merged in #25, since amended by the entry above): schema versions carry
+  a compatibility promise; schemas are open everywhere except `_schema`; `_schema` and `$id` are
+  identifiers, not URLs to fetch; the `1.0.0` schemas predate the rule. (flyingrobots/parley#8)
 - §2.1: `session` is optional; a program MUST carry it when supplied and MUST NOT invent one.
 - §3: the bootstrap line is the first line a run emits, on whichever stream, not only the first
   line of stdout. It is not itself mirrored into the receipt, whose first line is the head.

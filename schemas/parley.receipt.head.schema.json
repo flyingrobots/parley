@@ -91,6 +91,21 @@
             "pattern": "^[a-z0-9_]+(\\.[a-z0-9_]+)+$",
             "description": "Why the input could not be read; no digest then."
           }
+        },
+        "not": {
+          "type": "object",
+          "required": [
+            "sha256",
+            "error"
+          ],
+          "properties": {
+            "sha256": {
+              "type": "string"
+            },
+            "error": {
+              "type": "string"
+            }
+          }
         }
       }
     },
@@ -137,7 +152,7 @@
     "redacted": {
       "type": "object",
       "minProperties": 1,
-      "description": "Present and non-empty whenever a declared secret was supplied to the run; absent otherwise (spec \u00a75.3). Lists where the head carries a replaced value.",
+      "description": "Present and non-empty whenever a declared secret was supplied to the run; absent otherwise (spec \u00a75.3). Lists where the head carries a replaced value, and which credential sources were present.",
       "properties": {
         "argv": {
           "type": "array",
@@ -171,8 +186,78 @@
             "minimum": 0
           },
           "description": "Indexes into inputs whose path carried a replaced value."
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Logical names of declared credential sources that were present (spec \u00a75.3)."
         }
-      }
+      },
+      "anyOf": [
+        {
+          "type": "object",
+          "required": [
+            "argv"
+          ],
+          "properties": {
+            "argv": {
+              "type": "array",
+              "minItems": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "resolved"
+          ],
+          "properties": {
+            "resolved": {
+              "type": "array",
+              "minItems": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "inputs"
+          ],
+          "properties": {
+            "inputs": {
+              "type": "array",
+              "minItems": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "env"
+          ],
+          "properties": {
+            "env": {
+              "type": "array",
+              "minItems": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "sources"
+          ],
+          "properties": {
+            "sources": {
+              "type": "array",
+              "minItems": 1
+            }
+          }
+        }
+      ]
     },
     "dry_run": {
       "type": "boolean",

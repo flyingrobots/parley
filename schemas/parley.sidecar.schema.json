@@ -42,7 +42,8 @@
     "path": {
       "type": "string",
       "minLength": 1,
-      "description": "Relative to the receipt's directory."
+      "pattern": "^(?!/)(?!.*(^|/)\\.\\.(/|$)).+$",
+      "description": "Relative to the receipt's directory; never absolute, never escaping it."
     },
     "bytes": {
       "type": "integer",

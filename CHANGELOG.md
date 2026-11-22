@@ -7,6 +7,23 @@ The spec and each message schema are versioned separately from this package.
 
 ### Changed
 
+- Follow-ups from the review of the lifecycle stack (flyingrobots/parley#40): §5's head carries a
+  descriptor per input with a digest where already read, matching §2.2; nothing follows `end` on
+  any stream and a post-`end` sink failure is carried by exit status alone, with `4` taking
+  precedence over `2`; `end.redacted` has one definition (head `redacted` or any `redaction`
+  event) and every extra redaction, including one in the head, is recorded by a `redaction`
+  event; redaction is decided as a record is written and never rewrites a written line; credential
+  sources are declared by logical name and recorded in `redacted.sources`, and a `--token-file`
+  path stays visible; `startup.` is the stated code namespace; a `.parley/.gitignore` without `*`
+  sends the run to the fallback with a warning; sidecars cover any record; the spec's examples form
+  one failed run with monotone timestamps and the startup example has its own run; §1.2's stdout
+  row names `end`; §4.5 names the three original `1.0.0` drafts; the §4.3 and §5 bookkeeping
+  examples include the fallback scope. Schemas (drafts): absolute `paths.receipt` and
+  `end.receipt`; `end.status` never 3; sidecar paths relative and non-escaping; `redacted`
+  non-empty with a `sources` list; an input never carries both `sha256` and `error`. Tests: a
+  negative case per new-schema constraint. Docs: the output-contract and related-work pages no
+  longer contradict §2.3 and §3.
+
 - §4.1, §4.2: discovery is a run. `--schema` and `--help` bootstrap, write a receipt, carry the
   envelope and close with `end`; they emit `command` lines (name, intent, effects, secrets, the
   message types the command can emit) and `schema` lines (one message schema each). §4.3's

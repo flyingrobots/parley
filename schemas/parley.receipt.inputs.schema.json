@@ -57,6 +57,21 @@
             "pattern": "^[a-z0-9_]+(\\.[a-z0-9_]+)+$",
             "description": "Why the input could not be read; no digest then."
           }
+        },
+        "not": {
+          "type": "object",
+          "required": [
+            "sha256",
+            "error"
+          ],
+          "properties": {
+            "sha256": {
+              "type": "string"
+            },
+            "error": {
+              "type": "string"
+            }
+          }
         }
       }
     },

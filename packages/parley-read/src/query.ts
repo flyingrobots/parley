@@ -18,8 +18,10 @@
 //
 // What this module does **not** do, and must not be read as doing:
 //
-//   - **It does not project by the view.** The view is recorded verbatim; the answer is every
-//      record in the window. Shaping the answer to the view is flyingrobots/parley#49.
+//   - **It does not filter by the view.** The view *orders* the answer — §9's purpose is the
+//      ranking function, not a filter applied afterwards — and the answer is still every record in
+//      the window. The rules are in `rank.ts`; the over-filtering §9 warns about is impossible
+//      here because nothing is dropped at any tier.
 //   - **It does not apply the budget.** The budget is recorded, defaulted visibly, and echoed;
 //      nothing is truncated and no excluded count is claimed, because the digest that bounds an
 //      answer and states what it left out is flyingrobots/parley#50.
@@ -33,6 +35,7 @@ import { resolve } from "node:path";
 import { defineTool, main, type Sink } from "@flyingrobots/parley-emit";
 import { loadReceipts, type Load, type LoadOptions, type LoadedRecord } from "./load.ts";
 import { repoReceiptDir, stateReceiptDir } from "./locate.ts";
+import { rankRecords, type Ranking } from "./rank.ts";
 
 /** The `parley.query` pair this reader emits; a change to the message moves this version. */
 export const QUERY_SCHEMA = { id: "parley.query", version: "1.0.0" } as const;
@@ -139,11 +142,13 @@ export interface QueryAnswer {
   readonly window: QueryWindow;
   readonly note?: string;
   /**
-   * Every record in the window, ascending by `t` with `(run, seq)` breaking a tie, and **not**
-   * bounded by `budget.records`: this returns the window, and bounding it is
-   * flyingrobots/parley#50.
+   * Every record in the window, ordered by the view: the failure surface first when the view
+   * implies a change, then the view's own surface, then `(t, run, seq)` ascending. **Not** bounded
+   * by `budget.records`: this returns the whole window, and bounding it is flyingrobots/parley#50.
    */
   readonly records: readonly LoadedRecord[];
+  /** The same records with the key each was placed by, the per-run outcomes, and the tier counts. */
+  readonly ranking: Ranking;
   readonly counts: {
     /** Records the load returned, the read's own run included. */
     readonly scanned: number;
@@ -359,10 +364,10 @@ function byTime(a: LoadedRecord, b: LoadedRecord): number {
  * receipt beside the ones being read, so the loader finds it on the next read, and the answer
  * names it by `(run, seq)`.
  *
- * The answer is every record in the window, in time order, excluding the read's own run: a read
- * does not answer itself, and the record of it is there for the next one. Nothing is projected to
- * the view and nothing is bounded by the budget; both are recorded, and both are
- * flyingrobots/parley#49 and flyingrobots/parley#50.
+ * The answer is every record in the window, ordered by the view, excluding the read's own run: a
+ * read does not answer itself, and the record of it is there for the next one. Nothing is dropped
+ * by the ranking and nothing is bounded by the budget: bounding the answer and saying what was
+ * left out is flyingrobots/parley#50.
  */
 export async function queryReceipts(request: QueryRequest, opts: QueryOptions = {}): Promise<QueryOutcome> {
   const cwd = resolve(opts.cwd ?? process.cwd());
@@ -414,12 +419,17 @@ export async function queryReceipts(request: QueryRequest, opts: QueryOptions = 
     const own = all.filter((r) => r.run === run.id);
     const others = all.filter((r) => r.run !== run.id);
     const undated = others.filter((r) => typeof r.t !== "number");
-    const records = others.filter((r) => inWindow(r, query.window)).sort(byTime);
+    const inside = others.filter((r) => inWindow(r, query.window)).sort(byTime);
+    const ranking = rankRecords(query, inside);
+    const records = ranking.records;
 
     run.step(
       `answered with ${records.length} record(s) in the window`,
-      "the window's records in time order: the view is recorded and projects nothing yet, and the budget is recorded and bounds nothing yet (flyingrobots/parley#49, flyingrobots/parley#50)",
-      { scanned: all.length, in_window: records.length, undated: undated.length, own: own.length },
+      "the window's records, ordered by the view: spec §9's purpose is the ranking function, not a filter, so every record in the window is in the answer and the budget still bounds nothing (flyingrobots/parley#50)",
+      {
+        scanned: all.length, in_window: records.length, undated: undated.length, own: own.length,
+        view: query.view, implies_change: ranking.impliesChange, tiers: ranking.counts,
+      },
     );
 
     answer = {
@@ -434,6 +444,7 @@ export async function queryReceipts(request: QueryRequest, opts: QueryOptions = 
       window: query.window,
       ...(query.note === undefined ? {} : { note: query.note }),
       records,
+      ranking,
       counts: { scanned: all.length, inWindow: records.length, undated: undated.length, own: own.length },
       load,
     };

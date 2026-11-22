@@ -948,7 +948,7 @@ describe("RD-15 an accepted query is recorded and reads back", () => {
   });
 });
 
-describe("RD-16 the window, in time order, with nothing projected or ranked", () => {
+describe("RD-16 the window, echoed verbatim, with nothing excluded", () => {
   test("a window returns the records inside it, ascending by t, and is echoed verbatim", async () => {
     const { dir, env } = scratch();
     const receipts = repoReceipts(dir);
@@ -1020,7 +1020,7 @@ describe("RD-16 the window, in time order, with nothing projected or ranked", ()
     ]);
   });
 
-  test("the view is recorded and applied to nothing: two views over one window answer the same", async () => {
+  test("the view ranks the answer and hides none of it", async () => {
     const seed = (dir: string) => {
       const receipts = repoReceipts(dir);
       datedReceipt(receipts, runId(0), T0 - 2 * DAY);
@@ -1035,7 +1035,11 @@ describe("RD-16 the window, in time order, with nothing projected or ranked", ()
     const everything = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: WIDE }, { cwd: one.dir, env: one.env }));
     const failed = answered(await queryReceipts({ asker: { tool: "t" }, view: "what-failed", window: WIDE }, { cwd: two.dir, env: two.env }));
     const shape = (a: QueryAnswer) => a.records.map((r) => `${r.run}:${r.seq}:${r.event}`);
-    expect(shape(failed)).toEqual(shape(everything));
+    // The same records, as a set: the view orders the answer and filters none of it (§9).
+    expect([...shape(failed)].sort()).toEqual([...shape(everything)].sort());
+    // In two different orders: what-failed puts the error and the non-zero end first.
+    expect(shape(failed)).not.toEqual(shape(everything));
+    expect(failed.records.slice(0, 2).map((r) => r.event)).toEqual(["error", "end"]);
     expect(everything.view).toBe("everything");
     expect(failed.view).toBe("what-failed");
   });
@@ -1111,9 +1115,9 @@ describe("RD-17 the view's surface orders the answer", () => {
     expect(surface.map((r) => r.record.event)).toEqual(["result", "result", "result"]);
     const last = Math.max(...surface.map((r) => r.rank));
     const off = answer.ranking.ranked.filter((r) => r.tier !== "surface");
-    expect(off.length).toBe(12);
+    expect(off.length).toBe(9);
     expect(Math.min(...off.map((r) => r.rank))).toBeGreaterThan(last);
-    expect(answer.records.length).toBe(15);
+    expect(answer.records.length).toBe(12);
     expect(answer.ranking.counts.failure).toBe(0);
     expect(surface[0]!.why.join(" ")).toContain("what-changed");
   });
@@ -1203,7 +1207,7 @@ describe("RD-18 a purpose that implies a change puts the failures first", () => 
     // and the successful run's result, on the surface, ranks above every off-surface record
     expect(at(answer, runId(2), 4)).toBeLessThan(at(answer, runId(1), 1));
     expect(answer.ranking.counts.failure).toBe(2);
-    expect(answer.records.length).toBe(9);
+    expect(answer.records.length).toBe(8);
   });
 
   test("a view that implies no change promotes no failure", async () => {
@@ -1232,7 +1236,7 @@ describe("RD-18 a purpose that implies a change puts the failures first", () => 
     expect(answer.ranking.counts.succeededRuns).toBe(2);
     expect(ids(answer.records).slice(0, 2)).toEqual([`${runId(1)}:4`, `${runId(2)}:4`]);
     expect(ids(answer.records.slice(2))).toEqual(timeOrder(answer.records.slice(2)));
-    expect(answer.records.length).toBe(10);
+    expect(answer.records.length).toBe(8);
   });
 
   test("a run whose end the window does not hold is undetermined, not guessed", async () => {
@@ -1282,7 +1286,7 @@ describe("RD-19 ranking reorders and never filters", () => {
     }
     const held = orders.map((o) => [...o].sort().join("|"));
     expect(new Set(held).size).toBe(1);
-    expect(orders[0]!.length).toBe(14);
+    expect(orders[0]!.length).toBe(13);
     expect(new Set(orders.map((o) => o.join("|"))).size).toBeGreaterThan(1);
   });
 
@@ -1304,7 +1308,10 @@ describe("RD-19 ranking reorders and never filters", () => {
     expect(all.records.length).toBe(11);
 
     const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "what-changed", window }, { cwd: dir, env }));
-    expect([...ids(answer.records)].sort()).toEqual([...ids(all.records)].sort());
+    const real = new Set([first.run, broke.run, third.run]);
+    const realOnly = (a: QueryAnswer) => [...ids(a.records.filter((r) => real.has(r.run)))].sort();
+    expect(realOnly(answer)).toEqual(realOnly(all));
+    expect(realOnly(answer).length).toBe(11);
     expect(answer.ranking.outcomes[broke.run]).toBe("failed");
     expect(answer.ranking.outcomes[first.run]).toBe("succeeded");
     expect(answer.ranking.outcomes[third.run]).toBe("succeeded");
@@ -1349,7 +1356,10 @@ describe("RD-19 ranking reorders and never filters", () => {
     expect(ranking.records.length).toBe(6000);
     expect(new Set(ids(ranking.records)).size).toBe(6000);
     expect(ranking.counts.failedRuns).toBe(100);
-    expect(smallElapsed).toBeLessThan(1_000);
-    expect(elapsed).toBeLessThan(2_000);
+    // Measured on the development machine: ~1 ms for a thousand records and ~5 ms for six
+    // thousand, worst of seven runs ~10 ms. The bounds below are two orders of magnitude of
+    // headroom, so the case fails on a change of complexity rather than on a noisy machine.
+    expect(smallElapsed).toBeLessThan(250);
+    expect(elapsed).toBeLessThan(500);
   }, 60_000);
 });

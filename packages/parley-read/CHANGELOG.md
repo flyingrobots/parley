@@ -10,6 +10,42 @@ its manifest so it cannot be published by accident.
 
 ### Added
 
+- A read over the loaded records, `queryReceipts`, taking the representation decided in
+  flyingrobots/parley#46: a read states an `asker`, a `view` and a `window`, and is **refused**
+  without them. `asker.tool` is never invented (§2.1) and there is no privileged view to fall back
+  on, so each is refused rather than guessed; a window is refused missing, half-stated, malformed
+  or inverted; `budget` is the one field with a default, `{"records": 20}`, and the answer says
+  when it defaulted. Every refusal that applies is returned, each carrying §6's `code`, `problem`
+  and `remedy` with the field it is about, so a caller that is itself a parley tool can hand one
+  to `run.error`.
+- The inference the decision asks for, and no more: `asker.cwd` is the directory the read was made
+  against when the caller states none, recorded so it is visible. `asker.task` is "from the
+  environment" in flyingrobots/parley#46 without a variable named, so it comes from the request and
+  is omitted when absent rather than read out of a variable this library would be inventing (§2.1).
+  A value `parley.query` could not carry — a relative `asker.cwd`, an empty `task`, an empty
+  `note` — is refused rather than emitted as a line that fails its own schema.
+- A refused read is **not a run**: no receipt, no `.parley` directory, nothing written anywhere.
+  §9 records a question that was asked, and a question nobody could state has no asker to
+  attribute it to. `planQuery` is the same rules as a pure function, for a caller that wants the
+  verdict without making the read.
+- An accepted read is **recorded**: the `parley.query` 1.0.0 event is emitted through
+  `@flyingrobots/parley-emit`, so a read is a run with a receipt beside the ones it read, its two
+  decisions are in that receipt, and the loader reads the query back as `validated` against the
+  exact pair. The answer names the record by `(run, seq)`. The read's own run identity is
+  `parley-read` at the package version, or whatever a host program embedding the reader names
+  itself; that is not the asker.
+- The answer is the window's records, ascending by `t` with `(run, seq)` breaking a tie, with the
+  window echoed verbatim and the read's own records excluded — a read does not answer itself, and
+  `counts` says how many were scanned, in the window, undated and the read's own. A record whose
+  `t` is not a number cannot be placed in a window and is counted rather than dropped silently.
+- Deliberately **not** done, each the safe intermediate state its issue names: the view is
+  recorded and projects nothing (flyingrobots/parley#49), the budget is recorded and bounds
+  nothing, with no excluded count claimed (flyingrobots/parley#50), and no `parley.lens` is
+  emitted, because a read that returns the records has no loss to state. A test pins two views
+  over one window answering the same, so the limit cannot drift unnoticed.
+- A read states a retention policy that deletes nothing (`NO_RETENTION`): §5.1 asks every tool for
+  one, and expiring the receipts a read was asked to read would destroy the history in order to
+  answer a question about it.
 - The loader: `loadReceipts` returns every run in both receipt locations for a working directory
   as bundles, and `readReceiptFile` reads one receipt file, yielding one bundle per run it holds.
   A bundle carries its records in `seq` order, its resolved sidecars, its quarantined lines, every

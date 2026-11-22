@@ -7,7 +7,7 @@ export const SCHEMA_SOURCE = { commit: "657888a4981c068c947a58940331a7d78ae2eb91
   "parley.history.transform.schema.json": "36b03c4c80fa55f2584f61b0e2c1a3453fc2c742da8720510cb99fafd6861fcf",
   "parley.lens.schema.json": "6319927acf2a307b800efdf42eb1a8c73ca747a40fe1cac047217bf148663021",
   "parley.page.schema.json": "86ef95b18e7ec1cddba6d337c99e8538da179ba69b000aecd6b683531a0594a6",
-  "parley.query.schema.json": "4185efeef49f52cbc25376e1406ca9646f3414dfae2c784343b65ce64d2452f4",
+  "parley.query.schema.json": "fb53e7057b469d20664253aa8030917738f23ff6dc7ac61abc042586aad88bb7",
   "parley.receipt.head.schema.json": "5728ae69c9b5abcce318bc86ecf2850936e9f09122a8f05453096b7878de79cd",
   "parley.receipt.inputs.schema.json": "dbc16f662e82e8eb5024cb1454c80fc01aae8554c918427559564f91191727f7",
   "parley.receipt.step.schema.json": "4bd32d020ec12f3ad5dba70031bbc70f5e5dc3f04dc20da7241b5103f112c3af",
@@ -854,7 +854,7 @@ export const SCHEMAS: ReadonlyArray<{ id: string; version: string; schema: Recor
             "task": {
               "type": "string",
               "minLength": 1,
-              "description": "The caller's current task id, inferred from the environment and omitted when absent. Not the session: a session is a working period, a task is a unit of work inside one."
+              "description": "The caller's current task id, supplied by the caller and never inferred (flyingrobots/parley#61); omitted when the caller does not state it. Not the session: a session is a working period, a task is a unit of work inside one."
             }
           },
           "description": "Who the read is for, and the context the budget is inferred from. The asker is not the view: two askers requesting the same view under the same budget get the same answer."

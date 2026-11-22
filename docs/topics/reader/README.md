@@ -3,14 +3,18 @@
 How a read against parley history states what it wants, and what a result says about itself. This
 page is a reference for the two message types that exist today, `parley.query` and `parley.lens`.
 
-**The reader is not built.** What exists on `main` is this representation, its two draft schemas
-under [`schemas/`](../../../schemas/README.md), and the examples below. The query entry point, the
-ranking, the digest and the drill-down are
-[flyingrobots/parley#2](https://github.com/flyingrobots/parley/issues/2) and are not described
-here, because they do not exist yet. Spec [§9](../../../spec/parley-v0.2.md) is informative and
-unchanged; the reasoning behind the three fields is
-[Observer geometry and spec §9](../related-work/observer-geometry.md), and the decision itself is
-[flyingrobots/parley#46](https://github.com/flyingrobots/parley/issues/46).
+**The entry point exists; the ranking and the digest do not.** What is on `main` is this
+representation, its two draft schemas under [`schemas/`](../../../schemas/README.md), the examples
+below, and a read in the reader library that states these fields, is refused without them and is
+recorded as a `parley.query` event — [parley-read](../parley-read/README.md#making-a-read). What
+that read does **not** do is project to the view, bound the answer to the budget or emit a
+`parley.lens`: those are
+[flyingrobots/parley#49](https://github.com/flyingrobots/parley/issues/49) and
+[flyingrobots/parley#50](https://github.com/flyingrobots/parley/issues/50), and the drill-down is
+[flyingrobots/parley#51](https://github.com/flyingrobots/parley/issues/51). Spec
+[§9](../../../spec/parley-v0.2.md) is informative and unchanged; the reasoning behind the three
+fields is [Observer geometry and spec §9](../related-work/observer-geometry.md), and the decision
+itself is [flyingrobots/parley#46](https://github.com/flyingrobots/parley/issues/46).
 
 ## Three fields, not two
 
@@ -57,7 +61,7 @@ versions. The vocabulary is not extensible by a caller.
 | --- | --- | --- |
 | `asker.tool` | The calling program's own identity | **Refused.** Spec §2.1 forbids inventing an identity; a read whose caller cannot be named is not recorded under a guess |
 | `asker.cwd` | The process working directory | Omitted |
-| `asker.task` | The caller's current task id in the environment | Omitted |
+| `asker.task` | Nothing. There is no environment variable for it; the caller always supplies it ([flyingrobots/parley#61](https://github.com/flyingrobots/parley/issues/61)) | Omitted |
 | `view` | Nothing | **Refused.** There is no privileged view to fall back on, and a guessed view is one the caller cannot see in the lens |
 | `budget` | One documented default, `{"records": 20}` | n/a — the default applies, and the result's lens carries the budget that was actually applied |
 | `note` | Nothing | Omitted. Free text, recorded, never parsed; nothing in the answer branches on it |
@@ -72,7 +76,7 @@ would be a different answer to a different question, reported as the answer to t
 One argument each, each argument one token, and nothing positional:
 
 ```text
---asker <tool>                     # fills asker.tool; cwd and task come from context
+--asker <tool>                     # fills asker.tool; cwd comes from context, task from the caller
 --view <token>                     # one of the five
 --budget <kind>=<n>[,<kind>=<n>]   # records, bytes, ms; --budget 20 means records=20
 --note <text>                      # optional, free text, never parsed
@@ -149,9 +153,12 @@ The lens of the result that answers it, naming the failed run of this specificat
 ## What is still open
 
 - A read that cannot be answered within the declared budget should say so, and say what budget
-  would suffice ([flyingrobots/parley#48](https://github.com/flyingrobots/parley/issues/48)).
-  Nothing in `parley.lens` 1.0.0 expresses that refusal.
-- The digest that a lens precedes has its own message type and its own bound
-  ([flyingrobots/parley#50](https://github.com/flyingrobots/parley/issues/50)).
+  would suffice. Nothing in `parley.lens` 1.0.0 expresses that, and the read on `main` does not
+  bound its answer at all ([flyingrobots/parley#50](https://github.com/flyingrobots/parley/issues/50)).
+- The view is recorded and projects nothing yet
+  ([flyingrobots/parley#49](https://github.com/flyingrobots/parley/issues/49)), and the digest a
+  lens precedes has its own message type and its own bound (#50). Until then a read answers every
+  view the same way, with its window in time order.
 - Whether the view vocabulary is the right five is a question for the first reader built on it.
-  It is five tokens in a draft schema, not a settled list.
+  It is five tokens in a draft schema, not a settled list, and the read on `main` has not yet
+  exercised four of them as anything but a recorded token.

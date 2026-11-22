@@ -17,7 +17,9 @@ The spec and each message schema are versioned separately from this package.
   - `asker` — who the read is for, and the context the rest is inferred from. A record: `tool`
     required, `cwd` (absolute POSIX) and `task` optional. `tool` comes from the calling program's
     own identity and is never invented (§2.1), so a read that cannot name its caller is refused;
-    `cwd` comes from the process and `task` from the environment, each omitted when absent.
+    `cwd` comes from the process, omitted when absent. `task` is always supplied by the caller and
+    never inferred — there is no environment variable for it (flyingrobots/parley#61) — omitted
+    when the caller does not state it.
   - `view` — the shape of the answer, one token from a closed set of five: `what-ran`,
     `what-failed`, `what-changed`, `how-it-decided`, `everything`. Four are projections the
     treatment's taxonomy recognises as distinct families; `everything` is the identity, and is in
@@ -67,6 +69,15 @@ The spec and each message schema are versioned separately from this package.
   `docs/topics/related-work/observer-geometry.md` (flyingrobots/parley#45). `parley-emit`'s shipped
   copy of the drafts is re-synced, so discovery serves sixteen schemas; that moves no version.
 
+- **There is no environment variable for `asker.task`** (flyingrobots/parley#61). The #46 entry
+  above said `task` came "from the environment" without naming a variable, and the query entry
+  point (flyingrobots/parley#48) implemented the gap literally: the task comes from the request
+  and is omitted when the caller does not state it, because reading an invented variable name
+  would itself be inventing an identity field (§2.1). The decision corrects the record rather than
+  the code: a task id is always supplied by the caller, never inferred. `parley.query` 1.0.0's
+  description of `asker.task` is corrected in place, since the schema is still a draft under this
+  `Unreleased` section (§4.5); that moves no version.
+
 ### Added
 
 - **A user-defined transform on the history sink, enforced** (flyingrobots/parley#57). A copy of a
@@ -110,6 +121,17 @@ The spec and each message schema are versioned separately from this package.
   schema `parley.tooling.doctor` moves to **1.1.0** for the three new line types
   (`doctor.projection`, `doctor.gap`, `doctor.segment`) and the widened `stream` enum.
 
+- The query entry point in the reader library (flyingrobots/parley#48): `queryReceipts` in
+  `packages/parley-read` takes the asker, view, budget and window decided in
+  flyingrobots/parley#46, refuses a read that states no asker, no view or no window with a
+  structured refusal per field rather than guessing one, and records every accepted read as a
+  `parley.query` 1.0.0 event through the writer — so a read is a run with a receipt of its own and
+  the loader reads the question back as validated against the exact pair. The answer is the
+  window's records in time order, the window echoed verbatim, the read excluded from its own
+  answer. Nothing projects to the view and nothing is bounded by the budget yet
+  (flyingrobots/parley#49, flyingrobots/parley#50): both are recorded, the limits are stated on
+  the reader's and the library's reference pages, and a test pins two views over one window
+  answering the same so the limit cannot drift unnoticed. No schema moved.
 - The shared history stream of spec §8, inside the writer: `packages/parley-emit` appends every
   line of the receipt to a dated daily segment when one is configured, by `PARLEY_HISTORY` or by
   `$XDG_STATE_HOME/parley/history` existing, so one timeline spans tools, repositories, agents

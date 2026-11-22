@@ -8,13 +8,19 @@ import {
   LineBuffer,
   SCHEMAS,
   SCHEMA_SOURCE,
+  VIEWS,
   loadReceipts,
+  planQuery,
+  queryReceipts,
   readReceiptFile,
   receiptLocations,
   splitLines,
   validator,
   type Bundle,
   type LoadedRecord,
+  type QueryAnswer,
+  type QueryOutcome,
+  type QueryRefusal,
 } from "../src/index.ts";
 
 const SCHEMAS_DIR = resolve(import.meta.dir, "../../../schemas");
@@ -699,4 +705,332 @@ describe("RD-13 stress", () => {
     expect(load.counts.invalid).toBe(0);
     expect(elapsed).toBeLessThan(30_000);
   }, 60_000);
+});
+
+// ---- RD-14, RD-15, RD-16 the query entry point --------------------------------------------
+//
+// A read states an asker, a view and a window (flyingrobots/parley#46), is refused when it
+// cannot, and is itself recorded through the writer (spec §9). Nothing here ranks, projects or
+// truncates: that is flyingrobots/parley#49 and flyingrobots/parley#50.
+
+const DAY = 86_400_000;
+const T0 = 1795326412346;
+
+/** A complete three-line receipt whose head, step and end are stamped from `at`. */
+function datedReceipt(dir: string, run: string, at: number): string {
+  const path = join(dir, `${run}.jsonl`);
+  return writeReceipt(dir, run, [
+    { ...head(run), t: at },
+    { ...step(run, 2), t: at + 1 },
+    { ...end(run, 3, path), t: at + 2 },
+  ]);
+}
+
+function runId(n: number): string {
+  return `01M81NYC9E28S33150VJB${String(n).padStart(5, "0")}`;
+}
+
+const WIDE = { from: 0, to: T0 + 365 * DAY };
+
+/** Narrow an outcome to the answer, naming the refusal codes when there is one. */
+function answered(outcome: QueryOutcome): QueryAnswer {
+  if (outcome.refused) throw new Error(`refused: ${outcome.refusals.map((r) => r.code).join(", ")}`);
+  return outcome;
+}
+
+function refused(outcome: QueryOutcome): readonly QueryRefusal[] {
+  if (!outcome.refused) throw new Error("the query was accepted; it should have been refused");
+  return outcome.refusals;
+}
+
+const codes = (outcome: QueryOutcome) => refused(outcome).map((r) => r.code);
+
+describe("RD-14 a query without an asker, a view or a window is refused", () => {
+  test("a query whose asker names no tool is refused rather than defaulted", async () => {
+    const { dir, env } = scratch();
+    const outcome = await queryReceipts({ view: "everything", window: WIDE }, { cwd: dir, env });
+    expect(codes(outcome)).toEqual(["query.asker_unnamed"]);
+    const withEmpty = await queryReceipts({ asker: { tool: "" }, view: "everything", window: WIDE }, { cwd: dir, env });
+    expect(codes(withEmpty)).toEqual(["query.asker_unnamed"]);
+  });
+
+  test("a query with no view is refused rather than guessed", async () => {
+    const { dir, env } = scratch();
+    const outcome = await queryReceipts({ asker: { tool: "t" }, window: WIDE }, { cwd: dir, env });
+    expect(codes(outcome)).toEqual(["query.view_missing"]);
+  });
+
+  test("a view outside the five tokens is refused and the vocabulary is named", async () => {
+    const { dir, env } = scratch();
+    const outcome = await queryReceipts({ asker: { tool: "t" }, view: "what-happened", window: WIDE }, { cwd: dir, env });
+    expect(codes(outcome)).toEqual(["query.view_unknown"]);
+    for (const token of VIEWS) expect(refused(outcome)[0]!.remedy).toContain(token);
+  });
+
+  test("a missing, half-stated, malformed or inverted window is refused", async () => {
+    const { dir, env } = scratch();
+    const missing = await queryReceipts({ asker: { tool: "t" }, view: "everything" }, { cwd: dir, env });
+    expect(codes(missing)).toEqual(["query.window_missing"]);
+    const half = await queryReceipts({ asker: { tool: "t" }, view: "everything", window: { from: 0 } }, { cwd: dir, env });
+    expect(codes(half)).toEqual(["query.window_missing"]);
+    const fractional = await queryReceipts({ asker: { tool: "t" }, view: "everything", window: { from: 0.5, to: T0 } }, { cwd: dir, env });
+    expect(codes(fractional)).toEqual(["query.window_invalid"]);
+    const negative = await queryReceipts({ asker: { tool: "t" }, view: "everything", window: { from: -1, to: T0 } }, { cwd: dir, env });
+    expect(codes(negative)).toEqual(["query.window_invalid"]);
+    const inverted = await queryReceipts({ asker: { tool: "t" }, view: "everything", window: { from: T0, to: T0 - DAY } }, { cwd: dir, env });
+    expect(codes(inverted)).toEqual(["query.window_inverted"]);
+  });
+
+  test("a budget that admits no records is refused", async () => {
+    const { dir, env } = scratch();
+    const outcome = await queryReceipts({ asker: { tool: "t" }, view: "everything", window: WIDE, budget: { records: 0 } }, { cwd: dir, env });
+    expect(codes(outcome)).toEqual(["query.budget_invalid"]);
+  });
+
+  test("an asker that parley.query could not carry is refused", async () => {
+    const { dir, env } = scratch();
+    const relative = await queryReceipts({ asker: { tool: "t", cwd: "work" }, view: "everything", window: WIDE }, { cwd: dir, env });
+    expect(codes(relative)).toEqual(["query.asker_invalid"]);
+    const emptyTask = await queryReceipts({ asker: { tool: "t", task: "" }, view: "everything", window: WIDE }, { cwd: dir, env });
+    expect(codes(emptyTask)).toEqual(["query.asker_invalid"]);
+    const emptyNote = await queryReceipts({ asker: { tool: "t" }, view: "everything", window: WIDE, note: "" }, { cwd: dir, env });
+    expect(codes(emptyNote)).toEqual(["query.note_empty"]);
+    expect(existsSync(join(dir, ".parley"))).toBe(false);
+  });
+
+  test("a refusal is structured, and a refused query records nothing", async () => {
+    const { dir, env } = scratch();
+    const outcome = await queryReceipts({ asker: { cwd: dir } }, { cwd: dir, env });
+    const refusals = refused(outcome);
+    expect(refusals.map((r) => r.code).sort()).toEqual(["query.asker_unnamed", "query.view_missing", "query.window_missing"]);
+    for (const r of refusals) {
+      expect(r.code).toMatch(/^[a-z0-9_]+(\.[a-z0-9_]+)+$/);
+      expect(r.problem.length).toBeGreaterThan(0);
+      expect(r.remedy.length).toBeGreaterThan(0);
+      expect(r.section.length).toBeGreaterThan(0);
+    }
+    expect(existsSync(join(dir, ".parley"))).toBe(false);
+    const load = loadReceipts({ cwd: dir, env });
+    expect(load.bundles).toEqual([]);
+    expect(load.counts.records).toBe(0);
+  });
+
+  test("planQuery refuses and accepts without reading or writing anything", () => {
+    expect(planQuery({ asker: { tool: "t" }, view: "everything" }).refused).toBe(true);
+    const plan = planQuery({ asker: { tool: "t" }, view: "what-failed", window: WIDE });
+    expect(plan.refused).toBe(false);
+    if (plan.refused) throw new Error("accepted plan expected");
+    expect(plan.query.budget).toEqual({ records: 20 });
+    expect(plan.query.budgetDefaulted).toBe(true);
+    expect(plan.query.window).toEqual(WIDE);
+  });
+});
+
+describe("RD-15 an accepted query is recorded and reads back", () => {
+  test("an accepted query leaves exactly one query record, carried by the read's own run", async () => {
+    const { dir, env } = scratch();
+    const receipts = repoReceipts(dir);
+    for (let i = 0; i < 3; i++) datedReceipt(receipts, runId(i), T0 - (3 - i) * DAY);
+
+    const answer = answered(await queryReceipts(
+      { asker: { tool: "t", cwd: dir, task: "flyingrobots/parley#48" }, view: "everything", window: WIDE, note: "the golden case" },
+      { cwd: dir, env },
+    ));
+    expect(answer.status).toBe(0);
+    expect(answer.query.run).toBe(answer.run);
+    expect(answer.query.seq).toBeGreaterThan(0);
+
+    const after = loadReceipts({ cwd: dir, env });
+    const queries = after.bundles.flatMap((b) => b.records).filter((r) => r.event === "query");
+    expect(queries.length).toBe(1);
+    expect(queries[0]!.run).toBe(answer.run);
+    expect(queries[0]!.seq).toBe(answer.query.seq);
+    const record = queries[0]!.record as Record<string, unknown>;
+    expect(record.asker).toEqual({ tool: "t", cwd: dir, task: "flyingrobots/parley#48" });
+    expect(record.view).toBe("everything");
+    expect(record.window).toEqual(WIDE);
+    expect(record.note).toBe("the golden case");
+  });
+
+  test("the recorded query loads as validated against parley.query 1.0.0 in its own bundle", async () => {
+    const { dir, env } = scratch();
+    datedReceipt(repoReceipts(dir), runId(1), T0 - DAY);
+    const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "what-ran", window: WIDE }, { cwd: dir, env }));
+
+    const load = loadReceipts({ cwd: dir, env });
+    const own = load.bundles.find((b) => b.run === answer.run)!;
+    expect(own).toBeDefined();
+    expect(own.terminated).toBe(true);
+    expect(own.status).toBe(0);
+    expect(own.defects).toEqual([]);
+    const query = own.records.find((r) => r.event === "query")!;
+    expect(query.validation.state).toBe("validated");
+    expect((query.validation as { schema: { id: string; version: string } }).schema).toEqual({ id: "parley.query", version: "1.0.0" });
+    expect(load.counts.invalid).toBe(0);
+    expect(load.quarantined).toEqual([]);
+  });
+
+  test("a query that supplies no budget records the documented default and says it defaulted", async () => {
+    const { dir, env } = scratch();
+    const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: WIDE }, { cwd: dir, env }));
+    expect(answer.budget).toEqual({ records: 20 });
+    expect(answer.budgetDefaulted).toBe(true);
+    const supplied = answered(await queryReceipts(
+      { asker: { tool: "t" }, view: "everything", window: WIDE, budget: { records: 5, bytes: 4096 } },
+      { cwd: dir, env },
+    ));
+    expect(supplied.budget).toEqual({ records: 5, bytes: 4096 });
+    expect(supplied.budgetDefaulted).toBe(false);
+    const load = loadReceipts({ cwd: dir, env });
+    const recorded = load.bundles.flatMap((b) => b.records).filter((r) => r.event === "query").map((r) => (r.record as { budget: unknown }).budget);
+    expect(recorded).toContainEqual({ records: 20 });
+    expect(recorded).toContainEqual({ records: 5, bytes: 4096 });
+  });
+
+  test("a read that states no cwd records the directory it read", async () => {
+    const { dir, env } = scratch();
+    const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: WIDE }, { cwd: dir, env }));
+    expect(answer.asker).toEqual({ tool: "t", cwd: dir });
+    const recorded = loadReceipts({ cwd: dir, env }).bundles.flatMap((b) => b.records).find((r) => r.event === "query")!;
+    expect((recorded.record as { asker: unknown }).asker).toEqual({ tool: "t", cwd: dir });
+    expect(recorded.validation.state).toBe("validated");
+  });
+
+  test("the query line the read put on its stream validates on its own", async () => {
+    const { dir, env } = scratch();
+    const stdout = new Capture();
+    const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "how-it-decided", window: WIDE }, { cwd: dir, env, stdout }));
+    const line = answer.lines.find((l) => l.event === "query")!;
+    expect(line).toBeDefined();
+    expect(validator().validate(line).state).toBe("validated");
+    expect(stdout.objs.some((o) => o.event === "query")).toBe(true);
+    expect(stdout.objs[0]!.event).toBe("run");
+  });
+
+  test("a read records its own identity at this package's name and version", async () => {
+    const { dir, env } = scratch();
+    const manifest = JSON.parse(readFileSync(resolve(import.meta.dir, "../package.json"), "utf8")) as { name: string; version: string };
+    const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: WIDE }, { cwd: dir, env }));
+    const own = loadReceipts({ cwd: dir, env }).bundles.find((b) => b.run === answer.run)!;
+    const head = own.records.find((r) => r.event === "receipt.head")!.record as { tool: string; v: string };
+    expect(head.tool).toBe(manifest.name.replace(/^@[^/]+\//, ""));
+    expect(head.v).toBe(manifest.version);
+  });
+
+  test("a read never expires the history it reads", async () => {
+    const { dir, env } = scratch();
+    const receipts = repoReceipts(dir);
+    for (let i = 0; i < 60; i++) datedReceipt(receipts, runId(i), T0 - (60 - i) * DAY);
+    const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: WIDE }, { cwd: dir, env }));
+    const load = loadReceipts({ cwd: dir, env });
+    expect(load.bundles.length).toBe(61);
+    for (let i = 0; i < 60; i++) expect(existsSync(join(receipts, `${runId(i)}.jsonl`))).toBe(true);
+    expect(load.bundles.some((b) => b.run === answer.run)).toBe(true);
+    expect(answer.load.bundles.length).toBe(60 + 1);
+  });
+
+  test("a read with PARLEY_TASK set and no stated task records no asker.task", async () => {
+    const { dir, env } = scratch();
+    const withTask = { ...env, PARLEY_TASK: "flyingrobots/parley#999" };
+    const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: WIDE }, { cwd: dir, env: withTask }));
+    // flyingrobots/parley#61: a task id is always supplied by the caller, never inferred. Nothing
+    // reads an environment variable for it, so a stated environment value must not leak in.
+    expect(answer.asker).toEqual({ tool: "t", cwd: dir });
+    expect(answer.asker).not.toHaveProperty("task");
+    const recorded = loadReceipts({ cwd: dir, env: withTask }).bundles.flatMap((b) => b.records).find((r) => r.event === "query")!;
+    expect((recorded.record as { asker: unknown }).asker).toEqual({ tool: "t", cwd: dir });
+  });
+});
+
+describe("RD-16 the window, in time order, with nothing projected or ranked", () => {
+  test("a window returns the records inside it, ascending by t, and is echoed verbatim", async () => {
+    const { dir, env } = scratch();
+    const receipts = repoReceipts(dir);
+    const at = [T0 - 30 * DAY, T0 - 20 * DAY, T0 - 10 * DAY, T0 - DAY, T0];
+    at.forEach((t, i) => datedReceipt(receipts, runId(i), t));
+
+    const window = { from: T0 - 21 * DAY, to: T0 - 9 * DAY };
+    const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window }, { cwd: dir, env }));
+    expect(answer.window).toEqual(window);
+    expect([...new Set(answer.records.map((r) => r.run))]).toEqual([runId(1), runId(2)]);
+    expect(answer.records.length).toBe(6);
+    const times = answer.records.map((r) => r.t!);
+    expect(times).toEqual([...times].sort((a, b) => a - b));
+    expect(answer.counts.inWindow).toBe(6);
+  });
+
+  test("a query over an empty directory answers with no records and is still recorded", async () => {
+    const { dir, env } = scratch();
+    const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: WIDE }, { cwd: dir, env }));
+    expect(answer.records).toEqual([]);
+    expect(answer.counts.inWindow).toBe(0);
+    const load = loadReceipts({ cwd: dir, env });
+    expect(load.bundles.flatMap((b) => b.records).filter((r) => r.event === "query").length).toBe(1);
+  });
+
+  test("a window no record falls in answers with no records", async () => {
+    const { dir, env } = scratch();
+    const receipts = repoReceipts(dir);
+    datedReceipt(receipts, runId(0), T0 - 30 * DAY);
+    datedReceipt(receipts, runId(1), T0 - 20 * DAY);
+    const window = { from: T0 - 10 * DAY, to: T0 - 5 * DAY };
+    const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window }, { cwd: dir, env }));
+    expect(answer.records).toEqual([]);
+    expect(answer.window).toEqual(window);
+    expect(answer.counts.scanned).toBeGreaterThan(0);
+    const load = loadReceipts({ cwd: dir, env });
+    expect(load.bundles.flatMap((b) => b.records).filter((r) => r.event === "query").length).toBe(1);
+  });
+
+  test("a read does not answer itself", async () => {
+    const { dir, env } = scratch();
+    datedReceipt(repoReceipts(dir), runId(0), T0 - DAY);
+    const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: WIDE }, { cwd: dir, env }));
+    expect(answer.records.every((r) => r.run !== answer.run)).toBe(true);
+    expect(answer.records.map((r) => r.event)).not.toContain("query");
+    expect(answer.counts.own).toBeGreaterThan(0);
+    const next = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: WIDE }, { cwd: dir, env }));
+    expect(next.records.some((r) => r.run === answer.run && r.event === "query")).toBe(true);
+  });
+
+  test("records written out of order come back in one ascending sequence by t", async () => {
+    const { dir, env } = scratch();
+    const receipts = repoReceipts(dir);
+    const a = runId(1), b = runId(2);
+    const pathA = join(receipts, `${a}.jsonl`), pathB = join(receipts, `${b}.jsonl`);
+    writeReceipt(receipts, a, [
+      { ...end(a, 3, pathA), t: T0 + 500 },
+      { ...head(a), t: T0 + 100 },
+      { ...step(a, 2), t: T0 + 300 },
+    ]);
+    writeReceipt(receipts, b, [
+      { ...step(b, 2), t: T0 + 400 },
+      { ...head(b), t: T0 + 200 },
+      { ...end(b, 3, pathB), t: T0 + 600 },
+    ]);
+    const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: { from: T0, to: T0 + 1000 } }, { cwd: dir, env }));
+    expect(answer.records.map((r) => [r.t, r.run, r.seq])).toEqual([
+      [T0 + 100, a, 1], [T0 + 200, b, 1], [T0 + 300, a, 2], [T0 + 400, b, 2], [T0 + 500, a, 3], [T0 + 600, b, 3],
+    ]);
+  });
+
+  test("the view is recorded and applied to nothing: two views over one window answer the same", async () => {
+    const seed = (dir: string) => {
+      const receipts = repoReceipts(dir);
+      datedReceipt(receipts, runId(0), T0 - 2 * DAY);
+      writeReceipt(receipts, runId(1), [
+        { ...head(runId(1)), t: T0 - DAY },
+        { event: "error", t: T0 - DAY + 1, seq: 2, run: runId(1), code: "x.failed", problem: "it failed", _schema: { id: "parley.error", version: "2.0.0" } },
+        { ...end(runId(1), 3, join(receipts, `${runId(1)}.jsonl`), { status: 2 }), t: T0 - DAY + 2 },
+      ]);
+    };
+    const one = scratch(), two = scratch();
+    seed(one.dir); seed(two.dir);
+    const everything = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: WIDE }, { cwd: one.dir, env: one.env }));
+    const failed = answered(await queryReceipts({ asker: { tool: "t" }, view: "what-failed", window: WIDE }, { cwd: two.dir, env: two.env }));
+    const shape = (a: QueryAnswer) => a.records.map((r) => `${r.run}:${r.seq}:${r.event}`);
+    expect(shape(failed)).toEqual(shape(everything));
+    expect(everything.view).toBe("everything");
+    expect(failed.view).toBe("what-failed");
+  });
 });

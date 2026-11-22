@@ -61,6 +61,15 @@ results. Its invocation object (command line, arguments, exit status) and per-ar
 the same idea as parley's receipt head, in a shape that cannot stream and is bound to static
 analysis.
 
+## The source §9 cites
+
+Spec §9 ("Reading history is an act", informative) says it rests on the observer-geometry
+treatment in the AIΩN Foundations Series. That treatment has now been read against §9:
+[Observer geometry and spec §9](observer-geometry.md) marks every §9 bullet kept, changed or
+dropped, cites the sections it relies on, and proposes revised wording. Unlike the neighbours
+above, this is a source §9 claims as its basis rather than a specification parley competes with,
+so it gets its own page.
+
 ## What is parley's own
 
 Narrower than the README's tagline suggests, and worth stating exactly:

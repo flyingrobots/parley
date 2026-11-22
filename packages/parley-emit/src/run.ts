@@ -8,6 +8,7 @@ import { checkRecord } from "./check.ts";
 import type { HistoryProjection, HistorySink } from "./history.ts";
 import { computeInv, digestInput, sha256, type InputDecl, type InputDescriptor } from "./inv.ts";
 import { carriesSecret, scrub } from "./redact.ts";
+import { isHistoryRefusal, type HistoryRefusal } from "./refusal.ts";
 
 export interface Sink { write(line: string): void }
 export const SIDECAR_THRESHOLD = 65_536;
@@ -231,6 +232,10 @@ export class Run {
     }
     // Nothing returned is the configured way to withhold a line: a gap, not a defect.
     if (returned === undefined || returned === null) return null;
+    // A refusal is the transform withholding the line *and saying why* (flyingrobots#60). The
+    // code is the transform's; the envelope, the exit status and the promise that no declared
+    // secret leaves this way are still the writer's.
+    if (isHistoryRefusal(returned)) { this.refused(returned, seq, p); return null; }
     if (typeof returned !== "object" || Array.isArray(returned)) {
       this.withhold({ code: "history.transform_invalid", problem: `the history transform ${p.name} returned ${Array.isArray(returned) ? "an array" : typeof returned} for seq ${seq}, which is neither a record nor nothing; that line is not on the shared stream`, remedy: "return the record, a projection of it, or nothing to withhold the line" });
       return null;
@@ -256,6 +261,30 @@ export class Run {
       return null;
     }
     return JSON.stringify(out) + "\n";
+  }
+
+  /**
+   * A line the transform refused, reported under the transform's own `code` (flyingrobots#60).
+   * Two things are checked first, because a warning's `code` is the one string the writer does
+   * not scrub (§5.3) and an unusable one would be a withheld line with no warning at all:
+   *
+   *   - A `code` that is not spec §6's shape, or an empty `problem`, is the transform being
+   *     broken, which is `history.transform_failed` like any other way of being broken.
+   *   - A `code` carrying a declared secret value would disclose it on stderr and in the
+   *     receipt, so the refusal is itself refused: `history.transform_unredacted`, the same code
+   *     a body that restored a replaced value gets. The `problem` and `remedy` are scrubbed like
+   *     any other tool-supplied string, so they need no check of their own.
+   */
+  private refused(r: HistoryRefusal, seq: number, p: HistoryProjection): void {
+    if (!CODE.test(r.code) || !r.problem) {
+      this.withhold({ code: "history.transform_failed", problem: `the history transform ${p.name} refused seq ${seq} with ${JSON.stringify(r.code)} and ${JSON.stringify(r.problem)}, which are not a code of two or more dot-separated lowercase segments and a non-empty problem; that line is not on the shared stream and the refusal could not be reported under its own code`, remedy: "build the refusal with refuse(code, problem), which checks both at the point they are written (spec §6)" });
+      return;
+    }
+    if (this.init.secretValues.size > 0 && carriesSecret(r.code, this.init.secretValues)) {
+      this.withhold({ code: "history.transform_unredacted", problem: `the history transform ${p.name} refused seq ${seq} under a code carrying a declared secret value; a diagnostic's code is never scrubbed, so neither that line nor that refusal's code reaches any stream`, remedy: "refuse under a code the transform chose, not one built from a value it was handed (spec §5.3)" });
+      return;
+    }
+    this.withhold({ code: r.code, problem: r.problem, ...(r.remedy === undefined ? {} : { remedy: r.remedy }) });
   }
 
   /**

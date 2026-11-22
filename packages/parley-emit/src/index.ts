@@ -8,3 +8,6 @@ export { canonical, computeInv, digestTree, sha256, type InputDescriptor } from 
 export { chooseLocation, isLocationFailure, repoRoot, stateBase, bookkeepingFor } from "./location.ts";
 export { HISTORY_DAYS_ENV, HISTORY_DEFAULT_DAYS, HISTORY_ENV, HISTORY_MAX_DAYS, historyBookkeeping, historyDays, historyProjection, isHistoryFailure, isHistorySink, openHistory, resolveHistory, retainHistory, segmentName, transformDigest, transformName, writeWholeLine, type HistoryConfig, type HistoryFailure, type HistoryPlan, type HistoryProjection, type HistorySink, type HistoryTransform } from "./history.ts";
 export { carriesSecret, classifySecrets, collectSecretValues, redactArgv, scrub } from "./redact.ts";
+export { isHistoryRefusal, refuse, type HistoryRefusal } from "./refusal.ts";
+export { SECRET_PATTERNS, type SecretPattern } from "./transforms/secret-patterns.ts";
+export { findSuspectedSecret, refuseSuspectedSecrets, SUSPECTED_SECRET_CODE, type SuspectedSecret } from "./transforms/secrets.ts";

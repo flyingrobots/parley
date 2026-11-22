@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { defineTool, main, type Run, type Sink, type ToolSpec } from "@flyingrobots/parley-emit";
+import { defineTool, main, type HistoryTransform, type Run, type Sink, type ToolSpec } from "@flyingrobots/parley-emit";
 import {
   LineBuffer,
   SCHEMAS,
@@ -13,6 +13,7 @@ import {
   planQuery,
   queryReceipts,
   rankRecords,
+  readHistorySegment,
   readReceiptFile,
   receiptLocations,
   splitLines,
@@ -125,11 +126,14 @@ function tool(over: Partial<ToolSpec> = {}): ToolSpec {
   });
 }
 
-async function writerRun(cwd: string, env: Record<string, string>, argv: string[], body: (run: Run) => void | Promise<void>) {
+async function writerRun(
+  cwd: string, env: Record<string, string>, argv: string[], body: (run: Run) => void | Promise<void>,
+  over: { history?: { transform: HistoryTransform; name?: string } } = {},
+) {
   const stdout = new Capture(), stderr = new Capture();
-  const status = await main(tool(), ["t", ...argv], async (run) => { await body(run); }, { cwd, env, stdout, stderr, resolved: (args) => ({ command: "count", args }) });
-  const boot = stdout.objs[0] as { run?: string; paths?: { receipt?: string } } | undefined;
-  return { status, stdout, stderr, run: boot?.run, receipt: boot?.paths?.receipt };
+  const status = await main(tool(), ["t", ...argv], async (run) => { await body(run); }, { cwd, env, stdout, stderr, resolved: (args) => ({ command: "count", args }), ...over });
+  const boot = stdout.objs[0] as { run?: string; paths?: { receipt?: string; history?: string } } | undefined;
+  return { status, stdout, stderr, run: boot?.run, receipt: boot?.paths?.receipt, history: boot?.paths?.history };
 }
 
 /** The writer's own example tool, run as a real process so the receipts under test are real. */
@@ -1102,6 +1106,7 @@ const placed = (answer: QueryAnswer, run: string, seq: number) =>
 function loaded(run: string, seq: number, event: string, t: number, over: Record<string, unknown> = {}): LoadedRecord {
   return {
     run, seq, event, t, file: `/nowhere/${run}.jsonl`, line: seq, copies: 1, fromSidecar: false,
+    projected: false, projectedBy: [],
     record: { event, t, seq, run, _schema: { id: `parley.${event}`, version: "1.0.0" }, ...over },
     validation: { state: "unvalidated", schema: null, why: "no_schema_ref" },
   };
@@ -1391,4 +1396,299 @@ describe("RD-19 ranking reorders and never filters", () => {
     expect(smallElapsed).toBeLessThan(250);
     expect(elapsed).toBeLessThan(500);
   }, 60_000);
+});
+
+// ---- RD-20 the least-projected copy -------------------------------------------------------
+//
+// Spec §8: a copy of a run on the shared history stream may be a projection of the receipt copy,
+// and "a reader that finds the same record in more than one copy should then prefer the
+// least-projected one, because the receipt copy is the record and a projection is a view of it".
+// What makes a copy a projection is the `parley.history.transform` line the source carries for
+// that run, so the rule is about what a source says about a run and never about which file was
+// read first — the failure mode flyingrobots/parley#58 names.
+
+const DROP_DETAIL = sha("drop-detail");
+const WHAT_RAN = sha("what-ran");
+
+/** The opening line of a projected copy: stream only, at a `seq` of its own (§8). */
+function transformLine(run: string, seq: number, name: string, digest: string) {
+  return {
+    event: "history.transform", t: 1795326412344, seq, run, name, sha256: digest,
+    _schema: { id: "parley.history.transform", version: "1.0.0" },
+  };
+}
+
+/** A segment of the shared stream, verbatim: it is one file holding many runs, not one run's receipt. */
+function writeSegment(dir: string, name: string, lines: (object | string)[]): string {
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, name);
+  writeFileSync(path, lines.map((l) => (typeof l === "string" ? l : JSON.stringify(l))).join("\n") + "\n");
+  return path;
+}
+
+const histDir = (cwd: string) => join(cwd, "history");
+const NAMES = { names: ["a.txt", "b.txt"] };
+
+/**
+ * One projected run, in the layout the writer's own produces: the stream copy opens with the
+ * transform line at `seq: 1`, so the receipt has no line at that `seq` and starts at 2. The
+ * stream's step is narrowed and its `result` is withheld altogether.
+ */
+function projectedRun(dir: string, run = RUN_A) {
+  const receipts = repoReceipts(dir);
+  const receipt = join(receipts, `${run}.jsonl`);
+  writeReceipt(receipts, run, [
+    { ...head(run), seq: 2 }, step(run, 3, { detail: NAMES }), toolResult(run, 4), end(run, 5, receipt),
+  ]);
+  const segment = writeSegment(histDir(dir), "2026-11-22.jsonl", [
+    transformLine(run, 1, "drop-detail", DROP_DETAIL),
+    { ...head(run), seq: 2 }, step(run, 3), end(run, 5, receipt),
+  ]);
+  return { receipt, segment };
+}
+
+const detailOf = (r: LoadedRecord) => (r.record as { detail?: unknown }).detail;
+const atSeq = (b: Bundle, seq: number) => b.records.find((r) => r.seq === seq)!;
+
+describe("RD-20 the least-projected copy", () => {
+  test("the receipt's bodies win over a projected stream copy", () => {
+    const { dir, env } = scratch();
+    const { receipt, segment } = projectedRun(dir);
+    const load = loadReceipts({ cwd: dir, env, history: [segment] });
+    const [bundle] = load.bundles;
+    expect(seqs(bundle!)).toEqual([1, 2, 3, 4, 5]);
+
+    const narrowed = atSeq(bundle!, 3);
+    expect(detailOf(narrowed)).toEqual(NAMES);
+    expect(narrowed.projected).toBe(false);
+    expect(narrowed.projectedBy).toEqual([]);
+    expect(narrowed.file).toBe(receipt);
+    expect(narrowed.copies).toBe(2);
+
+    expect(bundle!.projections.length).toBe(1);
+    const note = bundle!.projections[0]!;
+    expect(note.name).toBe("drop-detail");
+    expect(note.sha256).toBe(DROP_DETAIL);
+    expect(note.file).toBe(segment);
+    expect(note.where).toBe("history");
+    expect(note.seq).toBe(1);
+    expect(note.superseded).toEqual([3]);
+    expect(note.withheld).toEqual([4]);
+    expect(note.sole).toBe(false);
+    expect(bundle!.defects).toEqual([]);
+
+    // The opening line is a record in its own right, at the one `seq` only the stream carries.
+    const opening = atSeq(bundle!, 1);
+    expect(opening.event).toBe("history.transform");
+    expect(opening.projected).toBe(true);
+    expect(opening.projectedBy).toEqual(["drop-detail"]);
+    expect(opening.validation.state).toBe("validated");
+  });
+
+  test("identical copies dedupe as they did before projections", () => {
+    const { dir, env } = scratch();
+    const receipts = repoReceipts(dir);
+    const receipt = join(receipts, `${RUN_A}.jsonl`);
+    const lines = [{ ...head(RUN_A), seq: 2 }, step(RUN_A, 3, { detail: NAMES }), end(RUN_A, 4, receipt)];
+    writeReceipt(receipts, RUN_A, lines);
+
+    const plain = writeSegment(histDir(dir), "2026-11-21.jsonl", lines);
+    const bare = loadReceipts({ cwd: dir, env, history: [plain] }).bundles[0]!;
+    expect(seqs(bare)).toEqual([2, 3, 4]);
+    expect(bare.records.every((r) => r.copies === 2 && r.projected === false)).toBe(true);
+    expect(bare.projections).toEqual([]);
+    expect(bare.defects).toEqual([]);
+    expect(detailOf(atSeq(bare, 3))).toEqual(NAMES);
+
+    // The same copy, this time saying it is a projection: the note is there, and it supersedes
+    // nothing, because a transform that narrowed nothing left the bodies alone.
+    const marked = writeSegment(histDir(dir), "2026-11-22.jsonl", [transformLine(RUN_A, 1, "identity", WHAT_RAN), ...lines]);
+    const kept = loadReceipts({ cwd: dir, env, history: [marked] }).bundles[0]!;
+    expect(seqs(kept)).toEqual([1, 2, 3, 4]);
+    expect(kept.records.filter((r) => r.seq > 1).every((r) => r.copies === 2 && r.projected === false)).toBe(true);
+    expect(kept.projections.length).toBe(1);
+    expect(kept.projections[0]!.superseded).toEqual([]);
+    expect(kept.projections[0]!.withheld).toEqual([]);
+    expect(kept.defects).toEqual([]);
+  });
+
+  test("a seq the projected copy withholds is attributed to its transform", () => {
+    const { dir, env } = scratch();
+    const receipts = repoReceipts(dir);
+    const receipt = join(receipts, `${RUN_A}.jsonl`);
+    writeReceipt(receipts, RUN_A, [
+      { ...head(RUN_A), seq: 2 }, step(RUN_A, 3), toolResult(RUN_A, 4), end(RUN_A, 5, receipt),
+    ]);
+    const segment = writeSegment(histDir(dir), "2026-11-22.jsonl", [
+      transformLine(RUN_A, 1, "what-ran", WHAT_RAN), { ...head(RUN_A), seq: 2 }, end(RUN_A, 5, receipt),
+    ]);
+    const bundle = loadReceipts({ cwd: dir, env, history: [segment] }).bundles[0]!;
+    expect(seqs(bundle)).toEqual([1, 2, 3, 4, 5]);
+    const note = bundle.projections[0]!;
+    expect(note.withheld).toEqual([3, 4]);
+    expect(note.superseded).toEqual([]);
+    expect(atSeq(bundle, 3).projected).toBe(false);
+    expect(atSeq(bundle, 4).projected).toBe(false);
+    // A withheld line is what a transform is for: it is named, and it is not a defect.
+    expect(bundle.defects).toEqual([]);
+  });
+
+  test("a copy that is only on the stream is returned and marked projected", () => {
+    const { dir, env } = scratch();
+    const { segment } = projectedRun(dir);
+    rmSync(repoReceipts(dir), { recursive: true, force: true });
+
+    const bundle = loadReceipts({ cwd: dir, env, history: [segment] }).bundles[0]!;
+    expect(seqs(bundle)).toEqual([1, 2, 3, 5]);
+    const narrowed = atSeq(bundle, 3);
+    expect("detail" in narrowed.record).toBe(false);
+    expect(narrowed.projected).toBe(true);
+    expect(narrowed.projectedBy).toEqual(["drop-detail"]);
+    expect(bundle.projections.length).toBe(1);
+    expect(bundle.projections[0]!.sole).toBe(true);
+    expect(bundle.projections[0]!.superseded).toEqual([]);
+    expect(bundle.projections[0]!.withheld).toEqual([]);
+
+    // The same segment read on its own, by name.
+    const file = readHistorySegment(segment);
+    expect(file.where).toBe("history");
+    expect(file.bundles[0]!.projections[0]!.sole).toBe(true);
+    expect(file.bundles[0]!.records.every((r) => r.projected)).toBe(true);
+  });
+
+  test("two projections of one run disagree as projections, not as a writer's copies", () => {
+    const { dir, env } = scratch();
+    const receipt = join(repoReceipts(dir), `${RUN_A}.jsonl`);
+    const copy = (name: string, n: number) => [
+      transformLine(RUN_A, 1, name, sha(name)),
+      { ...head(RUN_A), seq: 2 }, step(RUN_A, 3, { detail: { n } }), end(RUN_A, 4, receipt),
+    ];
+    const alpha = writeSegment(histDir(dir), "alpha.jsonl", copy("alpha", 1));
+    const beta = writeSegment(histDir(dir), "beta.jsonl", copy("beta", 2));
+
+    const forward = loadReceipts({ cwd: dir, env, history: [alpha, beta] }).bundles[0]!;
+    const backward = loadReceipts({ cwd: dir, env, history: [beta, alpha] }).bundles[0]!;
+    for (const bundle of [forward, backward]) {
+      expect(bundle.projections.map((p) => p.name)).toEqual(["alpha", "beta"]);
+      expect(bundle.projections.every((p) => p.sole)).toBe(true);
+      const narrowed = atSeq(bundle, 3);
+      expect(narrowed.projected).toBe(true);
+      expect(narrowed.projectedBy).toEqual(["alpha", "beta"]);
+      expect(bundle.defects.length).toBeGreaterThan(0);
+      expect(bundle.defects.every((d) => d.code === "copies.projected_disagree")).toBe(true);
+      expect(bundle.defects.some((d) => d.code === "copies.disagree")).toBe(false);
+    }
+    // Neither copy is the less projected one, so the reader does not guess: the body it returns
+    // is the same whichever order the two segments were handed to it in.
+    expect(JSON.stringify(forward.records)).toBe(JSON.stringify(backward.records));
+  });
+
+  test("the least-projected copy wins whichever file was read first", () => {
+    const whole = (receipt: string) => [
+      { ...head(RUN_A), seq: 2 }, step(RUN_A, 3, { detail: NAMES }), end(RUN_A, 4, receipt),
+    ];
+    const narrow = (receipt: string) => [
+      transformLine(RUN_A, 1, "drop-detail", DROP_DETAIL),
+      { ...head(RUN_A), seq: 2 }, step(RUN_A, 3), end(RUN_A, 4, receipt),
+    ];
+    // The two receipt locations stand in for "whichever source is read first": the repo location
+    // is always read before the state one, so each arrangement puts a different copy first.
+    for (const projectedFirst of [true, false]) {
+      const { dir, env } = scratch();
+      const repo = repoReceipts(dir);
+      const state = receiptLocations({ cwd: dir, env })[1]!.dir;
+      const receipt = join(repo, `${RUN_A}.jsonl`);
+      writeReceipt(repo, RUN_A, projectedFirst ? narrow(receipt) : whole(receipt));
+      writeReceipt(state, RUN_A, projectedFirst ? whole(receipt) : narrow(receipt));
+
+      const bundle = loadReceipts({ cwd: dir, env }).bundles[0]!;
+      expect(detailOf(atSeq(bundle, 3))).toEqual(NAMES);
+      expect(atSeq(bundle, 3).projected).toBe(false);
+      expect(bundle.projections.length).toBe(1);
+      expect(bundle.projections[0]!.where).toBe(projectedFirst ? "repo" : "state");
+      expect(bundle.projections[0]!.superseded).toEqual([3]);
+      expect(bundle.defects).toEqual([]);
+    }
+  });
+
+  test("a transform line names a run, so the other runs in a segment are unaffected", () => {
+    const { dir, env } = scratch();
+    const receipts = repoReceipts(dir);
+    const pathA = join(receipts, `${RUN_A}.jsonl`);
+    const pathB = join(receipts, `${RUN_B}.jsonl`);
+    const runB = [head(RUN_B), step(RUN_B, 2, { detail: NAMES }), end(RUN_B, 3, pathB)];
+    writeReceipt(receipts, RUN_A, [{ ...head(RUN_A), seq: 2 }, step(RUN_A, 3, { detail: NAMES }), end(RUN_A, 4, pathA)]);
+    writeReceipt(receipts, RUN_B, runB);
+    const segment = writeSegment(histDir(dir), "2026-11-22.jsonl", [
+      transformLine(RUN_A, 1, "drop-detail", DROP_DETAIL),
+      { ...head(RUN_A), seq: 2 }, step(RUN_A, 3), end(RUN_A, 4, pathA),
+      ...runB,
+    ]);
+    const load = loadReceipts({ cwd: dir, env, history: [segment] });
+    const a = load.bundles.find((b) => b.run === RUN_A)!;
+    const b = load.bundles.find((b) => b.run === RUN_B)!;
+    expect(a.projections.length).toBe(1);
+    expect(detailOf(atSeq(a, 3))).toEqual(NAMES);
+    expect(b.projections).toEqual([]);
+    expect(b.records.every((r) => r.copies === 2 && r.projected === false)).toBe(true);
+    expect(detailOf(atSeq(b, 2))).toEqual(NAMES);
+    expect(b.defects).toEqual([]);
+  });
+
+  test("a history segment that cannot be read is reported, not thrown", () => {
+    const { dir, env } = scratch();
+    plainReceipt(repoReceipts(dir), RUN_A);
+    const load = loadReceipts({ cwd: dir, env, history: [join(histDir(dir), "gone.jsonl")] });
+    expect(load.bundles.length).toBe(1);
+    expect(load.bundles[0]!.records.length).toBe(3);
+    expect(load.defects.map((d) => d.code)).toEqual(["history.unreadable"]);
+    expect(load.defects[0]!.section).toBe("§8");
+  });
+
+  test("a real writer run with a transform loads to the receipt's bodies with one projection note", async () => {
+    const { dir, env } = scratch();
+    const hist = mkdtempSync(join(tmpdir(), "parley-read-history-"));
+    const dropDetail: HistoryTransform = (rec) => {
+      if (rec.event === "result") return undefined;
+      if (rec.event !== "receipt.step") return rec;
+      const { detail: _detail, ...rest } = rec;
+      return rest;
+    };
+    const written = await writerRun(dir, { ...env, PARLEY_HISTORY: hist }, ["count"], (run) => {
+      run.step("counted the things", "the stream need not carry the rows", NAMES);
+      run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" });
+    }, { history: { transform: dropDetail, name: "drop-detail" } });
+    expect(written.status).toBe(0);
+    expect(written.history).toBeDefined();
+
+    const load = loadReceipts({ cwd: dir, env, history: [written.history!] });
+    const bundle = load.bundles.find((b) => b.run === written.run)!;
+    expect(bundle.terminated).toBe(true);
+    expect(bundle.defects).toEqual([]);
+    expect(bundle.sources.map((s) => s.where)).toEqual(["repo", "history"]);
+
+    expect(bundle.projections.length).toBe(1);
+    const note = bundle.projections[0]!;
+    expect(note.name).toBe("drop-detail");
+    expect(note.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(note.sole).toBe(false);
+    expect(note.file).toBe(written.history!);
+
+    // The opening line took a `seq` the receipt has none at, and it is this reader's to validate.
+    const opening = byEvent(bundle, "history.transform")!;
+    expect(opening.seq).toBe(note.seq);
+    expect(opening.projected).toBe(true);
+    expect(opening.validation.state).toBe("validated");
+    expect((opening.validation as { schema: { id: string; version: string } }).schema)
+      .toEqual({ id: "parley.history.transform", version: "1.0.0" });
+
+    // The receipt's step keeps the rows the stream copy dropped, and the result the stream never
+    // carried is named as withheld rather than left as a gap of unknown cause.
+    const counted = bundle.records.find((r) => (r.record as { decision?: string }).decision === "counted the things")!;
+    expect(detailOf(counted)).toEqual(NAMES);
+    expect(counted.projected).toBe(false);
+    expect(counted.copies).toBe(2);
+    expect(note.superseded).toEqual([counted.seq]);
+    expect(note.withheld).toEqual([byEvent(bundle, "result")!.seq]);
+  });
 });

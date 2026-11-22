@@ -418,8 +418,7 @@ describe("PE-12 one JSON object per line, always", () => {
     const s = streams();
     const status = await main(tool({ human: (line) => (line.event === "result" ? `counted ${String(line.value)}` : null) }), ["t", "count", "--human"], async (run) => { run.result({ event: "result", value: 9 }, { id: "t.count", version: "1.0.0" }); }, { cwd: dir, env, ...s });
     expect(status).toBe(0);
-    expect(s.stdout.text).toContain("counted 9");
-    expect(() => JSON.parse(s.stdout.lines[0]!)).toThrow();
+    expect(s.stdout.lines).toEqual(["counted 9\n"]);
     const boot = JSON.parse(readFileSync(join(dir, ".parley", "receipts", readdirSync(join(dir, ".parley", "receipts")).find((f) => f.endsWith(".jsonl"))!), "utf8").split("\n")[0]!) as { event: string };
     expect(boot.event).toBe("receipt.head");
   });

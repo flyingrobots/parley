@@ -84,7 +84,7 @@ conforming (`bun run doctor --stdout ... --stderr ... --receipt ...`).
 | §6 | An uncaught throw becomes an `error` with code `uncaught.exception`; a reported error closes the run with status 2 |
 | §5.4, §3.3 | A sink failure before `end` is an `error` on the sinks still working and status 4; after `end` nothing is written and the status alone carries a failure; emitting after `end` throws `ParleyClosed` |
 | §1.2 | `console.*` calls during the handler are captured into the receipt as steps, so a library cannot write prose to a stream |
-| §1.1 | `--human` (alias `--humanize`) renders stdout and stderr through the tool's `human` function, falling back to one line per event; the receipt is unchanged |
+| §1.1 | `--human` (alias `--humanize`) renders stdout and stderr through the tool's `human` function, falling back to one line per event; the bootstrap line and a successful `end` render as nothing, so `tool --human \| gh pr comment --body-file -` posts only the tool's prose; the receipt is unchanged |
 
 ## How this package derives `inv`
 

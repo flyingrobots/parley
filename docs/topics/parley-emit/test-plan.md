@@ -51,7 +51,7 @@ violations against the repository's draft schemas.
 | PE-11a | Receipt copy of a result over 65,536 bytes | `sidecar` event in its place; file exists; `bytes` and `sha256` match the stored bytes; stdout copy intact | `a large record is stored as a sidecar` | implemented |
 | PE-12a | 300 random records with control characters, newlines and unicode | every line on every stream parses; records round-trip | `every line on every stream is one JSON object` | implemented |
 | PE-12b | A library calls `console.log` and `console.error` during the run | stdout and stderr carry only protocol lines; the receipt records the captured text | `library console output is captured` | implemented |
-| PE-12c | `--human` | stdout is prose; the receipt still conforms | `--human renders prose and keeps the receipt` | implemented |
+| PE-12c | `--human` | stdout is the tool's prose alone, no bootstrap or end line on success; the receipt still conforms | `--human renders prose and keeps the receipt` | implemented |
 | PE-13a | `src/schemas.ts` against `schemas/` | every digest matches; the commit is recorded | `shipped schemas match the drafts` | implemented |
 
 Also implemented, outside the numbered requirements: `run ids are ULIDs, unique and sortable`.

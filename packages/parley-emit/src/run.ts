@@ -102,12 +102,18 @@ export class Run {
 
   private line(obj: Record_): string { return JSON.stringify(obj) + "\n"; }
 
+  /** An empty prose rendering means "say nothing here"; a write of nothing is not a sink failure. */
+  private writeOrSkip(sink: "stdout" | "stderr", text: string): boolean { return text === "" ? true : this.write(sink, text); }
+
   private prose(obj: Record_): string {
     const custom = this.init.human?.(obj);
     if (typeof custom === "string") return custom.endsWith("\n") ? custom : custom + "\n";
     switch (obj.event) {
-      case "run": return `run ${this.id}: receipt at ${String((obj.paths as { receipt: string }).receipt)}\n`;
-      case "end": return `end: status ${String(obj.status)}${obj.redacted ? ", receipt redacted" : ""}\n`;
+      // Prose is for a person or a pipe into something like a pull-request comment; the bootstrap
+      // line and a successful end say nothing there, so the tool's rendering stands alone. The
+      // receipt still carries both.
+      case "run": return "";
+      case "end": return obj.status === 0 ? "" : `end: status ${String(obj.status)}${obj.redacted ? ", receipt redacted" : ""}\n`;
       case "error": case "warning": return `${String(obj.event)} ${String(obj.code)}: ${String(obj.problem)}${obj.remedy ? ` (${String(obj.remedy)})` : ""}\n`;
       default: return `${String(obj.event)}: ${JSON.stringify(obj)}\n`;
     }
@@ -125,8 +131,8 @@ export class Run {
     const extraFound: string[] = [];
     const extra = receiptExtra ? (scrub(receiptExtra, this.init.secretValues, "", extraFound) as Record_) : undefined;
     const human = this.init.human !== undefined;
-    if (to.stdout) this.write("stdout", human ? this.prose(scrubbed) : this.line(scrubbed));
-    if (to.stderr) this.write("stderr", human ? this.prose(scrubbed) : this.line(scrubbed));
+    if (to.stdout) this.writeOrSkip("stdout", human ? this.prose(scrubbed) : this.line(scrubbed));
+    if (to.stderr) this.writeOrSkip("stderr", human ? this.prose(scrubbed) : this.line(scrubbed));
     if (to.receipt) {
       const full = extra ? { ...scrubbed, ...extra, _schema: scrubbed._schema } : scrubbed;
       const text = JSON.stringify(full);
@@ -231,7 +237,7 @@ export class Run {
     const at = this.next();
     const rec = this.envelope({ event: "end", status: s, receipt: this.receiptPath, redacted: this.redactedAny }, SCHEMA_IDS.end, at);
     this.closed = true;
-    const okOut = this.write("stdout", this.init.human ? this.prose(rec) : this.line(rec));
+    const okOut = this.writeOrSkip("stdout", this.init.human ? this.prose(rec) : this.line(rec));
     const okRec = this.write("receipt", this.line(rec));
     this.receiptOpen = false;
     let closeOk = true;

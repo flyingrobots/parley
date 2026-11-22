@@ -78,6 +78,14 @@ make failed with exit code: 2
 The first was acted on immediately. The second took several calls to trace to a transitive native
 dependency with no prebuild for the running Node version.
 
+## Why a reader buffers to the newline and quarantines the rest
+
+Node, Python, OpenSSL and glibc all write to the process's descriptors directly on occasion, and
+§6 admits a native crash cannot be constrained. A reader that aborts on the first non-JSON line is
+broken by the one case the spec says will happen. Buffering to the newline means a line split
+across two reads is still a line; quarantining a stray complete line keeps it as evidence without
+letting it masquerade as a result.
+
 ## Why no TTY detection
 
 An agent's invocation is never a TTY, so TTY-sensitive output means the agent receives a contract

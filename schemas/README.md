@@ -13,6 +13,7 @@ Released versions are snapshotted, immutable, under `released/<id>/<version>.sch
 | `parley.run.bootstrap` | 1.1.1 (draft) | First line of stdout, before work begins | §3 |
 | `parley.receipt.head` | 2.0.0 (draft) | First line of the receipt file | §5 |
 | `parley.error` | 2.0.0 (draft) | An error, on stderr and in the receipt | §6 |
+| `parley.warning` | 1.0.0 (draft) | A recovered condition, on stderr and in the receipt | §6.1 |
 | `parley.startup.failed` | 1.0.0 (draft) | The single stderr line of a run that could not bootstrap; exit 3 | §3.2 |
 | `parley.end` | 1.0.0 (draft) | The terminal event, on stdout and in the receipt | §3.3 |
 | `parley.sidecar` | 1.0.0 (draft) | A receipt line standing in for a record stored beside the receipt | §5 |

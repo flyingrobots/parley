@@ -7,7 +7,8 @@ unvalidated because its type is not ours to validate.
 
 A read over those records states who it is for, what shape of answer it wants and how big an
 answer it will accept, is refused when it cannot, and is itself recorded as a run with a receipt
-(§9) — so the next read can see what was asked.
+(§9) — so the next read can see what was asked. The shape it asks for **orders** the answer: §9's
+purpose is the ranking function, and it never removes a record.
 
 The rules it keeps are the ones the specification binds a *reader* to — §1.4 buffering and
 quarantine, §5.4's unterminated tail, §1.3's `(run, seq)`, §4.5 and §4.6 on exact-pair resolution,
@@ -151,14 +152,39 @@ itself a parley tool can hand one straight to `run.error`:
 | Field | Recorded | Applied |
 | --- | --- | --- |
 | `asker` | Verbatim, `tool` required | Nothing branches on it: two askers asking the same thing get the same answer |
-| `view` | Verbatim, one of five tokens | **Not yet.** The answer is the window, unprojected; shaping it to the view is [flyingrobots/parley#49](https://github.com/flyingrobots/parley/issues/49) |
+| `view` | Verbatim, one of five tokens | **The order.** It ranks the answer and filters none of it (below) |
 | `budget` | Verbatim, defaulted to `{"records": 20}` and the answer says it defaulted | **Not yet.** Nothing is truncated and no excluded count is claimed; bounding an answer is [flyingrobots/parley#50](https://github.com/flyingrobots/parley/issues/50) |
-| `window` | Verbatim, two timestamps inclusive at both ends | Yes: the answer is the records inside it, ascending by `t` with `(run, seq)` breaking a tie |
+| `window` | Verbatim, two timestamps inclusive at both ends | Yes: the answer is the records inside it, ordered by the view, with `(t, run, seq)` ascending as the last part of the key |
 | `note` | Verbatim | Never parsed |
 
 No `parley.lens` is emitted. A lens states a loss bound and the records a result was built from;
 a read that returns the records themselves has no loss to state, and the lens belongs to the
 digest (#50).
+
+### The view orders the answer, and filters none of it
+
+Spec §9: the purpose shapes the result, and it is the **ranking function** rather than a filter
+applied afterwards. One total order on a key per record, compared left to right:
+
+1. **the failure surface**, when the view is an answer about a change — a read made in order to
+   change something is a read made in order not to repeat a failure;
+2. **the view's own surface** — the records the view is about, above the records it is not;
+3. **`(t, run, seq)` ascending** — so a view whose surface no record touches leaves the answer
+   exactly as it was.
+
+Under a view that implies a change, a failed run's records also rank above an `undetermined` run's,
+and those above a run known to have succeeded — within a tier, never across one.
+
+`rankRecords(query, records)` is that order on its own: a pure function from an accepted query and
+records to the same records, reordered. It reads nothing, writes nothing and records nothing, and
+it **returns every record it was given** — over-filtering is the failure mode §9 warns about, so
+nothing is dropped at any tier. `answer.ranking` carries each record's `rank`, `tier`, `outcome`
+and the `why` behind them, the per-run outcomes and the tier counts.
+
+Which token implies a change is derived from the vocabulary rather than read from a field —
+`parley.query` has none — and the surface each token names, the outcome rules and the whole
+statement of the order are in
+[the living reference](../../docs/topics/parley-read/README.md#how-the-purpose-orders-the-answer).
 
 ## A captured read
 
@@ -209,13 +235,66 @@ there for the next read, which loads it as validated against the exact pair:
 { "run": "01M82RA4RCSBF4F4P9NHM8650K", "seq": 2, "event": "query", "validation": { "state": "validated", "schema": { "id": "parley.query", "version": "1.0.0" } } }
 ```
 
+## A captured ranking
+
+Three runs of the same `count` example in one directory, on 2026-11-22: one that counted a file,
+one that fell over a dangling symlink, and one that counted again after it was removed. Then one
+read with `view: "what-changed"` — a purpose that implies a change — over the day's window. The
+`query` event the read recorded, as its receipt holds it:
+
+```jsonl
+{"event":"query","t":1795390386268,"seq":2,"run":"01M82SPC2NKT5APEFXTY9TM1TN","asker":{"tool":"claude-code","cwd":"/tmp/parley-rank-readme.mHfg3V/work","task":"flyingrobots/parley#49"},"view":"what-changed","budget":{"records":20},"window":{"from":1795303986259,"to":1795390386259},"note":"about to change the counter; what has it done here","_schema":{"id":"parley.query","version":"1.0.0"}}
+```
+
+What came back, projected to the key each record was placed by. The ranks, runs, events,
+timestamps, tiers and outcomes are that read's real values; the `why` of each record is abridged to
+its first reason, and a real `ranked` entry carries the whole record beside them:
+
+```json illustrative
+{
+  "view": "what-changed",
+  "impliesChange": true,
+  "counts": { "scanned": 14, "inWindow": 11, "undated": 0, "own": 3 },
+  "tiers": { "failure": 2, "surface": 2, "other": 7, "failedRuns": 1, "undeterminedRuns": 0, "succeededRuns": 2 },
+  "ranked": [
+    { "rank":  1, "run": "01M82SPC1B061PYZ3XQ32S7EGB", "seq": 2, "event": "error",        "t": 1795390386227, "tier": "failure", "outcome": "failed",    "why": "on the failure surface, and what-changed is an answer about a change" },
+    { "rank":  2, "run": "01M82SPC1B061PYZ3XQ32S7EGB", "seq": 3, "event": "end",          "t": 1795390386228, "tier": "failure", "outcome": "failed",    "why": "on the failure surface, and what-changed is an answer about a change" },
+    { "rank":  3, "run": "01M82SPC0C4E17JV4WMAPKR38Y", "seq": 3, "event": "result",       "t": 1795390386196, "tier": "surface", "outcome": "succeeded", "why": "touches the what-changed surface" },
+    { "rank":  4, "run": "01M82SPC2AP8XYAV1ZD8Y3GPSS", "seq": 3, "event": "result",       "t": 1795390386258, "tier": "surface", "outcome": "succeeded", "why": "touches the what-changed surface" },
+    { "rank":  5, "run": "01M82SPC1B061PYZ3XQ32S7EGB", "seq": 1, "event": "receipt.head", "t": 1795390386227, "tier": "other",   "outcome": "failed",    "why": "off the what-changed surface" },
+    { "rank":  6, "run": "01M82SPC0C4E17JV4WMAPKR38Y", "seq": 1, "event": "receipt.head", "t": 1795390386196, "tier": "other",   "outcome": "succeeded", "why": "off the what-changed surface" },
+    { "rank":  7, "run": "01M82SPC0C4E17JV4WMAPKR38Y", "seq": 2, "event": "receipt.step", "t": 1795390386196, "tier": "other",   "outcome": "succeeded", "why": "off the what-changed surface" },
+    { "rank":  8, "run": "01M82SPC0C4E17JV4WMAPKR38Y", "seq": 4, "event": "end",          "t": 1795390386197, "tier": "other",   "outcome": "succeeded", "why": "off the what-changed surface" },
+    { "rank":  9, "run": "01M82SPC2AP8XYAV1ZD8Y3GPSS", "seq": 1, "event": "receipt.head", "t": 1795390386257, "tier": "other",   "outcome": "succeeded", "why": "off the what-changed surface" },
+    { "rank": 10, "run": "01M82SPC2AP8XYAV1ZD8Y3GPSS", "seq": 2, "event": "receipt.step", "t": 1795390386258, "tier": "other",   "outcome": "succeeded", "why": "off the what-changed surface" },
+    { "rank": 11, "run": "01M82SPC2AP8XYAV1ZD8Y3GPSS", "seq": 4, "event": "end",          "t": 1795390386258, "tier": "other",   "outcome": "succeeded", "why": "off the what-changed surface" }
+  ]
+}
+```
+
+Four things in that order are the whole feature:
+
+- **What failed is first.** The failing run's `error` and its status-2 `end` are ranks 1 and 2,
+  although two later runs succeeded after it. In time order they would have been buried.
+- **What the view is about is next.** The two `count.result` records are the subject matter this
+  tool exists to produce (§7), so they rank above every head, step and `end` — including the heads
+  of their own runs.
+- **Within a tier, a failed run still comes first.** Rank 5 is the failing run's head, at
+  `t: …386227`, above rank 6 at `t: …386196`, which is 31 ms earlier. Inside a tier the outcome key
+  outranks the clock — and only under a view that implies a change.
+- **Nothing is missing.** Eleven records in the window, eleven in the answer. The same read with
+  `view: "everything"` returns the same eleven in `(t, run, seq)` order: the view changed the order
+  and nothing else.
+
 ## Surface
 
 | Export | Job |
 | --- | --- |
 | `loadReceipts(opts)` | Every run in both receipt locations for a working directory, as bundles |
-| `queryReceipts(request, opts)` | A read: refused without an asker, a view and a window, else recorded as a `parley.query` event and answered with the window's records in time order |
+| `queryReceipts(request, opts)` | A read: refused without an asker, a view and a window, else recorded as a `parley.query` event and answered with the window's records ordered by the view |
 | `planQuery(request)`, `queryRecord(query)` | The refusal rules and the recorded payload, without any reading or writing |
+| `rankRecords(query, records)` | The view's order over records, pure: the same records reordered, never a subset |
+| `runOutcomes`, `onViewSurface`, `onFailureSurface`, `impliesChange`, `TIERS`, `OUTCOMES`, `CHANGE_VIEWS` | The parts of that order, each answerable on its own |
 | `VIEWS`, `DEFAULT_BUDGET`, `QUERY_SCHEMA`, `NO_RETENTION` | The five view tokens, the one documented budget default, the pair a read emits, and the retention policy a read states |
 | `readReceiptFile(path, opts)` | One receipt file; a file holding more than one run yields one bundle per run |
 | `receiptLocations(opts)`, `repoReceiptDir`, `stateReceiptDir` | Where receipts are, present or absent; creates nothing |
@@ -243,8 +322,8 @@ secret, whether its `inv` matches — is the caller's to decide, and this reader
 
 ## What it does not do
 
-- Rank, project or truncate. A read returns its window in time order; the view and the budget are
-  recorded and applied to nothing yet (flyingrobots/parley#49, flyingrobots/parley#50).
+- Project or truncate. A read ranks its window by the view and returns all of it; the budget is
+  recorded and bounds nothing yet, and no excluded count is claimed (flyingrobots/parley#50).
 - Recompute `inv` or any semantic digest (§7.1). It checks a sidecar's stored bytes against the
   digest the receipt declared, and nothing else.
 - Judge conformance. The doctor under `scripts/` names violated rules; this is a loader, and a

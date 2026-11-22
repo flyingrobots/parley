@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { defineTool, main, type Run, type Sink, type ToolSpec } from "@flyingrobots/parley-emit";
@@ -12,6 +12,7 @@ import {
   loadReceipts,
   planQuery,
   queryReceipts,
+  rankRecords,
   readReceiptFile,
   receiptLocations,
   splitLines,
@@ -21,6 +22,7 @@ import {
   type QueryAnswer,
   type QueryOutcome,
   type QueryRefusal,
+  type Ranking,
 } from "../src/index.ts";
 
 const SCHEMAS_DIR = resolve(import.meta.dir, "../../../schemas");
@@ -128,6 +130,22 @@ async function writerRun(cwd: string, env: Record<string, string>, argv: string[
   const status = await main(tool(), ["t", ...argv], async (run) => { await body(run); }, { cwd, env, stdout, stderr, resolved: (args) => ({ command: "count", args }) });
   const boot = stdout.objs[0] as { run?: string; paths?: { receipt?: string } } | undefined;
   return { status, stdout, stderr, run: boot?.run, receipt: boot?.paths?.receipt };
+}
+
+/** The writer's own example tool, run as a real process so the receipts under test are real. */
+const COUNT_EXAMPLE = resolve(import.meta.dir, "../../parley-emit/examples/count.ts");
+
+function realRun(dir: string, state: string) {
+  const spawned = Bun.spawnSync({
+    cmd: [process.execPath, "run", COUNT_EXAMPLE, "files"],
+    cwd: dir,
+    env: { ...process.env, XDG_STATE_HOME: state },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const out = new TextDecoder().decode(spawned.stdout);
+  const boot = JSON.parse(out.split("\n")[0]!) as { run: string };
+  return { status: spawned.exitCode, run: boot.run, out };
 }
 
 // ---- RD-1 locating the two receipt locations ----------------------------------------------
@@ -942,7 +960,7 @@ describe("RD-15 an accepted query is recorded and reads back", () => {
   });
 });
 
-describe("RD-16 the window, in time order, with nothing projected or ranked", () => {
+describe("RD-16 the window, echoed verbatim, with nothing excluded", () => {
   test("a window returns the records inside it, ascending by t, and is echoed verbatim", async () => {
     const { dir, env } = scratch();
     const receipts = repoReceipts(dir);
@@ -1014,7 +1032,7 @@ describe("RD-16 the window, in time order, with nothing projected or ranked", ()
     ]);
   });
 
-  test("the view is recorded and applied to nothing: two views over one window answer the same", async () => {
+  test("the view ranks the answer and hides none of it", async () => {
     const seed = (dir: string) => {
       const receipts = repoReceipts(dir);
       datedReceipt(receipts, runId(0), T0 - 2 * DAY);
@@ -1029,8 +1047,348 @@ describe("RD-16 the window, in time order, with nothing projected or ranked", ()
     const everything = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: WIDE }, { cwd: one.dir, env: one.env }));
     const failed = answered(await queryReceipts({ asker: { tool: "t" }, view: "what-failed", window: WIDE }, { cwd: two.dir, env: two.env }));
     const shape = (a: QueryAnswer) => a.records.map((r) => `${r.run}:${r.seq}:${r.event}`);
-    expect(shape(failed)).toEqual(shape(everything));
+    // The same records, as a set: the view orders the answer and filters none of it (§9).
+    expect([...shape(failed)].sort()).toEqual([...shape(everything)].sort());
+    // In two different orders: what-failed puts the error and the non-zero end first.
+    expect(shape(failed)).not.toEqual(shape(everything));
+    expect(failed.records.slice(0, 2).map((r) => r.event)).toEqual(["error", "end"]);
     expect(everything.view).toBe("everything");
     expect(failed.view).toBe("what-failed");
   });
+});
+
+// ---- RD-17, RD-18, RD-19 the purpose orders the answer ------------------------------------
+//
+// Spec §9: the purpose shapes the result, and it is the ranking function rather than a filter
+// applied afterwards (flyingrobots/parley#49). The key is (tier, outcome, t, run, seq), nothing is
+// dropped at any tier, and truncating the order is flyingrobots/parley#50.
+
+/** A five-record receipt: head, step, the tool's own result, and an end, stamped from `at`. */
+function richReceipt(dir: string, run: string, at: number, kind: "ok" | "failed" | "warned" = "ok"): string {
+  const path = join(dir, `${run}.jsonl`);
+  const lines: object[] = [{ ...head(run), t: at }, { ...step(run, 2), t: at + 1 }];
+  if (kind === "warned") {
+    lines.push({ event: "warning", t: at + 2, seq: 3, run, code: "input.encoding_guessed", problem: "no BOM; read as UTF-8", _schema: { id: "parley.warning", version: "1.0.0" } });
+  }
+  if (kind === "failed") {
+    lines.push({ event: "error", t: at + 2, seq: 3, run, code: "count.unreadable", problem: "it failed", _schema: { id: "parley.error", version: "2.0.0" } });
+  }
+  if (kind !== "failed") lines.push({ ...toolResult(run, 4), t: at + 3 });
+  lines.push({ ...end(run, 5, path, { status: kind === "failed" ? 2 : 0 }), t: at + 4 });
+  return writeReceipt(dir, run, lines);
+}
+
+/** A head, a result and an end: a run that recorded no decision at all. */
+function silentReceipt(dir: string, run: string, at: number): string {
+  const path = join(dir, `${run}.jsonl`);
+  return writeReceipt(dir, run, [
+    { ...head(run), t: at },
+    { ...toolResult(run, 2), t: at + 1 },
+    { ...end(run, 3, path), t: at + 2 },
+  ]);
+}
+
+const idOf = (r: LoadedRecord) => `${r.run}:${r.seq}`;
+const ids = (recs: readonly LoadedRecord[]) => recs.map(idOf);
+const timeOrder = (recs: readonly LoadedRecord[]) =>
+  [...recs].sort((a, b) => (a.t! - b.t!) || a.run.localeCompare(b.run) || (a.seq - b.seq)).map(idOf);
+
+/** Where a record landed in the answer, by `(run, seq)`. */
+const at = (answer: QueryAnswer, run: string, seq: number) => ids(answer.records).indexOf(`${run}:${seq}`);
+const placed = (answer: QueryAnswer, run: string, seq: number) =>
+  answer.ranking.ranked.find((r) => r.record.run === run && r.record.seq === seq)!;
+
+/** A LoadedRecord without a filesystem, for the cases that are about the pure function. */
+function loaded(run: string, seq: number, event: string, t: number, over: Record<string, unknown> = {}): LoadedRecord {
+  return {
+    run, seq, event, t, file: `/nowhere/${run}.jsonl`, line: seq, copies: 1, fromSidecar: false,
+    record: { event, t, seq, run, _schema: { id: `parley.${event}`, version: "1.0.0" }, ...over },
+    validation: { state: "unvalidated", schema: null, why: "no_schema_ref" },
+  };
+}
+
+describe("RD-17 the view's surface orders the answer", () => {
+  const seedThree = (dir: string) => {
+    const receipts = repoReceipts(dir);
+    richReceipt(receipts, runId(1), T0 - 3 * DAY);
+    richReceipt(receipts, runId(2), T0 - 2 * DAY);
+    richReceipt(receipts, runId(3), T0 - DAY);
+    return receipts;
+  };
+  const read = async (view: string) => {
+    const { dir, env } = scratch();
+    seedThree(dir);
+    return answered(await queryReceipts({ asker: { tool: "t" }, view, window: WIDE }, { cwd: dir, env }));
+  };
+
+  test("the view's surface ranks above the records that do not touch it", async () => {
+    const answer = await read("what-changed");
+    const surface = answer.ranking.ranked.filter((r) => r.tier === "surface");
+    expect(surface.map((r) => r.record.event)).toEqual(["result", "result", "result"]);
+    const last = Math.max(...surface.map((r) => r.rank));
+    const off = answer.ranking.ranked.filter((r) => r.tier !== "surface");
+    expect(off.length).toBe(9);
+    expect(Math.min(...off.map((r) => r.rank))).toBeGreaterThan(last);
+    expect(answer.records.length).toBe(12);
+    expect(answer.ranking.counts.failure).toBe(0);
+    expect(surface[0]!.why.join(" ")).toContain("what-changed");
+  });
+
+  test("how-it-decided puts the decisions first", async () => {
+    const answer = await read("how-it-decided");
+    expect(answer.records.slice(0, 3).map((r) => r.event)).toEqual(["receipt.step", "receipt.step", "receipt.step"]);
+    expect(answer.records.slice(3).some((r) => r.event === "receipt.step")).toBe(false);
+    expect(timeOrder(answer.records.slice(0, 3))).toEqual(ids(answer.records.slice(0, 3)));
+    expect(timeOrder(answer.records.slice(3))).toEqual(ids(answer.records.slice(3)));
+  });
+
+  test("what-ran puts the heads and the ends first", async () => {
+    const answer = await read("what-ran");
+    expect(answer.records.slice(0, 6).map((r) => r.event)).toEqual(["receipt.head", "end", "receipt.head", "end", "receipt.head", "end"]);
+    expect(answer.records.slice(6).map((r) => r.event)).toEqual(["receipt.step", "result", "receipt.step", "result", "receipt.step", "result"]);
+  });
+
+  test("the identity view ranks nothing", async () => {
+    const answer = await read("everything");
+    expect(ids(answer.records)).toEqual(timeOrder(answer.records));
+    expect(answer.ranking.ranked.every((r) => r.tier === "surface")).toBe(true);
+    expect(answer.ranking.impliesChange).toBe(false);
+  });
+
+  test("a view no record touches leaves the time order alone and hides nothing", async () => {
+    const { dir, env } = scratch();
+    const receipts = repoReceipts(dir);
+    silentReceipt(receipts, runId(1), T0 - 2 * DAY);
+    silentReceipt(receipts, runId(2), T0 - DAY);
+    const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "how-it-decided", window: WIDE }, { cwd: dir, env }));
+    expect(answer.records.length).toBe(6);
+    expect(ids(answer.records)).toEqual(timeOrder(answer.records));
+    expect(answer.ranking.ranked.every((r) => r.tier === "other")).toBe(true);
+    expect(answer.ranking.counts.surface).toBe(0);
+  });
+
+  test("two records stamped the same millisecond are ordered by run and seq", async () => {
+    const { dir, env } = scratch();
+    const receipts = repoReceipts(dir);
+    const [a, b] = [runId(7), runId(3)];
+    writeReceipt(receipts, a, [{ ...head(a), t: T0 }, { ...end(a, 2, join(receipts, `${a}.jsonl`)), t: T0 }]);
+    writeReceipt(receipts, b, [{ ...head(b), t: T0 }, { ...end(b, 2, join(receipts, `${b}.jsonl`)), t: T0 }]);
+    const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: WIDE }, { cwd: dir, env }));
+    expect(ids(answer.records)).toEqual([`${b}:1`, `${b}:2`, `${a}:1`, `${a}:2`]);
+  });
+
+  test("rankRecords is pure and its order does not depend on the input order", () => {
+    const { dir, env } = scratch();
+    seedThree(dir);
+    const plan = planQuery({ asker: { tool: "t" }, view: "what-changed", window: WIDE });
+    if (plan.refused) throw new Error("the plan was refused");
+    const records = loadReceipts({ cwd: dir, env }).bundles.flatMap((b) => b.records);
+    const once = rankRecords(plan.query, records);
+    const twice = rankRecords(plan.query, records);
+    const shuffled = rankRecords(plan.query, [...records].reverse());
+    expect(ids(twice.records)).toEqual(ids(once.records));
+    expect(ids(shuffled.records)).toEqual(ids(once.records));
+    const after = loadReceipts({ cwd: dir, env });
+    expect(ids(records)).toEqual(ids(after.bundles.flatMap((b) => b.records)));
+    expect(after.bundles.length).toBe(3);
+    expect(after.bundles.flatMap((b) => b.records).some((r) => r.event === "query")).toBe(false);
+  });
+
+  test("a record with no usable t sorts last in its tier rather than anywhere", () => {
+    const plan = planQuery({ asker: { tool: "t" }, view: "what-changed", window: WIDE });
+    if (plan.refused) throw new Error("the plan was refused");
+    const run = runId(1);
+    const undated: LoadedRecord = { ...loaded(run, 3, "result", 0, { _schema: { id: "t.count", version: "1.0.0" } }), t: null };
+    const ranking = rankRecords(plan.query, [
+      undated,
+      loaded(run, 4, "result", T0 + 10, { _schema: { id: "t.count", version: "1.0.0" } }),
+      loaded(run, 1, "receipt.head", T0),
+      loaded(run, 2, "end", T0 + 20, { status: 0 }),
+    ]);
+    expect(ids(ranking.records)).toEqual([`${run}:4`, `${run}:3`, `${run}:1`, `${run}:2`]);
+    expect(ranking.ranked[1]!.tier).toBe("surface");
+    expect(ranking.ranked[1]!.why.join(" ")).toContain("no usable t");
+    expect(ranking.records.length).toBe(4);
+  });
+});
+
+describe("RD-18 a purpose that implies a change puts the failures first", () => {
+  const seedPair = (dir: string) => {
+    const receipts = repoReceipts(dir);
+    richReceipt(receipts, runId(1), T0 - 2 * DAY, "failed");
+    richReceipt(receipts, runId(2), T0 - DAY, "ok");
+    return receipts;
+  };
+
+  test("a change purpose puts the failure surface first", async () => {
+    const { dir, env } = scratch();
+    seedPair(dir);
+    const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "what-changed", window: WIDE }, { cwd: dir, env }));
+    expect(answer.ranking.impliesChange).toBe(true);
+    expect(ids(answer.records).slice(0, 2)).toEqual([`${runId(1)}:3`, `${runId(1)}:5`]);
+    expect(answer.records.slice(0, 2).map((r) => r.event)).toEqual(["error", "end"]);
+    expect(placed(answer, runId(1), 3).tier).toBe("failure");
+    expect(placed(answer, runId(1), 3).why.join(" ")).toContain("failure surface");
+    expect(placed(answer, runId(1), 1).outcome).toBe("failed");
+    expect(placed(answer, runId(2), 1).outcome).toBe("succeeded");
+    // the failed run's head, off both surfaces, still ranks above the successful run's
+    expect(at(answer, runId(1), 1)).toBeLessThan(at(answer, runId(2), 1));
+    // and the successful run's result, on the surface, ranks above every off-surface record
+    expect(at(answer, runId(2), 4)).toBeLessThan(at(answer, runId(1), 1));
+    expect(answer.ranking.counts.failure).toBe(2);
+    expect(answer.records.length).toBe(8);
+  });
+
+  test("a view that implies no change promotes no failure", async () => {
+    const one = scratch(), two = scratch();
+    seedPair(one.dir); seedPair(two.dir);
+    const all = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: WIDE }, { cwd: one.dir, env: one.env }));
+    expect(ids(all.records)).toEqual(timeOrder(all.records));
+    expect(all.ranking.counts.failure).toBe(0);
+    expect(all.ranking.ranked.every((r) => r.outcome === "failed" || r.outcome === "succeeded")).toBe(true);
+
+    const ran = answered(await queryReceipts({ asker: { tool: "t" }, view: "what-ran", window: WIDE }, { cwd: two.dir, env: two.env }));
+    expect(ran.ranking.impliesChange).toBe(false);
+    expect(ran.ranking.counts.failure).toBe(0);
+    expect(ids(ran.records)[0]).toBe(`${runId(1)}:1`);
+    expect(ran.records[0]!.event).toBe("receipt.head");
+  });
+
+  test("a window with only successes ranks by surface and then by time", async () => {
+    const { dir, env } = scratch();
+    const receipts = repoReceipts(dir);
+    richReceipt(receipts, runId(1), T0 - 2 * DAY);
+    richReceipt(receipts, runId(2), T0 - DAY);
+    const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "what-changed", window: WIDE }, { cwd: dir, env }));
+    expect(answer.ranking.impliesChange).toBe(true);
+    expect(answer.ranking.counts.failure).toBe(0);
+    expect(answer.ranking.counts.succeededRuns).toBe(2);
+    expect(ids(answer.records).slice(0, 2)).toEqual([`${runId(1)}:4`, `${runId(2)}:4`]);
+    expect(ids(answer.records.slice(2))).toEqual(timeOrder(answer.records.slice(2)));
+    expect(answer.records.length).toBe(8);
+  });
+
+  test("a run whose end the window does not hold is undetermined, not guessed", async () => {
+    const { dir, env } = scratch();
+    const receipts = repoReceipts(dir);
+    richReceipt(receipts, runId(1), T0 - 3 * DAY, "failed");
+    richReceipt(receipts, runId(2), T0 - 2 * DAY);
+    richReceipt(receipts, runId(3), T0 - DAY);
+    const window = { from: 0, to: T0 - DAY + 1 };
+    const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "what-changed", window }, { cwd: dir, env }));
+    expect(answer.ranking.outcomes[runId(1)]).toBe("failed");
+    expect(answer.ranking.outcomes[runId(2)]).toBe("succeeded");
+    expect(answer.ranking.outcomes[runId(3)]).toBe("undetermined");
+    expect(answer.ranking.counts.undeterminedRuns).toBe(1);
+    // the undetermined run is the latest in time and still ranks above the run known to have succeeded
+    expect(at(answer, runId(3), 1)).toBeLessThan(at(answer, runId(2), 1));
+    expect(at(answer, runId(1), 1)).toBeLessThan(at(answer, runId(3), 1));
+    expect(placed(answer, runId(3), 1).why.join(" ")).toContain("not established");
+  });
+
+  test("a warning is on the failure surface and does not make its run a failed one", async () => {
+    const { dir, env } = scratch();
+    richReceipt(repoReceipts(dir), runId(1), T0 - DAY, "warned");
+    const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "what-changed", window: WIDE }, { cwd: dir, env }));
+    expect(placed(answer, runId(1), 3).record.event).toBe("warning");
+    expect(placed(answer, runId(1), 3).tier).toBe("failure");
+    expect(ids(answer.records)[0]).toBe(`${runId(1)}:3`);
+    expect(answer.ranking.outcomes[runId(1)]).toBe("succeeded");
+    expect(answer.ranking.counts.failedRuns).toBe(0);
+  });
+});
+
+describe("RD-19 ranking reorders and never filters", () => {
+  test("all five views answer with the same records and only the order differs", async () => {
+    const seed = (dir: string) => {
+      const receipts = repoReceipts(dir);
+      richReceipt(receipts, runId(1), T0 - 3 * DAY, "failed");
+      richReceipt(receipts, runId(2), T0 - 2 * DAY, "warned");
+      richReceipt(receipts, runId(3), T0 - DAY);
+    };
+    const orders: string[][] = [];
+    for (const view of VIEWS) {
+      const { dir, env } = scratch();
+      seed(dir);
+      const answer = answered(await queryReceipts({ asker: { tool: "t" }, view, window: WIDE }, { cwd: dir, env }));
+      orders.push(ids(answer.records));
+    }
+    const held = orders.map((o) => [...o].sort().join("|"));
+    expect(new Set(held).size).toBe(1);
+    expect(orders[0]!.length).toBe(13);
+    expect(new Set(orders.map((o) => o.join("|"))).size).toBeGreaterThan(1);
+  });
+
+  test("the golden case on receipts a real tool wrote", async () => {
+    const { dir, state, env } = scratch();
+    writeFileSync(join(dir, "a.txt"), "hello");
+    const first = realRun(dir, state);
+    symlinkSync(join(dir, "nothing-here"), join(dir, "dangling"));
+    const broke = realRun(dir, state);
+    rmSync(join(dir, "dangling"));
+    const third = realRun(dir, state);
+    const realDone = Date.now();
+    expect([first.status, broke.status, third.status]).toEqual([0, 2, 0]);
+
+    const window = { from: 0, to: realDone };
+    const all = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window }, { cwd: dir, env }));
+    expect(ids(all.records)).toEqual(timeOrder(all.records));
+    expect(new Set(all.records.map((r) => r.run))).toEqual(new Set([first.run, broke.run, third.run]));
+    expect(all.records.length).toBe(11);
+
+    const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "what-changed", window }, { cwd: dir, env }));
+    const real = new Set([first.run, broke.run, third.run]);
+    const realOnly = (a: QueryAnswer) => [...ids(a.records.filter((r) => real.has(r.run)))].sort();
+    expect(realOnly(answer)).toEqual(realOnly(all));
+    expect(realOnly(answer).length).toBe(11);
+    expect(answer.ranking.outcomes[broke.run]).toBe("failed");
+    expect(answer.ranking.outcomes[first.run]).toBe("succeeded");
+    expect(answer.ranking.outcomes[third.run]).toBe("succeeded");
+    expect(answer.records.slice(0, 2).map((r) => [r.run, r.event])).toEqual([[broke.run, "error"], [broke.run, "end"]]);
+    const results = answer.ranking.ranked.filter((r) => r.record.event === "result");
+    expect(results.length).toBe(2);
+    expect(results.every((r) => r.tier === "surface")).toBe(true);
+    for (const r of results) {
+      const own = answer.ranking.ranked.filter((o) => o.record.run === r.record.run && o.record.event !== "result");
+      expect(Math.min(...own.map((o) => o.rank))).toBeGreaterThan(r.rank);
+    }
+    expect(answer.load.counts.invalid).toBe(0);
+    expect(answer.load.counts.quarantined).toBe(0);
+  }, 60_000);
+
+  test("six thousand records rank in bounded time", () => {
+    const records: LoadedRecord[] = [];
+    for (let i = 0; i < 1000; i++) {
+      const run = runId(i);
+      const t = T0 - (1000 - i) * 1000;
+      const failed = i % 10 === 0;
+      records.push(loaded(run, 1, "receipt.head", t, { effects: { reads: [], writes: [], network: false, idempotent: true } }));
+      records.push(loaded(run, 2, "receipt.step", t + 1));
+      records.push(loaded(run, 3, "receipt.step", t + 2));
+      records.push(loaded(run, 4, "warning", t + 3, { code: "x.guessed", problem: "p" }));
+      records.push(failed
+        ? loaded(run, 5, "error", t + 4, { code: "x.failed", problem: "p" })
+        : loaded(run, 5, "result", t + 4, { _schema: { id: "t.count", version: "1.0.0" } }));
+      records.push(loaded(run, 6, "end", t + 5, { status: failed ? 2 : 0 }));
+    }
+    const thousand = records.slice(0, 1000);
+    const plan = planQuery({ asker: { tool: "t" }, view: "what-changed", window: WIDE });
+    if (plan.refused) throw new Error("the plan was refused");
+    const query = plan.query;
+    const startedSmall = Date.now();
+    const small = rankRecords(query, thousand);
+    const smallElapsed = Date.now() - startedSmall;
+    const started = Date.now();
+    const ranking: Ranking = rankRecords(query, records);
+    const elapsed = Date.now() - started;
+    expect(small.records.length).toBe(1000);
+    expect(ranking.records.length).toBe(6000);
+    expect(new Set(ids(ranking.records)).size).toBe(6000);
+    expect(ranking.counts.failedRuns).toBe(100);
+    // Measured on the development machine: ~1 ms for a thousand records and ~5 ms for six
+    // thousand, worst of seven runs ~10 ms. The bounds below are two orders of magnitude of
+    // headroom, so the case fails on a change of complexity rather than on a noisy machine.
+    expect(smallElapsed).toBeLessThan(250);
+    expect(elapsed).toBeLessThan(500);
+  }, 60_000);
 });

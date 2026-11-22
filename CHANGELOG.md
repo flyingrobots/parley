@@ -121,6 +121,34 @@ The spec and each message schema are versioned separately from this package.
   schema `parley.tooling.doctor` moves to **1.1.0** for the three new line types
   (`doctor.projection`, `doctor.gap`, `doctor.segment`) and the widened `stream` enum.
 
+- **The purpose orders a read's answer** (flyingrobots/parley#49). Spec §9 asks the purpose to
+  shape the result and says it is the ranking function, not a filter applied afterwards.
+  `parley-read` now ranks the records of a read by its `view`, under one total order stated as a
+  key: the **failure surface** first when the view is an answer about a change, then the **view's
+  own surface**, then **`(t, run, seq)` ascending**, which is the order a read answered in before
+  there was a ranking. Under a view that implies a change, a failed run's records rank above a run
+  whose outcome the window does not establish, and those above a run known to have succeeded —
+  within a tier, never across one. The ranking is a pure function (`rankRecords`) so that the
+  digest's truncation and excluded count (flyingrobots/parley#50) have something to truncate.
+
+  **Ranking reorders and never filters.** Over-filtering is the failure mode §9 names, so every
+  record in the window is in the answer whatever the view, held by a case over all five views and
+  by a golden case on receipts the writer's own example tool really wrote — three runs in one
+  directory, one of which really failed.
+
+  **Which purposes imply a change is derived from the decided vocabulary, not from a new field.**
+  `parley.query` 1.0.0 carries nothing saying so, and of the five view tokens exactly one is an
+  answer about a change: `what-changed`, "subject-matter writes, and the inputs they consumed",
+  which is the view §9's own example asks for. `what-failed` is left out deliberately, because
+  failure is already that view's whole surface. Each token's surface is read off the same
+  vocabulary. **No schema moved** and the spec is untouched; adding a view token would move
+  `parley.query` and `parley.lens` and would have to decide the new token's surface and whether it
+  implies a change.
+
+  Living docs: `docs/topics/parley-read/README.md` states the key, each view's surface, the
+  outcome rules and what the ranking is not; `docs/topics/reader/README.md` carries the derivation
+  beside the vocabulary.
+
 - The query entry point in the reader library (flyingrobots/parley#48): `queryReceipts` in
   `packages/parley-read` takes the asker, view, budget and window decided in
   flyingrobots/parley#46, refuses a read that states no asker, no view or no window with a

@@ -165,6 +165,10 @@
           "description": "Indexes into inputs whose path carried a replaced value."
         }
       }
+    },
+    "dry_run": {
+      "type": "boolean",
+      "description": "True when the run performed no subject-matter writes, no mutating remote action and no retention deletion (spec \u00a74.3). Absent means false."
     }
   }
 }

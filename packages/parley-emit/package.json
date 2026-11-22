@@ -1,0 +1,32 @@
+{
+  "name": "@flyingrobots/parley-emit",
+  "version": "0.1.0",
+  "description": "A writer for the Parley output protocol: bootstrap, receipt, sequence, redaction, end, exit status.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "scripts": {
+    "test": "bun test",
+    "sync-schemas": "bun run scripts/sync-schemas.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/flyingrobots/parley.git",
+    "directory": "packages/parley-emit"
+  },
+  "author": "James Ross",
+  "engines": {
+    "bun": ">=1.2"
+  }
+}

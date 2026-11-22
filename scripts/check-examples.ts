@@ -19,7 +19,7 @@ export type Verdict =
 
 type Stamped = Verdict & { _schema: typeof OUTPUT_SCHEMA };
 
-const DEFAULT_ROOTS = ["README.md", "spec", "docs"];
+const DEFAULT_ROOTS = ["README.md", "spec", "docs", "packages"];
 const PROTOCOL_PREFIX = "parley.";
 
 function walkMarkdown(root: string): string[] {

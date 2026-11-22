@@ -46,6 +46,6 @@ conforming run one rule at a time and asserts the doctor names that rule.
 ## Status
 
 The doctor is repository tooling. It reads parley output but does not itself bootstrap, write a
-receipt or close with `end`; once the writer library
-([flyingrobots/parley#1](https://github.com/flyingrobots/parley/issues/1)) exists the doctor
-will be built on it and conform.
+receipt or close with `end`. The writer library now exists
+([parley-emit](../parley-emit/README.md)); rebuilding the doctor on it so that it conforms is
+tracked as follow-up work, not done.

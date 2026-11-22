@@ -10,7 +10,9 @@ validates. Every run announces itself, says where its receipt went, and leaves t
 disk whether anyone asked for it or not. A history layer in which reading is itself a recorded
 act, carrying who is asking and why, is designed but not yet built.
 
-> **Status: proposal.** The [specification](spec/) is written; the libraries are not. See the
+> **Status: proposal.** The [specification](spec/) is written. The writer library,
+> [`@flyingrobots/parley-emit`](packages/parley-emit/README.md), is built and not yet published;
+> the reader and the history stream are not built. See the
 > [open issues](https://github.com/flyingrobots/parley/issues).
 
 ## Two layers, and the dependency runs one way

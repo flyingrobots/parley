@@ -8,10 +8,16 @@
   "scripts": {
     "check": "bun run scripts/check-examples.ts",
     "test": "bun test",
-    "doctor": "bun run scripts/doctor.ts"
+    "doctor": "bun run scripts/doctor.ts",
+    "typecheck": "tsc -p packages/parley-emit/tsconfig.json"
   },
   "devDependencies": {
     "ajv": "^8.17.1",
-    "ajv-formats": "^3.0.1"
-  }
+    "ajv-formats": "^3.0.1",
+    "bun-types": "^1.4.5",
+    "typescript": "^7.0.2"
+  },
+  "workspaces": [
+    "packages/*"
+  ]
 }

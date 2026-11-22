@@ -18,7 +18,7 @@ bun run check   # the checker alone; add --human for prose
 
 CI runs both on every push to `main` and every pull request (`.github/workflows/checks.yml`).
 
-The checker is `scripts/check-examples.ts`. It walks `README.md`, `spec/` and `docs/`, finds every
+The checker is `scripts/check-examples.ts`. It walks `README.md`, `spec/`, `docs/` and `packages/`, finds every
 fenced block whose info string starts with `json` or `jsonl`, and for each document:
 
 1. parses it;

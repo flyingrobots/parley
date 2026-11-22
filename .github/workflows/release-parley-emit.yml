@@ -1,0 +1,135 @@
+name: Release parley-emit
+
+# A tag `parley-emit-vX.Y.Z` on main releases packages/parley-emit: sanity checks, a GitHub
+# release carrying the tarball, then publication to npm through OIDC trusted publishing (no
+# token in the repository). The package version moves on its own; a release here publishes no
+# schema version (spec §4.5).
+
+on:
+  push:
+    tags:
+      - "parley-emit-v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: release-parley-emit-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PACKAGE_DIR: packages/parley-emit
+
+jobs:
+  sanity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Verify the tag matches the package version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#parley-emit-v}"
+          PKG_VERSION=$(bun -e "console.log(JSON.parse(await Bun.file('$PACKAGE_DIR/package.json').text()).version)")
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::tag version ($TAG_VERSION) does not match $PACKAGE_DIR/package.json ($PKG_VERSION)"
+            exit 1
+          fi
+          echo "version $TAG_VERSION"
+
+      - name: Verify the changelog names this version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#parley-emit-v}"
+          grep -q "^## \[$TAG_VERSION\]" "$PACKAGE_DIR/CHANGELOG.md" || { echo "::error::$PACKAGE_DIR/CHANGELOG.md has no heading for $TAG_VERSION"; exit 1; }
+
+      - name: Verify package.json has the required fields
+        run: |
+          bun -e "
+            const pkg = JSON.parse(await Bun.file('$PACKAGE_DIR/package.json').text());
+            const required = ['name', 'version', 'description', 'license', 'repository', 'files', 'engines', 'publishConfig'];
+            const missing = required.filter((f) => !pkg[f]);
+            if (missing.length) { console.error('missing package.json fields:', missing.join(', ')); process.exit(1); }
+            if (!pkg.files.length) { console.error('files is empty'); process.exit(1); }
+            if (pkg.publishConfig.access !== 'public') { console.error('publishConfig.access must be public'); process.exit(1); }
+            console.log('package.json fields present');
+          "
+
+      - run: bun install --frozen-lockfile
+      - run: bun test
+      - run: bun run check
+      - run: bun run typecheck
+
+      - name: Verify the shipped schemas match the drafts
+        run: |
+          cd "$PACKAGE_DIR"
+          cp src/schemas.ts /tmp/schemas.before.ts
+          bun run scripts/sync-schemas.ts > /dev/null
+          if ! cmp -s <(grep -v '^export const SCHEMA_SOURCE' src/schemas.ts) <(grep -v '^export const SCHEMA_SOURCE' /tmp/schemas.before.ts); then
+            echo "::error::src/schemas.ts is stale; run bun run sync-schemas in $PACKAGE_DIR"
+            git diff --stat
+            exit 1
+          fi
+          git checkout -- src/schemas.ts
+
+      - name: Verify the pack contents
+        run: cd "$PACKAGE_DIR" && npm pack --dry-run
+
+  release:
+    needs: sanity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+
+      - name: Extract the version and its changelog section
+        id: meta
+        run: |
+          VERSION="${GITHUB_REF_NAME#parley-emit-v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          awk "/^## \[${VERSION}\]/{found=1; next} /^## \[/{if(found) exit} found{print}" "$PACKAGE_DIR/CHANGELOG.md" > release-notes.md
+          [ -s release-notes.md ] || echo "Release @flyingrobots/parley-emit $VERSION" > release-notes.md
+
+      - name: Build the release tarball
+        run: |
+          mkdir -p release-assets
+          (cd "$PACKAGE_DIR" && npm pack --pack-destination "$GITHUB_WORKSPACE/release-assets")
+          (cd release-assets && sha256sum -- *.tgz > SHA256SUMS)
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "@flyingrobots/parley-emit ${{ steps.meta.outputs.version }}" \
+            --notes-file release-notes.md \
+            --verify-tag \
+            release-assets/*.tgz release-assets/SHA256SUMS
+
+  publish:
+    needs: release
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - run: bun install --frozen-lockfile
+
+      - name: Publish to npm with OIDC provenance (npm 11.5.1 or later for trusted publishing)
+        run: cd "$PACKAGE_DIR" && npx -y npm@latest publish --access public --provenance

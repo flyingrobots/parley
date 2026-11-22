@@ -7,6 +7,10 @@ The spec and each message schema are versioned separately from this package.
 
 ### Added
 
+- `.github/workflows/release-parley-emit.yml`: a tag `parley-emit-vX.Y.Z` runs the checks,
+  creates the GitHub release with the tarball and publishes to npm through OIDC trusted
+  publishing. Documented in `docs/workflows/release-parley-emit/`.
+
 - `packages/parley-emit`: the writer library `@flyingrobots/parley-emit` 0.1.0, a Bun workspace
   package, published to npm on 2026-11-22 (tag `parley-emit-v0.1.0`); the package version moves
   on its own and this release publishes no schema version. A tool conforms by constructing a writer and emitting through it. Its own changelog

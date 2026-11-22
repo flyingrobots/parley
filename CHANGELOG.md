@@ -17,7 +17,9 @@ The spec and each message schema are versioned separately from this package.
   - `asker` — who the read is for, and the context the rest is inferred from. A record: `tool`
     required, `cwd` (absolute POSIX) and `task` optional. `tool` comes from the calling program's
     own identity and is never invented (§2.1), so a read that cannot name its caller is refused;
-    `cwd` comes from the process and `task` from the environment, each omitted when absent.
+    `cwd` comes from the process, omitted when absent. `task` is always supplied by the caller and
+    never inferred — there is no environment variable for it (flyingrobots/parley#61) — omitted
+    when the caller does not state it.
   - `view` — the shape of the answer, one token from a closed set of five: `what-ran`,
     `what-failed`, `what-changed`, `how-it-decided`, `everything`. Four are projections the
     treatment's taxonomy recognises as distinct families; `everything` is the identity, and is in
@@ -66,6 +68,15 @@ The spec and each message schema are versioned separately from this package.
   on the research page. New living reference: `docs/topics/reader/README.md`. Research:
   `docs/topics/related-work/observer-geometry.md` (flyingrobots/parley#45). `parley-emit`'s shipped
   copy of the drafts is re-synced, so discovery serves sixteen schemas; that moves no version.
+
+- **There is no environment variable for `asker.task`** (flyingrobots/parley#61). The #46 entry
+  above said `task` came "from the environment" without naming a variable, and the query entry
+  point (flyingrobots/parley#48) implemented the gap literally: the task comes from the request
+  and is omitted when the caller does not state it, because reading an invented variable name
+  would itself be inventing an identity field (§2.1). The decision corrects the record rather than
+  the code: a task id is always supplied by the caller, never inferred. `parley.query` 1.0.0's
+  description of `asker.task` is corrected in place, since the schema is still a draft under this
+  `Unreleased` section (§4.5); that moves no version.
 
 ### Added
 

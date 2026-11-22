@@ -366,10 +366,10 @@ function byTime(a: LoadedRecord, b: LoadedRecord): number {
  */
 export async function queryReceipts(request: QueryRequest, opts: QueryOptions = {}): Promise<QueryOutcome> {
   const cwd = resolve(opts.cwd ?? process.cwd());
-  // §9's inference, as flyingrobots/parley#46 settled it: `asker.cwd` comes from the process when
-  // the caller does not state it. `asker.task` is "from the environment" in that decision without
-  // a variable named, so it is taken from the request and omitted when absent rather than read out
-  // of a variable this library would be inventing (§2.1).
+  // §9's inference, as flyingrobots/parley#46 settled it and flyingrobots/parley#61 decided in
+  // full: `asker.cwd` comes from the process when the caller does not state it. `asker.task` is
+  // never inferred at all — there is no environment variable for it — so it is taken from the
+  // request and omitted when the caller does not state it.
   const plan = planQuery({ ...request, asker: { ...request.asker, cwd: request.asker?.cwd ?? cwd } });
   if (plan.refused) return plan;
   const query = plan.query;

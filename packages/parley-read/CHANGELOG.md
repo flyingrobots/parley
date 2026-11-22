@@ -34,15 +34,40 @@ its manifest so it cannot be published by accident.
   exact pair. The answer names the record by `(run, seq)`. The read's own run identity is
   `parley-read` at the package version, or whatever a host program embedding the reader names
   itself; that is not the asker.
-- The answer is the window's records, ascending by `t` with `(run, seq)` breaking a tie, with the
+- **The view orders the answer, and filters none of it** (flyingrobots/parley#49). Spec §9 says the
+  purpose shapes the result and is the ranking function rather than a filter applied afterwards, so
+  `rankRecords(query, records)` is that order on its own: a pure function from an accepted query
+  and records to the same records, reordered, reading nothing and writing nothing. One total order
+  on a key per record, compared left to right — the **failure surface** when the view is an answer
+  about a change, then the **view's own surface**, then **`(t, run, seq)` ascending** — so a view
+  whose surface no record touches leaves the answer exactly as it was, and `everything` ranks
+  nothing. Under a view that implies a change, a failed run's records also rank above an
+  `undetermined` run's and those above a succeeded run's, within a tier and never across one.
+  `queryReceipts` answers through it and carries the whole key back in `answer.ranking`: each
+  record's `rank`, `tier`, `outcome` and the `why` behind them, the per-run outcomes and the tier
+  counts.
+- Each view's surface is read off the vocabulary's own definition of its token
+  (flyingrobots/parley#46), and **which token implies a change is derived the same way rather than
+  from a new field**: `parley.query` 1.0.0 carries none, and of the five tokens exactly one is an
+  answer about a change, `what-changed`. `what-failed` is deliberately not in that set, because
+  failure is already its whole surface. No schema moved and `spec/` is untouched.
+- A run's outcome is established from **the records being ranked**, not from the whole history: an
+  `error`, a `startup.failed` or a non-zero `end` is `failed`, an `end` of zero is `succeeded`, and
+  anything else — including a run whose `end` the window does not hold — is `undetermined` rather
+  than counted as a success (§1.2a). A `warning` is on the failure surface and does not make its
+  run a failed one (§6.1).
+- **Ranking never drops a record.** Over-filtering is the failure mode §9 warns about, so every
+  record in the window is in the answer whatever the view, pinned by a case over all five views and
+  by a golden case on receipts a real tool wrote. Six thousand records rank in about 5 ms here,
+  against a stated bound in the suite.
+- The answer is the window's records, ordered by the view, with the
   window echoed verbatim and the read's own records excluded — a read does not answer itself, and
   `counts` says how many were scanned, in the window, undated and the read's own. A record whose
   `t` is not a number cannot be placed in a window and is counted rather than dropped silently.
-- Deliberately **not** done, each the safe intermediate state its issue names: the view is
-  recorded and projects nothing (flyingrobots/parley#49), the budget is recorded and bounds
-  nothing, with no excluded count claimed (flyingrobots/parley#50), and no `parley.lens` is
-  emitted, because a read that returns the records has no loss to state. A test pins two views
-  over one window answering the same, so the limit cannot drift unnoticed.
+- Deliberately **not** done, the safe intermediate state flyingrobots/parley#50 names: the budget
+  is recorded and bounds nothing, no excluded count is claimed, and no `parley.lens` is emitted,
+  because a read that returns every record it ranked has no loss to state. A test pins all five
+  views answering with the same records, so a filter cannot creep in unnoticed.
 - A read states a retention policy that deletes nothing (`NO_RETENTION`): §5.1 asks every tool for
   one, and expiring the receipts a read was asked to read would destroy the history in order to
   answer a question about it.

@@ -15,9 +15,20 @@
       "name": "@flyingrobots/parley-emit",
       "version": "0.1.0",
     },
+    "packages/parley-read": {
+      "name": "@flyingrobots/parley-read",
+      "version": "0.1.0",
+      "dependencies": {
+        "@flyingrobots/parley-emit": "workspace:*",
+        "ajv": "^8.17.1",
+        "ajv-formats": "^3.0.1",
+      },
+    },
   },
   "packages": {
     "@flyingrobots/parley-emit": ["@flyingrobots/parley-emit@workspace:packages/parley-emit"],
+
+    "@flyingrobots/parley-read": ["@flyingrobots/parley-read@workspace:packages/parley-read"],
 
     "@types/node": ["@types/node@26.6.6", "", { "dependencies": { "undici-types": "~8.9.0" } }, "sha512-MzQj+8Kx3XI40OmUAE6Qoh58ZMNstNNMwn2nfd3qWsfe7nDNSqJNzes4njhz6AHwrSHOffSLwXU6yb474Q4aog=="],
 

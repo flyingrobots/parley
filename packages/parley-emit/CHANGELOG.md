@@ -7,6 +7,52 @@ on its own; the spec and each message schema move separately (spec §4.4).
 
 ### Added
 
+- **A user-defined transform on the history sink** (flyingrobots/parley#57). The stream copy of a
+  run can be a projection of the receipt copy rather than the whole of it. Configure it in code:
+
+  ```ts
+  await main(tool, argv, handler, { history: { transform, name: "drop-step-detail" } });
+  ```
+
+  `MainOptions.history` now takes a sink, `null`, or `{ sink?, transform?, name? }`; the two older
+  forms behave exactly as before. The transform is handed the parsed record the receipt already
+  holds — redacted, as §5.3 left it — and returns a record to put on the stream or nothing to
+  withhold the line. There is no environment variable naming a module to execute, deliberately.
+
+  The writer enforces the contract around it, so nothing the transform does can put an invalid
+  line or a changed envelope on the shared timeline: `event`, `t`, `seq`, `run` and `_schema` are
+  taken off whatever it returns and the receipt line's are put back (§1.3); the returned body is
+  re-validated against the schema for its exact advertised pair (§4.5), this package's drafts plus
+  the schema the tool declared on the emitted or error type (§4.2); and four conditions withhold
+  the line and raise one warning naming the withheld `seq`, on stderr and in the receipt, without
+  touching the exit status (§6.1): `history.transform_failed` (it threw),
+  `history.transform_invalid` (the body no longer validates), `history.transform_unredacted` (the
+  body carries a declared secret value the writer had already replaced) and
+  `history.transform_uncheckable` (no schema document for the exact pair, or one outside the
+  subset the checker implements).
+
+  The stream copy of a projected run opens with a **`parley.history.transform` 1.0.0** line naming
+  the transform and the SHA-256 of its source text as the runtime renders it. It reaches the
+  stream alone, so it takes a `seq` the receipt has no line at, and the receipt accounts for that
+  gap as a `receipt.step`. A run with no transform configured has no opening line, no step and no
+  difference in any byte; a transform with no stream configured is equally inert.
+
+  New: `src/check.ts` with `checkRecord`, a bounded JSON Schema checker — this package has no
+  runtime dependencies, so re-validation is implemented here for the constructs the protocol's own
+  schemas use, and it reports a keyword it does not implement instead of ignoring it. A test
+  asserts every shipped draft is inside the subset. New exports from `src/history.ts`:
+  `historyProjection`, `transformDigest`, `transformName`, `isHistorySink`, and the types
+  `HistoryTransform`, `HistoryConfig`, `HistoryProjection`. `Run` grows `declareProjection`,
+  `noteProjection` and `withheldFromHistory`.
+
+  Three decisions the README states under its own heading so the owner can overrule each: a line
+  the writer cannot re-validate is withheld rather than passed through; the receipt records the
+  `seq` the opening line took; and a transform may withhold `end`, so a copy on the stream can
+  end without one.
+
+- `src/schemas.ts` re-synced from the repository drafts: the package now ships seventeen, adding
+  `parley.history.transform` 1.0.0, so `--schema` serves it like any other writer-owned type.
+
 - The shared history stream (spec §8, informative): an opt-in second sink that receives the bytes
   of the local receipt, so one timeline spans tools, repositories, agents and people. Opt in with
   `PARLEY_HISTORY` naming a directory, or by creating `$XDG_STATE_HOME/parley/history` once;

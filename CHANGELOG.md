@@ -69,6 +69,47 @@ The spec and each message schema are versioned separately from this package.
 
 ### Added
 
+- **A user-defined transform on the history sink, enforced** (flyingrobots/parley#57). A copy of a
+  run on the shared stream of §8 can now be a **projection** of the receipt copy rather than the
+  whole of it, because a path, a hostname or a repository name that is fine in a local receipt can
+  be wrong on a timeline other people and tools read. The transform is configured in code,
+  `main(tool, argv, handler, { history: { transform } })`, is handed the parsed record the receipt
+  already holds — redacted, as §5.3 left it — and returns a record to put on the stream or nothing
+  to withhold the line.
+
+  The writer enforces the contract around it, so nothing the transform does can put an invalid
+  line or a changed envelope on the shared timeline: `event`, `t`, `seq`, `run` and `_schema` are
+  taken off whatever it returns and the receipt line's are put back; the returned body is
+  re-validated against the schema for its **exact** advertised pair (§4.5); and a throw, a body
+  that no longer validates, a body carrying a declared secret value the writer had already
+  replaced, or a pair this writer holds no schema document for each withholds the line and raises
+  one warning naming the withheld `seq` (`history.transform_failed`,
+  `history.transform_invalid`, `history.transform_unredacted`,
+  `history.transform_uncheckable`). A warning is never an error and never changes the exit status
+  (§6.1). An environment variable naming a module to execute is out of scope and a separate
+  decision.
+
+  **New draft schema: `parley.history.transform` 1.0.0.** The stream copy of a projected run opens
+  with it, naming the transform and the SHA-256 of its source text as the runtime renders it, so a
+  reader can tell a projected copy from a whole one and by what. It carries the standard envelope
+  like every `parley.*` message and reaches the stream alone, which is why it takes a `seq` the
+  receipt has no line at; the receipt accounts for that gap as a `receipt.step`. A run with no
+  transform configured has no opening line, no step and no difference in any byte. The schema is a
+  draft under this entry and may change in place (§4.5).
+
+  **§8 (informative) gains the sentence** that a copy on the shared stream may be a projection of
+  the receipt copy, that such a copy says so by naming the projection that wrote it, and that a
+  reader finding the same record in more than one copy should prefer the least-projected one. The
+  spec version does not move: §8 is informative, nothing in it is a conformance requirement in
+  v0.2, and no normative section, message shape or exit status changed. The reader's copy
+  preference is flyingrobots/parley#58.
+
+  **Tooling.** `scripts/doctor.ts` grows `--history SEGMENT.jsonl`, which reads a segment of the
+  shared stream rather than one run's three streams and reports each run's projection by name and
+  digest, every `seq` a copy does not carry, and the lines that could not be parsed. Its output
+  schema `parley.tooling.doctor` moves to **1.1.0** for the three new line types
+  (`doctor.projection`, `doctor.gap`, `doctor.segment`) and the widened `stream` enum.
+
 - The shared history stream of spec §8, inside the writer: `packages/parley-emit` appends every
   line of the receipt to a dated daily segment when one is configured, by `PARLEY_HISTORY` or by
   `$XDG_STATE_HOME/parley/history` existing, so one timeline spans tools, repositories, agents

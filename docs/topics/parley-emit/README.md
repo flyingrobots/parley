@@ -124,7 +124,7 @@ projection and the SHA-256 of the transform's source text as the runtime renders
 can tell a projected copy from a whole one and by what:
 
 ```jsonl
-{"event":"history.transform","t":1795386946089,"seq":1,"run":"01M82PDCH4QHRWVEWYJK07T512","name":"drop-step-detail","sha256":"8f7a2e4c1b5d0937e6a4c8fb21d3059ae7c64b18df2a905c3e7b14682fd9c0a5","_schema":{"id":"parley.history.transform","version":"1.0.0"}}
+{"event":"history.transform","t":1795390370293,"seq":1,"run":"01M82SNWFCYTA4NZ7K43TESPAT","name":"drop-step-detail","sha256":"3d6f8595191136c54884fe832e0fb0242116bf967441074e7c0cf577108319f3","_schema":{"id":"parley.history.transform","version":"1.0.0"}}
 ```
 
 That line reaches the stream and no other sink, so it takes a `seq` the receipt has no line at,
@@ -134,8 +134,18 @@ gap on the stream alone. With no transform configured there is no opening line, 
 projection and no difference in any byte.
 
 `bun run doctor --history SEGMENT.jsonl` reads a segment rather than a run and reports each run's
-projection by name and digest and every `seq` its copy does not carry; see
-[conformance](../conformance/README.md#reading-a-segment-of-the-shared-stream).
+projection by name and digest and every `seq` its copy does not carry. Captured from the `count`
+example under a `what-ran` transform, which withholds every `receipt.step`, on 2026-11-22:
+
+```text
+PROJECTION  01M82SPNTW39HDZABES1HFYRAC  what-ran  5dde666fc322…  (history:1)
+GAP         01M82SPNTW39HDZABES1HFYRAC  seq 3 is not in this copy
+GAP         01M82SPNTW39HDZABES1HFYRAC  seq 4 is not in this copy
+SEGMENT     4 line(s); 1 run(s), 1 projected, 2 gap(s), 0 without end, 0 unparseable
+```
+
+See [conformance](../conformance/README.md#reading-a-segment-of-the-shared-stream) for what the
+segment mode establishes and what it does not.
 
 The dependency runs one way. The stream consumes the format; the format never requires the
 stream. Querying it is flyingrobots/parley#2, the reader's preference for the least-projected

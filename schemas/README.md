@@ -26,9 +26,13 @@ Released versions are snapshotted, immutable, under `released/<id>/<version>.sch
 | `parley.schema` | 1.0.0 (draft) | One message schema, carried by discovery | §4.1, §4.2 |
 | `parley.query` | 1.0.0 (draft) | A read against the history, recorded as an event: asker, view, budget, window | §9 |
 | `parley.lens` | 1.0.0 (draft) | The lens a result carries: view, asker, budget, window, loss bound, records | §9 |
+| `parley.history.transform` | 1.0.0 (draft) | The opening line of a projected copy of a run on the shared stream: the projection's name and the digest of its source | §8 |
 
 Every message type the spec requires has a draft schema here and a validated example in the
-spec. The last two are for the reader §9 describes, which is designed and not built; their
+spec. `parley.query` and `parley.lens` are for the reader §9 describes, which is designed and not
+built; `parley.history.transform` belongs to the history stream of §8, which is informative and
+whose writer side exists, and its example lives in
+[docs/topics/parley-emit](../docs/topics/parley-emit/README.md). The first two's
 examples live in [docs/topics/reader](../docs/topics/reader/README.md) and the representation they
 encode was decided in
 [flyingrobots/parley#46](https://github.com/flyingrobots/parley/issues/46).

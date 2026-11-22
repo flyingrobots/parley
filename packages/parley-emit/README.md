@@ -85,7 +85,7 @@ conforming (`bun run doctor --stdout ... --stderr ... --receipt ...`).
 | §5.4, §3.3 | The default stdout and stderr sinks deliver whole lines: a partial write continues and a full pipe (EAGAIN on a descriptor the runtime left non-blocking) waits and retries, as a blocking write would. A sink failure before `end` is an `error` on the sinks still working and status 4; a failed bootstrap write is reported after the head, so the head stays the receipt's first line; after `end` nothing is written and the status alone carries a failure; emitting after `end` throws `ParleyClosed`. A record or `receiptExtra` carrying `t`, `seq`, `run` or `_schema` is a `TypeError` |
 | §1.2 | Every function on `console`, called from the moment `main` starts until it returns, is captured into the run's receipt as a step; text captured before the receipt exists is held and written after the head. This contains libraries that log through `console`; it does not contain a library that writes to a file descriptor directly, or a timer that fires after `end` (see the exceptions below) |
 | §1.1 | `--human` (alias `--humanize`) renders stdout and stderr through the tool's `human` function, falling back to one line per event; the bootstrap line and a successful `end` render as nothing, so `tool --human \| gh pr comment --body-file -` posts only the tool's prose, and a failed `end` names the receipt path; the receipt is unchanged |
-| §8 (informative) | An opt-in second sink: with `PARLEY_HISTORY` set or `$XDG_STATE_HOME/parley/history` present, every line of the receipt is also appended to a dated daily segment shared by every tool, repository and agent on the machine, named in `paths.history` and declared in `effects.bookkeeping`. Same bytes, so the same redaction; one whole line per write under `O_APPEND`; retention by whole segment; a stream that cannot be written is a warning and never an error, a sink failure or a different exit status. With nothing configured, none of this happens (see below) |
+| §8 (informative) | An opt-in second sink: with `PARLEY_HISTORY` set or `$XDG_STATE_HOME/parley/history` present, every line of the receipt is also appended to a dated daily segment shared by every tool, repository and agent on the machine, named in `paths.history` and declared in `effects.bookkeeping`. Same bytes, so the same redaction; one whole line per write under `O_APPEND`; retention by whole segment; a stream that cannot be written is a warning and never an error, a sink failure or a different exit status. With a `history.transform` configured the stream copy is a projection of those bytes instead, opening with a `parley.history.transform` line that names it, with the envelope reattached and the body re-validated around the transform. With nothing configured, none of this happens (see below) |
 
 ## Arguments and flags
 
@@ -164,6 +164,10 @@ Turn it on in one of two ways:
 | `$XDG_STATE_HOME/parley/history` exists | Used when `PARLEY_HISTORY` is unset, so you opt in once with `mkdir -p` and never by surprise |
 | `PARLEY_HISTORY=off` | Off, even when the state directory exists (`0`, `false`, `no`, `none` and empty do the same) |
 | `PARLEY_HISTORY_DAYS=N` | How many daily segments to keep, today's included; the default is 14 |
+
+What reaches it is configured in code, not by the environment: `MainOptions.history` takes a sink,
+`null`, or `{ sink?, transform?, name? }`, and the transform is the subject of
+[its own section below](#a-transform-on-the-stream-copy).
 
 What the stream receives is **the bytes of the local receipt**, each line appended as the receipt
 takes it: the head, every reasoning step, every `redaction` and `sidecar` event, every copy of a
@@ -261,6 +265,114 @@ failure, and neither changes the exit status: §8 is informative and opt-in, so 
 cannot be the thing that fails the program. The receipt is the record; the stream is a
 convenience.
 
+### A transform on the stream copy
+
+A sink is an observer with its own aperture. The receipt sink has the identity projection; the
+shared timeline may need a narrower one, because a path, a hostname or a repository name that is
+fine in a local receipt can be wrong on a stream other people and tools read. The transform is
+that aperture, and it is configured **in code**:
+
+```ts
+const dropNames: HistoryTransform = (rec) => {
+  if (rec.event !== "receipt.step") return rec;
+  const { detail: _detail, ...rest } = rec;
+  return rest;
+};
+
+const status = await main(tool, ["count", ...process.argv.slice(2)], handler, {
+  history: { transform: dropNames, name: "drop-step-detail" },
+});
+```
+
+It is handed the parsed record the receipt already holds — redacted, as §5.3 left it — and returns
+a record to put on the stream or **nothing** to withhold the line. There is no environment
+variable naming a module to execute, deliberately: a program that reads its own output policy out
+of the environment can be made to run code by whoever sets it.
+
+**The writer enforces the contract around it.** Nothing the transform does can put an invalid line
+or a changed envelope on the shared timeline:
+
+| Rule | Behaviour |
+| --- | --- |
+| The envelope is not the transform's | `event`, `t`, `seq`, `run` and `_schema` are taken off whatever it returns and the receipt line's are put back, so the two copies of one event agree on all five (§1.3). It may read them; it cannot change them |
+| The body is re-validated | Against the schema for its **exact** advertised pair (§4.5): the drafts this package ships, plus the schema the tool declared on the emitted or error type (§4.2) |
+| An unverifiable line is withheld | A pair this writer holds no schema document for, or one whose schema uses a construct the checker does not implement, is `history.transform_uncheckable`. An unchecked projection is never passed off as a checked one |
+| Everything that goes wrong is a warning | A throw is `history.transform_failed`; a body that no longer validates is `history.transform_invalid`; a body that carries a declared secret value the writer had already replaced is `history.transform_unredacted`. Each names the withheld `seq`, goes to stderr and the receipt, and leaves the exit status exactly where it was (§6.1) |
+
+**The stream copy says it is a projection.** Its first line for the run is a
+`parley.history.transform` naming the transform and the SHA-256 of its source text as the runtime
+renders it. Captured from the `count` example above with `dropNames` configured, on 2026-11-22:
+
+```jsonl
+{"event":"history.transform","t":1795390370293,"seq":1,"run":"01M82SNWFCYTA4NZ7K43TESPAT","name":"drop-step-detail","sha256":"3d6f8595191136c54884fe832e0fb0242116bf967441074e7c0cf577108319f3","_schema":{"id":"parley.history.transform","version":"1.0.0"}}
+```
+
+The digest is honestly what it says: a digest of **source text as the runtime renders it**, not of
+a build. Two transforms with different source differ; one function closing over different values
+has the same source and the same digest, so name the configuration when that distinction matters.
+
+That line reaches the stream and no other sink, so it takes a `seq` the receipt has no line at. The
+receipt accounts for the gap rather than leaving it unexplained — the same run's receipt, whose
+step at `seq 4` still carries the names the stream copy dropped:
+
+```jsonl
+{"event":"receipt.step","t":1795390370294,"seq":3,"run":"01M82SNWFCYTA4NZ7K43TESPAT","decision":"the shared stream's copy of this run is a projection by drop-step-detail","because":"a history transform is configured, so the stream copy is narrowed and says so: seq 1 is its parley.history.transform line, which reaches the stream alone and is why this receipt has no line at that seq. The transform's source digests to 3d6f8595191136c54884fe832e0fb0242116bf967441074e7c0cf577108319f3. The receipt is never projected (§8, informative)","_schema":{"id":"parley.receipt.step","version":"1.0.0"}}
+{"event":"receipt.step","t":1795390370294,"seq":4,"run":"01M82SNWFCYTA4NZ7K43TESPAT","decision":"counted 2 regular file(s)","because":"directories and special files are not files; only regular files count","detail":{"names":["b.txt","a.txt"]},"_schema":{"id":"parley.receipt.step","version":"1.0.0"}}
+```
+
+Withholding leaves a `seq` gap on the stream and nowhere else. `bun run doctor --history
+SEGMENT.jsonl` reads a segment and reports both, here for a `what-ran` transform that withholds
+every `receipt.step`:
+
+```text
+PROJECTION  01M82SPNTW39HDZABES1HFYRAC  what-ran  5dde666fc322…  (history:1)
+GAP         01M82SPNTW39HDZABES1HFYRAC  seq 3 is not in this copy
+GAP         01M82SPNTW39HDZABES1HFYRAC  seq 4 is not in this copy
+SEGMENT     4 line(s); 1 run(s), 1 projected, 2 gap(s), 0 without end, 0 unparseable
+```
+
+**With no transform configured none of this happens**: no opening line, no step, no projection and
+no difference in any byte. A transform configured with no stream is equally inert.
+
+#### Re-validating without a dependency
+
+This package has no runtime dependencies, and re-validation needs a JSON Schema validator, so
+`src/check.ts` is one — for a bounded subset. It implements the constructs the protocol's own
+schemas use (`type`, `const`, `enum`, `required`, `properties`, `additionalProperties`, `items`,
+the length, size and range bounds, `pattern`, the `json-pointer` format, `not`, `anyOf`, `allOf`,
+`oneOf` and `if`/`then`/`else`) and **reports** a keyword it does not implement rather than
+ignoring it, which is the difference between a bounded checker and a quiet one. A test asserts
+every schema this package ships is inside the subset, so a future draft reaching for `$ref` fails
+there rather than silently going unchecked. A tool whose own type needs a construct outside the
+subset will see its projected lines withheld as `history.transform_uncheckable`, which is the
+fail-closed direction: better a gap you can see than a line nobody checked.
+
+### Three more decisions the owner may overrule
+
+flyingrobots/parley#57 left the shape of the enforcement to the implementation. These three are
+judgement calls rather than consequences of the issue:
+
+1. **A line the writer cannot re-validate is withheld, not passed through.** A tool-owned type
+   with no declared schema (§4.2 asks for one, and discovery already warns `schema.unavailable`
+   when it is missing) therefore does not reach a projected stream. The alternative is to pass it
+   through unchecked, which would make "nothing a projection does puts an invalid line on the
+   shared timeline" false. Overrule in `Run`'s `project` in `src/run.ts`: return `text` where it
+   now withholds.
+2. **The receipt records the `seq` the opening line took, as a `receipt.step`.** The transform line
+   is stream-only, so without this the receipt has an unexplained gap at that `seq`. The cost is
+   one extra line and one extra `seq` in every projected run's receipt. Overrule by deleting
+   `noteProjection`'s `step` call.
+3. **A transform may withhold `end`.** Nothing exempts the terminal event, so a copy on the stream
+   can end without one, and a reader sees incomplete lifecycle evidence for a run that in fact
+   completed — which is what §3.3 says that evidence means. The doctor's segment mode counts such
+   copies (`0 without end` above). Overrule by exempting `end` in `project`.
+
+A fourth thing worth stating rather than deciding: the number of warnings is not the number of
+withheld lines. A warning is itself a record, so it goes through the transform too, and a
+transform that fails on a warning line withholds it **without warning again** — otherwise one
+failure would generate another for ever. The stream's gaps, not the warning count, are the ground
+truth for what a copy is missing.
+
 ### Two decisions the owner may overrule
 
 flyingrobots/parley#3 left scope, expiry and redaction open and asked for a recommendation.
@@ -289,6 +401,10 @@ These are the places the writer's promises do not reach, named as spec §6 asks:
 - A timer or callback that logs after `end` has nothing to be captured into; its text reaches the
   stream, and the process should exit promptly after `main` returns.
 - A source resolver runs before the bootstrap line and may have side effects of its own.
+- A configured history transform is the tool's own code in the tool's own process. The writer
+  refuses what it returns when it is invalid, uncheckable or carries a declared secret, but it
+  cannot stop that code from writing elsewhere itself; the enforcement is over what reaches the
+  stream through the writer.
 
 The writer uses synchronous writes so that on every other path the receipt is complete.
 

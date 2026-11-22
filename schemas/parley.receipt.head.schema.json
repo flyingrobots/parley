@@ -9,6 +9,8 @@
     "t",
     "seq",
     "run",
+    "tool",
+    "v",
     "inv",
     "argv",
     "resolved",
@@ -20,7 +22,9 @@
       "const": "receipt.head"
     },
     "t": {
-      "type": "integer"
+      "type": "integer",
+      "minimum": 0,
+      "description": "POSIX time in milliseconds (spec \u00a71.3)."
     },
     "seq": {
       "type": "integer",
@@ -28,10 +32,23 @@
       "description": "The run's single counter continues from the bootstrap line, which is seq 0 (spec \u00a71.3)."
     },
     "run": {
-      "type": "string"
+      "type": "string",
+      "minLength": 1,
+      "description": "The execution this line belongs to (spec \u00a72.1). ULID or equivalent: unique per execution and lexicographically sortable."
+    },
+    "tool": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The program that wrote this receipt, so a receipt read alone says what produced it (spec \u00a75)."
+    },
+    "v": {
+      "type": "string",
+      "minLength": 1,
+      "description": "That program's own version; with tool, enough to recompute inv (spec \u00a72.2)."
     },
     "inv": {
-      "type": "string"
+      "type": "string",
+      "minLength": 1
     },
     "session": {
       "type": "string"
@@ -103,8 +120,36 @@
         },
         "version": {
           "type": "string",
-          "pattern": "^2\\.[0-9]+\\.[0-9]+$",
+          "pattern": "^2\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
           "description": "Any 2.x.y: a reader validates every line of the major it was built against and ignores fields it does not know (spec \u00a74.5)."
+        }
+      }
+    },
+    "redacted": {
+      "type": "object",
+      "description": "Where the program replaced a secret with the literal [redacted] before writing this line (spec \u00a75.3). Absent when nothing was redacted.",
+      "properties": {
+        "argv": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "description": "Indexes into argv."
+        },
+        "resolved": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "env": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       }
     }

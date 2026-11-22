@@ -139,7 +139,8 @@ not — a declared input set never captures everything.
 ## 3. The bootstrap line
 
 The **first** line the run emits on any stream, and so the first line of stdout, emitted
-**before work begins**.
+**before work begins**. It is written to stdout only; it is not mirrored into the receipt, whose
+first line is the receipt head (§5).
 
 ```json
 {"event":"run","t":1795326412345,"seq":0,
@@ -224,6 +225,9 @@ every line whose major matches the schema it ships with, including a newer or ol
 rejects a line of a different major. Validating a line against the schema its own `_schema`
 names is what stops a line from claiming a contract it does not meet.
 
+A schema version whose changelog entry is still under `Unreleased` is a draft and **MAY** change
+in place; the promise above attaches to a version when a release publishes it.
+
 This promise binds from the first version of each schema published under this rule:
 `parley.run.bootstrap` `1.1.0`, `parley.error` `2.0.0`, `parley.receipt.head` `2.0.0`. All three
 `1.0.0` schemas predate it, and the `1.0.0` bootstrap schema was closed; a reader built against
@@ -238,6 +242,10 @@ inside each published schema is `https://flyingrobots.dev/parley/schemas/<id>/<v
 is likewise an identifier; it is not required to be served. Each schema lives at
 `schemas/<id>.schema.json` in this repository at its current version. Earlier versions are in git
 history; the `CHANGELOG.md` entry that records a bump is the pointer to them.
+
+A reader that ships no schema for a line's `_schema.id`, for example a tool-owned result such as
+`theme-book.count`, **MUST NOT** validate that line against any other schema. It **MAY** parse the
+line and pass it through, and **SHOULD** report that it did not validate it.
 
 ---
 
@@ -255,15 +263,19 @@ interpretation after defaults and environment are applied, and a digest per decl
 
 ```json
 {"event":"receipt.head","t":1795326412346,"seq":1,"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8",
- "inv":"inv_7f3a9c1e","session":"ses_9c4f",
- "argv":["theme-book","count","--format","css"],
- "resolved":{"command":"count","format":"css","cwd":"/work/site"},
+ "tool":"theme-book","v":"0.2.1","inv":"inv_7f3a9c1e","session":"ses_9c4f",
+ "argv":["theme-book","count","--format","css","--token","[redacted]"],
+ "resolved":{"command":"count","format":"css","cwd":"/work/site","token":"[redacted]"},
+ "redacted":{"argv":[5],"resolved":["token"]},
  "inputs":[{"path":"src/tokens.css","sha256":"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"}],
  "effects":{"reads":["src/**/*.css"],"writes":[],"network":false,"idempotent":true},
  "_schema":{"id":"parley.receipt.head","version":"2.0.0"}}
 ```
 
 The head takes `seq: 1` because the bootstrap line took `0` and the run holds one counter (§1.3).
+It names `tool` and `v` again, although the bootstrap line already did, because a receipt is read
+on its own, tomorrow, by a reader that never saw stdout; without them it cannot say what wrote it
+and `inv` cannot be recomputed (§2.2).
 
 Subsequent lines carry the program's reasoning as it works — one line per decision, emitted as it
 happens rather than buffered, so a person watching sees the thing working.
@@ -283,6 +295,22 @@ A machine-local `.git/info/exclude` does not protect a collaborator who clones t
 
 Receipts are durable and may contain file contents, resolved paths and prompts. A program
 **MUST NOT** write credentials into a receipt, and **SHOULD** document what a receipt can contain.
+
+Raw `argv` and the resolved environment are where credentials arrive, so §5's echo and this rule
+collide unless the program redacts. Privacy wins:
+
+- A program **MUST** declare which of its arguments and environment variables carry secrets, by
+  name, and **MUST** replace each such value with the literal string `[redacted]` in `argv`, in
+  `resolved` and anywhere else the receipt would carry it, **before** the receipt head is written.
+- It **MUST** record where it redacted, in the head's `redacted` field: `argv` indexes, `resolved`
+  keys and environment variable names. The gap between raw and resolved stays visible; only the
+  secret is gone.
+- It **MAY** redact more than it declared. Name-based redaction misses odd names and pattern-based
+  redaction misses odd values; the declaration is the floor, not the ceiling.
+- A receipt that carries `redacted` is not a complete record of the question. Two invocations
+  that differ only in a redacted value, for example two tokens selecting two accounts, have
+  different `inv` (§2.2 hashes the real arguments) but identical receipts, so a reader **MUST NOT**
+  treat such receipts as interchangeable and **MUST NOT** replay from one.
 
 ---
 

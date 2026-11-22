@@ -53,6 +53,23 @@ The spec and each message schema are versioned separately from this package.
   borrows from each, and what is its own; routed from the README and the docs index.
   (flyingrobots/parley#19)
 
+- Schema constraints (flyingrobots/parley#9, #26): `t` is at least `0`; `tool`, `v`, `run` and
+  `inv` are non-empty; `code` matches `^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$`; `problem` is
+  non-empty; `_schema.version` rejects leading-zero components. A shared envelope schema file was
+  considered and not adopted: `scripts/schemas.test.ts` enforces the envelope uniformly across
+  every schema, and a cross-file `$ref` would force every consumer to preload schemas.
+- `parley.receipt.head` requires `tool` and `v`, so a receipt read on its own says what wrote it
+  and `inv` can be recomputed. (flyingrobots/parley#14)
+- §5.3 redaction rule: declared secrets are replaced with `[redacted]` before the head is written
+  and the head's new `redacted` field records where; a redacted receipt is never replayed from.
+  (flyingrobots/parley#13)
+- §4.5: a schema version still under `Unreleased` is a draft and may change in place. The
+  constraint additions above therefore stay at `parley.error` `2.0.0`, `parley.receipt.head`
+  `2.0.0` and `parley.run.bootstrap` `1.1.1`.
+- §3: the bootstrap line is written to stdout only. §4.6: a reader with no schema for an id must
+  not validate the line against another schema. Checker docs explain exact-version resolution and
+  that the checker is not a parley program. (flyingrobots/parley#26)
+
 ### Fixed
 
 - The README bootstrap example emitted a top-level `receipt`; the schema requires

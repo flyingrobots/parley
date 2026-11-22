@@ -18,7 +18,9 @@
       "const": "error"
     },
     "t": {
-      "type": "integer"
+      "type": "integer",
+      "minimum": 0,
+      "description": "POSIX time in milliseconds (spec \u00a71.3)."
     },
     "seq": {
       "type": "integer",
@@ -27,14 +29,17 @@
     },
     "run": {
       "type": "string",
+      "minLength": 1,
       "description": "The execution this line belongs to. Required on every line so a detached line can still be attributed (spec \u00a71.3)."
     },
     "code": {
       "type": "string",
-      "description": "Stable, dotted identifier. Never a prose message."
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+      "description": "Stable, dotted, lowercase identifier such as contrast.unsatisfiable. Never a prose message."
     },
     "problem": {
       "type": "string",
+      "minLength": 1,
       "description": "What is wrong, in one sentence."
     },
     "measured": {
@@ -67,7 +72,7 @@
         },
         "version": {
           "type": "string",
-          "pattern": "^2\\.[0-9]+\\.[0-9]+$",
+          "pattern": "^2\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
           "description": "Any 2.x.y: a reader validates every line of the major it was built against and ignores fields it does not know (spec \u00a74.5)."
         }
       }

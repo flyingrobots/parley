@@ -728,8 +728,10 @@ describe("RD-13 stress", () => {
 // ---- RD-14, RD-15, RD-16 the query entry point --------------------------------------------
 //
 // A read states an asker, a view and a window (flyingrobots/parley#46), is refused when it
-// cannot, and is itself recorded through the writer (spec §9). Nothing here ranks, projects or
-// truncates: that is flyingrobots/parley#49 and flyingrobots/parley#50.
+// cannot, and is itself recorded through the writer (spec §9). Nothing here ranks or bounds: the
+// order is flyingrobots/parley#49 and the bound is flyingrobots/parley#50, below. The windows in
+// these cases hold fewer records than the default budget of twenty, so what they assert about an
+// answer is the whole of it.
 
 const DAY = 86_400_000;
 const T0 = 1795326412346;
@@ -960,7 +962,7 @@ describe("RD-15 an accepted query is recorded and reads back", () => {
   });
 });
 
-describe("RD-16 the window, echoed verbatim, with nothing excluded", () => {
+describe("RD-16 the window, echoed verbatim, and the read's own records left out", () => {
   test("a window returns the records inside it, ascending by t, and is echoed verbatim", async () => {
     const { dir, env } = scratch();
     const receipts = repoReceipts(dir);
@@ -1060,8 +1062,9 @@ describe("RD-16 the window, echoed verbatim, with nothing excluded", () => {
 // ---- RD-17, RD-18, RD-19 the purpose orders the answer ------------------------------------
 //
 // Spec §9: the purpose shapes the result, and it is the ranking function rather than a filter
-// applied afterwards (flyingrobots/parley#49). The key is (tier, outcome, t, run, seq), nothing is
-// dropped at any tier, and truncating the order is flyingrobots/parley#50.
+// applied afterwards (flyingrobots/parley#49). The key is (tier, outcome, t, run, seq) and nothing
+// is dropped at any tier. `rankRecords` still returns every record it is given; it is the digest
+// below (flyingrobots/parley#50) that cuts the order it produced and says how much it cut.
 
 /** A five-record receipt: head, step, the tool's own result, and an end, stamped from `at`. */
 function richReceipt(dir: string, run: string, at: number, kind: "ok" | "failed" | "warned" = "ok"): string {
@@ -1390,5 +1393,279 @@ describe("RD-19 ranking reorders and never filters", () => {
     // headroom, so the case fails on a change of complexity rather than on a noisy machine.
     expect(smallElapsed).toBeLessThan(250);
     expect(elapsed).toBeLessThan(500);
+  }, 60_000);
+});
+
+// ---- RD-20, RD-21, RD-22 the digest ------------------------------------------------------
+//
+// Spec §9: a result carries its own lens and reports what it excluded, at least as a count, so a
+// later reader "cannot mistake a digest for the whole" (flyingrobots/parley#50). The digest is the
+// `parley.lens` record the read emits through the writer, bounded by the query's budget, and the
+// records the ranking placed beyond the bound are a count on that record and nowhere else.
+//
+// The windows below are **sealed** at T0 + 1 s: the seeded records are stamped at or before T0 and
+// a read happens now, so a read's own records — and a previous read's — fall outside, and a case
+// that reads twice reads the same window twice.
+const SEALED = { from: 0, to: T0 + 1000 };
+
+/** Seed `n` three-record receipts, one per day going back from T0, and return the record count. */
+function seedDays(dir: string, n: number): number {
+  const receipts = repoReceipts(dir);
+  for (let i = 0; i < n; i++) datedReceipt(receipts, runId(i), T0 - (n - i) * DAY);
+  return n * 3;
+}
+
+/** The `(run, seq)` pairs a digest names, as the record carries them. */
+const digestIds = (answer: QueryAnswer) => answer.digest.records.map((r) => `${r.run}:${r.seq}`);
+
+/** The lens record the read left in its own receipt, as the loader reads it back. */
+function lensRecord(dir: string, env: Record<string, string>, run: string): LoadedRecord {
+  const load = loadReceipts({ cwd: dir, env });
+  const own = load.bundles.find((b) => b.run === run);
+  if (!own) throw new Error(`the read's own bundle ${run} is not in the load`);
+  const lens = own.records.find((r) => r.event === "lens");
+  if (!lens) throw new Error(`the read's bundle ${run} holds no lens record`);
+  return lens;
+}
+
+describe("RD-20 the first response is a digest", () => {
+  test("a read answers with one lens record carried by its own run", async () => {
+    const { dir, env } = scratch();
+    seedDays(dir, 3);
+    const answer = answered(await queryReceipts(
+      { asker: { tool: "t", cwd: dir, task: "flyingrobots/parley#50" }, view: "what-ran", window: SEALED },
+      { cwd: dir, env },
+    ));
+    const load = loadReceipts({ cwd: dir, env });
+    const lenses = load.bundles.flatMap((b) => b.records).filter((r) => r.event === "lens");
+    expect(lenses.length).toBe(1);
+    expect(lenses[0]!.run).toBe(answer.run);
+    const record = lenses[0]!.record as Record<string, unknown>;
+    expect(record.query).toEqual({ run: answer.run, seq: answer.query.seq });
+    expect(record.asker).toEqual({ tool: "t", cwd: dir, task: "flyingrobots/parley#50" });
+    expect(record.view).toBe("what-ran");
+    expect(record.window).toEqual(SEALED);
+    expect(record.budget).toEqual({ records: 20 });
+    expect(answer.digest).toEqual(record as unknown as typeof answer.digest);
+  });
+
+  test("the digest loads as validated against parley.lens 1.0.0 in its own bundle", async () => {
+    const { dir, env } = scratch();
+    seedDays(dir, 2);
+    const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: SEALED }, { cwd: dir, env }));
+    const load = loadReceipts({ cwd: dir, env });
+    const own = load.bundles.find((b) => b.run === answer.run)!;
+    expect(own.terminated).toBe(true);
+    expect(own.status).toBe(0);
+    expect(own.defects).toEqual([]);
+    const lens = own.records.find((r) => r.event === "lens")!;
+    expect(lens.validation.state).toBe("validated");
+    expect((lens.validation as { schema: { id: string; version: string } }).schema).toEqual({ id: "parley.lens", version: "1.0.0" });
+    expect(load.counts.invalid).toBe(0);
+    expect(load.quarantined).toEqual([]);
+  });
+
+  test("the lens line the read put on its stream validates on its own", async () => {
+    const { dir, env } = scratch();
+    seedDays(dir, 2);
+    const stdout = new Capture();
+    const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "how-it-decided", window: SEALED }, { cwd: dir, env, stdout }));
+    const line = answer.lines.find((l) => l.event === "lens")!;
+    expect(line).toBeDefined();
+    expect(validator().validate(line).state).toBe("validated");
+    expect(stdout.objs[0]!.event).toBe("run");
+    // The digest is the answer, so its line is the last one the read puts on the stream before
+    // the run closes: the query it answers is already there, and nothing follows it.
+    const events = stdout.objs.map((o) => o.event);
+    expect(events[events.length - 1]).toBe("lens");
+    expect(events.indexOf("query")).toBeLessThan(events.indexOf("lens"));
+    // The bytes the read reported are the bytes it wrote.
+    const written = stdout.lines.find((l) => l.includes("\"event\":\"lens\""))!;
+    expect(answer.digestBytes).toBe(Buffer.byteLength(written, "utf8"));
+  });
+
+  test("the digest names the records the answer holds, in rank order", async () => {
+    const { dir, env } = scratch();
+    seedDays(dir, 3);
+    const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "what-changed", window: SEALED }, { cwd: dir, env }));
+    expect(digestIds(answer)).toEqual(ids(answer.records));
+    expect(answer.digest.records.length).toBe(answer.records.length);
+    expect(answer.counts.answered).toBe(answer.records.length);
+  });
+});
+
+describe("RD-21 the digest is bounded by the budget", () => {
+  test("a digest names at most the budget's records and counts the rest as excluded", async () => {
+    const { dir, env } = scratch();
+    const total = seedDays(dir, 10);
+    expect(total).toBe(30);
+    const answer = answered(await queryReceipts(
+      { asker: { tool: "t" }, view: "everything", window: SEALED, budget: { records: 7 } },
+      { cwd: dir, env },
+    ));
+    expect(answer.records.length).toBe(7);
+    expect(answer.digest.records.length).toBe(7);
+    expect(answer.digest.loss).toEqual({ bound: "count-only", excluded: 23 });
+    expect(answer.counts.inWindow).toBe(30);
+    expect(answer.counts.answered).toBe(7);
+    expect(answer.counts.excluded).toBe(23);
+    expect(answer.digest.budget).toEqual({ records: 7 });
+  });
+
+  test("a bytes budget bounds the digest line and raises the excluded count", async () => {
+    const { dir, env } = scratch();
+    seedDays(dir, 10);
+    const loose = answered(await queryReceipts(
+      { asker: { tool: "t" }, view: "everything", window: SEALED, budget: { records: 7 } },
+      { cwd: dir, env },
+    ));
+    const bytes = loose.digestBytes - 100;
+    const tight = answered(await queryReceipts(
+      { asker: { tool: "t" }, view: "everything", window: SEALED, budget: { records: 7, bytes } },
+      { cwd: dir, env },
+    ));
+    expect(tight.digestBytes).toBeLessThanOrEqual(bytes);
+    expect(tight.digest.records.length).toBeLessThan(7);
+    expect(tight.records.length).toBe(tight.digest.records.length);
+    expect(tight.digest.loss.excluded).toBe(30 - tight.records.length);
+    expect(tight.digest.loss.bound).toBe("count-only");
+    // The same window, read twice: the bytes bound, not the history, is what moved.
+    expect(tight.counts.inWindow).toBe(loose.counts.inWindow);
+    // A bytes budget too small even for an empty digest names no records rather than lying.
+    const none = answered(await queryReceipts(
+      { asker: { tool: "t" }, view: "everything", window: SEALED, budget: { records: 7, bytes: 1 } },
+      { cwd: dir, env },
+    ));
+    expect(none.digest.records).toEqual([]);
+    expect(none.digest.loss).toEqual({ bound: "count-only", excluded: 30 });
+  });
+
+  test("what the bound excluded is nowhere in the digest, and the count accounts for all of it", async () => {
+    const { dir, env } = scratch();
+    seedDays(dir, 10);
+    const answer = answered(await queryReceipts(
+      { asker: { tool: "t" }, view: "what-ran", window: SEALED, budget: { records: 5 } },
+      { cwd: dir, env },
+    ));
+    const named = new Set(digestIds(answer));
+    expect(named.size).toBe(5);
+    expect(answer.digest.loss.excluded).toBe(answer.counts.inWindow - named.size);
+    // Every record the window held is either named or counted, and none is both.
+    const window = ids(answer.ranking.records);
+    expect(window.length).toBe(30);
+    expect(window.slice(0, 5)).toEqual([...named]);
+    expect(ids(answer.records).some((id) => !named.has(id))).toBe(false);
+  });
+
+  test("a window that fits the budget excludes nothing and says the loss is none", async () => {
+    const { dir, env } = scratch();
+    seedDays(dir, 3);
+    const answer = answered(await queryReceipts(
+      { asker: { tool: "t" }, view: "everything", window: SEALED, budget: { records: 20 } },
+      { cwd: dir, env },
+    ));
+    expect(answer.records.length).toBe(9);
+    expect(answer.digest.loss).toEqual({ bound: "none", excluded: 0 });
+    expect(answer.counts.excluded).toBe(0);
+  });
+
+  test("an empty history answers with an empty digest that excludes nothing", async () => {
+    const { dir, env } = scratch();
+    const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: SEALED }, { cwd: dir, env }));
+    expect(answer.records).toEqual([]);
+    expect(answer.digest.records).toEqual([]);
+    expect(answer.digest.loss).toEqual({ bound: "none", excluded: 0 });
+    expect(answer.counts.answered).toBe(0);
+    expect(answer.counts.excluded).toBe(0);
+    const lens = lensRecord(dir, env, answer.run);
+    expect(lens.validation.state).toBe("validated");
+    expect((lens.record as { loss: unknown }).loss).toEqual({ bound: "none", excluded: 0 });
+  });
+});
+
+describe("RD-22 a digest never reads as complete", () => {
+  test("a truncated digest says count-only and a nonzero count", async () => {
+    const { dir, env } = scratch();
+    seedDays(dir, 10);
+    const cut = answered(await queryReceipts(
+      { asker: { tool: "t" }, view: "everything", window: SEALED, budget: { records: 4 } },
+      { cwd: dir, env },
+    ));
+    expect(cut.digest.loss.bound).toBe("count-only");
+    expect(cut.digest.loss.excluded).toBeGreaterThan(0);
+    const whole = answered(await queryReceipts(
+      { asker: { tool: "t" }, view: "everything", window: SEALED, budget: { records: 1000 } },
+      { cwd: dir, env },
+    ));
+    expect(whole.digest.loss).toEqual({ bound: "none", excluded: 0 });
+    // The loss is where the digest says what it is: there is no prose field to read instead, and
+    // `none` is impossible with a non-zero count because the schema refuses it.
+    const lens = validator();
+    const asRecord = (a: QueryAnswer) => a.lines.find((l) => l.event === "lens")!;
+    expect(lens.validate({ ...asRecord(cut), loss: { bound: "none", excluded: cut.digest.loss.excluded } }).state).toBe("invalid");
+    expect(Object.keys(cut.digest.loss).sort()).toEqual(["bound", "excluded"]);
+  });
+
+  test("the digest's size stays under its bound as history grows", async () => {
+    const BYTES = 2048;
+    const named: number[] = [];
+    const excluded: number[] = [];
+    const sizes: number[] = [];
+    for (const receipts of [3, 30, 300]) {
+      const { dir, env } = scratch();
+      seedDays(dir, receipts);
+      const answer = answered(await queryReceipts(
+        { asker: { tool: "t" }, view: "everything", window: SEALED, budget: { records: 20, bytes: BYTES } },
+        { cwd: dir, env },
+      ));
+      named.push(answer.digest.records.length);
+      excluded.push(answer.digest.loss.excluded);
+      sizes.push(answer.digestBytes);
+      expect(answer.counts.inWindow).toBe(receipts * 3);
+      // The bytes the read reported are the bytes the receipt holds.
+      const held = lensRecord(dir, env, answer.run);
+      expect(Buffer.byteLength(JSON.stringify(held.record) + "\n", "utf8")).toBe(answer.digestBytes);
+    }
+    // A hundredfold more history: the digest names 20 records at 30 receipts and still 20 at 300.
+    expect(named).toEqual([9, 20, 20]);
+    expect(excluded).toEqual([0, 70, 880]);
+    // Measured, not claimed: every line is inside the stated byte bound, and the last two differ
+    // by exactly the one digit the excluded count gained — the line does not grow with history.
+    expect(sizes.map((b) => b <= BYTES)).toEqual([true, true, true]);
+    expect(sizes[1]!).toBeGreaterThan(sizes[0]!);
+    expect(sizes[2]! - sizes[1]!).toBe(1);
+  }, 120_000);
+
+  test("the digest on receipts a real tool wrote validates against its schema", async () => {
+    const { dir, state, env } = scratch();
+    writeFileSync(join(dir, "a.txt"), "hello");
+    const first = realRun(dir, state);
+    symlinkSync(join(dir, "nothing-here"), join(dir, "dangling"));
+    const broke = realRun(dir, state);
+    rmSync(join(dir, "dangling"));
+    const third = realRun(dir, state);
+    expect([first.status, broke.status, third.status]).toEqual([0, 2, 0]);
+
+    const window = { from: 0, to: Date.now() };
+    const answer = answered(await queryReceipts(
+      { asker: { tool: "t", task: "flyingrobots/parley#50" }, view: "what-changed", window, budget: { records: 2 } },
+      { cwd: dir, env },
+    ));
+    expect(answer.counts.inWindow).toBe(11);
+    expect(answer.records.length).toBe(2);
+    expect(answer.digest.loss).toEqual({ bound: "count-only", excluded: 9 });
+    // The failing run's error is what a change purpose puts first, and the digest keeps it.
+    expect(answer.digest.records[0]).toEqual({ run: broke.run, seq: answer.records[0]!.seq });
+    expect(answer.records[0]!.run).toBe(broke.run);
+
+    const lens = lensRecord(dir, env, answer.run);
+    expect(lens.validation.state).toBe("validated");
+    expect((lens.validation as { schema: { id: string; version: string } }).schema).toEqual({ id: "parley.lens", version: "1.0.0" });
+    expect(lens.record).toEqual({
+      event: "lens", t: lens.t!, seq: lens.seq, run: answer.run,
+      ...answer.digest, _schema: { id: "parley.lens", version: "1.0.0" },
+    } as unknown as typeof lens.record);
+    expect(answer.load.counts.invalid).toBe(0);
+    expect(answer.load.counts.quarantined).toBe(0);
   }, 60_000);
 });

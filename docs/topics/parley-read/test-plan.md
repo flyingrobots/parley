@@ -22,7 +22,7 @@ writer (`@flyingrobots/parley-emit`) and load what it left behind.
 | RD-13 | A thousand small receipts load in one bounded pass | — |
 | RD-14 | A query is refused unless it names an asker, a view and a window; the refusal is structured and records nothing | §9, §2.1 |
 | RD-15 | An accepted query is recorded through the writer as a `parley.query` event and read back by the loader as a record of its own run | §9, §1.3, §4.5 |
-| RD-16 | A query returns the window's records, echoes the window verbatim, excludes the read's own records, and truncates nothing | §9 |
+| RD-16 | A query answers over the window it states, echoes that window verbatim, and leaves out the read's own records: a read does not answer itself | §9 |
 | RD-17 | A read's records come back ranked by its view: the records touching the view's surface rank above the records that do not, under one stable total order broken by `(t, run, seq)` | §9 |
 | RD-18 | For a view that implies a change, the failure surface ranks first and a failed run's records rank above a successful run's; a run whose outcome the window does not establish is neither | §9, §1.2a |
 | RD-19 | Ranking reorders and never filters: every view's answer holds the same records as the identity view's, and a thousand records rank in one bounded pass | §9 |

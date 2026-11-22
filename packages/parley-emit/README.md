@@ -83,10 +83,10 @@ conforming (`bun run doctor --stdout ... --stderr ... --receipt ...`).
 | §5.1 | Retention by count per location, oldest completed bundles first (a receipt whose last line is `end`, or one without an `end` older than a day), recorded as a `receipt.step`; never a receipt still in flight; never on `--dry-run` |
 | §4.1, §4.2 | `--schema` and `<command> --help` are runs that emit `command` and `schema` lines |
 | §4.3 | `--dry-run` marks the bootstrap line and head and performs no retention deletion; the handler reads `run.dryRun` |
-| §6, §3.2 | An uncaught throw in the handler becomes an `error` with code `uncaught.exception`; a reported error closes the run with status 2, and `end(0)` after one is refused. A throw from `resolved`, `inputs` or a source resolver before the bootstrap line is `startup.arguments_invalid`, exit 3, with the reserved receipt removed; a throwing `human` renderer falls back to the default rendering |
+| §6, §3.2 | An uncaught throw in the handler, or while discovery is being emitted, becomes an `error` with code `uncaught.exception` whose stack goes to the receipt copy only; a reported error closes the run with status 2, and `end(0)` after one is refused. A throw from `resolved`, `inputs` or a source resolver before the bootstrap line is `startup.arguments_invalid`, exit 3, with the reserved receipt removed; a throwing `human` renderer is reported once as a `human.renderer_failed` warning and the default rendering is used |
 | §5.4, §3.3 | A sink failure before `end` is an `error` on the sinks still working and status 4; a failed bootstrap write is reported after the head, so the head stays the receipt's first line; a sidecar that cannot be written is `sink.sidecar_failed` and the receipt still closes; after `end` nothing is written and the status alone carries a failure; emitting after `end` throws `ParleyClosed`. A record or `receiptExtra` carrying `t`, `seq`, `run` or `_schema` is a `TypeError` |
-| §1.2 | Every function on `console`, called while a run is open, is captured into that run's receipt as a step. This contains libraries that log through `console`; it does not contain a library that writes to a file descriptor directly, or a timer that fires after `end` (see the exceptions below) |
-| §1.1 | `--human` (alias `--humanize`) renders stdout and stderr through the tool's `human` function, falling back to one line per event; the bootstrap line and a successful `end` render as nothing, so `tool --human \| gh pr comment --body-file -` posts only the tool's prose; the receipt is unchanged |
+| §1.2 | Every function on `console`, called from the moment `main` starts until it returns, is captured into the run's receipt as a step; text captured before the receipt exists is held and written after the head. This contains libraries that log through `console`; it does not contain a library that writes to a file descriptor directly, or a timer that fires after `end` (see the exceptions below) |
+| §1.1 | `--human` (alias `--humanize`) renders stdout and stderr through the tool's `human` function, falling back to one line per event; the bootstrap line and a successful `end` render as nothing, so `tool --human \| gh pr comment --body-file -` posts only the tool's prose, and a failed `end` names the receipt path; the receipt is unchanged |
 
 ## Arguments and flags
 
@@ -126,7 +126,8 @@ which is why a redacted receipt is never replayed (spec §2.3).
 
 `main`'s `inputs` option maps the command's arguments to declared inputs,
 `{ path, role?, exclude? }`; it may be async. A relative path is resolved against the initial
-working directory; an absolute path stands. Roles: a file (default), `tree` for a directory,
+working directory; an absolute path stands, and enters the `inv` preimage as given, so prefer
+relative paths and never a temporary one. Roles: a file (default), `tree` for a directory,
 `stdin` for bytes the handler supplies with `run.input("-", bytes)`. An input the writer cannot
 read is recorded with `error: input.unreadable`; a stdin input never supplied is `input.unread`.
 Either omits `inv`.

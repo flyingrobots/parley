@@ -658,6 +658,51 @@ describe("PE-18 console capture (F-9)", () => {
   });
 });
 
+describe("PE-18b console capture before the handler and in a real process", () => {
+  test("console output from a resolver or callback before the bootstrap line lands in the receipt", async () => {
+    const { dir, env } = scratch();
+    const r = await runCount(dir, env, ["count"], () => {}, { sources: { netrc: () => { console.log("resolver says hello"); return false; } } });
+    expect(r.stdout.objs.every((o) => typeof o.event === "string")).toBe(true);
+    expect(r.receipt).toContain("resolver says hello");
+    expect(r.violations).toEqual([]);
+  });
+
+  test("in a real process, console.table and console.dir reach the receipt and not stdout", async () => {
+    const { dir, env } = scratch();
+    const script = join(dir, "t.ts");
+    writeFileSync(script, `import { defineTool, main } from ${JSON.stringify(resolve(import.meta.dir, "../src/index.ts"))};
+const tool = defineTool({ name: "t", version: "0.0.1", commands: { count: { intent: "count", effects: { reads: [], writes: [], network: false, idempotent: true }, secrets: [], emits: [{ id: "t.count", version: "1.0.0" }] } }, retention: { count: 10 } });
+process.exit(await main(tool, ["t", "count"], (run) => { console.table([{ a: 1 }]); console.dir({ b: 2 }); console.assert(false, "asserted-in-process"); run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" }); }));`);
+    const proc = Bun.spawn(["bun", script], { cwd: dir, env: { ...process.env, ...env }, stdout: "pipe", stderr: "pipe" });
+    const [out, err, status] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+    expect(status).toBe(0);
+    expect(err).toBe("");
+    const lines = out.trimEnd().split("\n");
+    for (const l of lines) expect(typeof JSON.parse(l)).toBe("object");
+    const receipt = readFileSync((JSON.parse(lines[0]!) as { paths: { receipt: string } }).paths.receipt, "utf8");
+    expect(receipt).toContain("asserted-in-process");
+    expect(receipt).toContain("console.table");
+  });
+
+  test("a throwing renderer is reported once as a warning", async () => {
+    const { dir, env } = scratch();
+    const s = streams();
+    await main(tool({ human: () => { throw new Error("renderer broke"); } }), ["t", "count", "--human"], async (run) => { run.result({ event: "result", value: 2 }, { id: "t.count", version: "1.0.0" }); run.result({ event: "result", value: 3 }, { id: "t.count", version: "1.0.0" }); }, { cwd: dir, env, ...s });
+    expect(s.stderr.lines.filter((l) => l.includes("human.renderer_failed")).length).toBe(1);
+  });
+
+  test("a throw while emitting discovery is an error line and the run still ends", async () => {
+    const { dir, env } = scratch();
+    const s = streams();
+    const circular: Record<string, unknown> = {}; circular.self = circular;
+    const status = await main(tool({ commands: { count: { ...tool().commands.count!, emits: [{ id: "t.count", version: "1.0.0", schema: circular }] } } }), ["t", "--schema"], async () => {}, { cwd: dir, env, ...s });
+    expect(status).toBe(2);
+    expect(s.stderr.objs.some((o) => o.event === "error" && o.code === "uncaught.exception")).toBe(true);
+    expect(s.stdout.objs.at(-1)).toMatchObject({ event: "end", status: 2 });
+    expect(check(dir, s).violations).toEqual([]);
+  });
+});
+
 describe("PE-19 inputs (F-11, F-13, F-14)", () => {
   test("a tree input skips .parley and honours exclude, and its digest follows content", async () => {
     const { dir, env } = scratch();

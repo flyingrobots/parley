@@ -25,7 +25,7 @@ doctor knows.
 | PE-15 | A throw from a tool callback before the bootstrap line is a startup failure; a throwing renderer falls back | §3.2, §6 |
 | PE-16 | Retention never deletes a receipt still in flight and deletes a bundle's sidecars with it | §5.1 |
 | PE-17 | The head is the receipt's first line whatever its size or the state of stdout; a sidecar failure and envelope keys from the tool are handled | §5, §5.4, §1.3 |
-| PE-18 | Every `console` function is captured; overlapping runs restore the console | §1.2 |
+| PE-18 | Every `console` function is captured, from before the resolvers run and in a real process; overlapping runs restore the console; a failing renderer is reported once; a throw during discovery is an error line | §1.2, §6 |
 | PE-19 | Tree inputs skip `.parley`, honour `exclude` and follow content; stdin and absolute inputs are digested; `receiptExtra` is scrubbed | §2.2, §5.3 |
 | PE-20 | Smaller gaps: prototype names are not commands; `end(0)` after an error is refused; state-directory retention is declared; an empty secret is recorded; the ignore file is created whole | §4.3, §3.4, §5.2, §5.3 |
 
@@ -78,6 +78,10 @@ doctor knows.
 | PE-17d | `seq` in a record; `run` in `receiptExtra`; `page(null, true)` | `TypeError` each | `envelope keys supplied by the tool are refused` | implemented |
 | PE-18a | `console.table`, `dir`, `group`, `count`, `assert`, `time`, `timeLog`, `timeEnd` in the handler | stderr empty, stdout all JSON, text in the receipt, doctor passes | `every console function is captured and nothing reaches a stream` | implemented |
 | PE-18b | Two overlapping runs, the first ending first | console patched while one is open, original restored after the last | `overlapping runs restore the original console once the last one ends` | implemented |
+| PE-18c | A source resolver logs before the bootstrap line | text in the receipt; stdout all protocol lines; doctor passes | `console output from a resolver or callback before the bootstrap line lands in the receipt` | implemented |
+| PE-18d | A spawned process calls `console.table`, `dir`, `assert` | stderr empty; every stdout line JSON; text in the receipt | `in a real process, console.table and console.dir reach the receipt and not stdout` | implemented |
+| PE-18e | `human` throws on every line | exactly one `human.renderer_failed` warning | `a throwing renderer is reported once as a warning` | implemented |
+| PE-18f | A circular schema document under `--schema` | `uncaught.exception` on stderr; `end` status 2; doctor passes | `a throw while emitting discovery is an error line and the run still ends` | implemented |
 | PE-19a | `.` as a tree with `exclude: ["src/secret.pem"]` | `inv` stable across reruns and across an edit to the excluded file; changed by an edit to another file | `a tree input skips .parley and honours exclude, and its digest follows content` | implemented |
 | PE-19b | A stdin input supplied by the handler and an absolute path | both digests present; `inv` present | `a supplied stdin input is digested and an absolute path resolves` | implemented |
 | PE-19c | Secret in `receiptExtra` | replaced; `redaction` event at `/note` | `a secret in receiptExtra is replaced and recorded` | implemented |

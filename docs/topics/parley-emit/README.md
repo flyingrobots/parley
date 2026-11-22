@@ -10,7 +10,7 @@ it. This page is the reference for what the package does on `main`; the package
 
 | Export | Job |
 | --- | --- |
-| `defineTool(spec)` | Validates a tool's declaration: name, version, commands with intent, effects, secrets, emitted types and error types, a stated retention count, optional source resolvers and a `--human` renderer |
+| `defineTool(spec)` | Checks a tool's declaration for the things the writer needs: a non-empty name and version, at least one command, an intent per command, a SemVer version on every emitted type, and a positive retention count. Effects, secrets, error types, source resolvers and the `--human` renderer are carried as declared |
 | `main(spec, argv, handler, options)` | Parses the writer-owned flags (`--human`, `--humanize`, `--dry-run`, `--schema`, `--help`), chooses the receipt location, resolves declared sources, redacts, bootstraps, writes the head, enforces retention, runs the handler under the top-level handler, closes with `end`, returns the exit status |
 | `Run` | `result`, `page`, `step`, `warning`, `error`, `input`, `finaliseInputs`, `end`; `receiptPath`, `cwd`, `dryRun`, `ended`, `status` |
 | `SCHEMAS`, `SCHEMA_SOURCE` | The fourteen draft schemas the package ships, with the commit and digest of each |
@@ -40,10 +40,12 @@ it. This page is the reference for what the package does on `main`; the package
    relocated; enforce retention by count unless `--dry-run`, deleting only bundles whose receipt
    ends with `end` or that are incomplete and older than a day; record the decision as a step
    (§5, §5.1, §4.3).
-5. Discovery: emit `command` lines and `schema` lines, then `end` (§4.1, §4.2). Otherwise run the
-   handler with every `console` function captured into the receipt; direct descriptor writes and
-   timers after `end` are the named exceptions.
-6. An uncaught throw becomes `error` with code `uncaught.exception` (§6). `end` digests the
+5. Discovery: emit `command` lines and `schema` lines, then `end` (§4.1, §4.2); a throw while
+   emitting them is an `error` line and the run still ends. Otherwise run the handler. Every
+   `console` function is captured into the receipt from the start of `main`, buffered until the
+   head exists; direct descriptor writes and timers after `end` are the named exceptions.
+6. An uncaught throw becomes `error` with code `uncaught.exception`, its stack in the receipt copy
+   only (§6). `end` digests the
    declared inputs, with redacted descriptors in the preimage, and emits `receipt.inputs` with
    `inv` if not already done, then writes `end` to stdout and the receipt as one event and closes
    the file. Status: the one given (`0` refused after a reported error), else 2 if an error was

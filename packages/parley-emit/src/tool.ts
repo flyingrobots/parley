@@ -104,13 +104,18 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
   if (carriesSecret(id, secretValues)) return startupFailed("startup.secret_in_path", "no run id free of a declared secret value could be chosen", "do not pass a value this short as a declared secret");
   if (!commandName && discovery === null) return startupFailed("startup.unknown_command", `no command named; commands are ${names.join(", ")}`, `name one of: ${names.join(", ")}`);
 
+  // Console capture starts here, before any tool code runs; captured text is buffered until the receipt exists (§1.2).
+  const capture = captureConsole();
+  const release = capture.release;
+  const fail = (code: string, problem: string, remedy: string): number => { release(); return startupFailed(code, problem, remedy); };
+
   // Declared credential sources, resolved before the head (§5.3); a throwing resolver means "not present".
   const presentSources: string[] = [];
   for (const s of ownNames.sources) { try { if (await spec.sources?.[s]?.()) presentSources.push(s); } catch { /* not present */ } }
   const presentEnv = allNames.env.filter((n) => env[n] !== undefined);
 
   const location = chooseLocation({ cwd, run: id, env, home: opts.home ?? homedir(), secrets: secretValues });
-  if (isLocationFailure(location)) return startupFailed(location.code, location.problem, location.remedy);
+  if (isLocationFailure(location)) return fail(location.code, location.problem, location.remedy);
 
   // Everything the tool supplies before the bootstrap line can throw; a throw here is a startup failure (§3.2), not a stack trace.
   let resolvedRaw: Record<string, unknown>, inputs: InputDecl[];
@@ -121,7 +126,7 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
   } catch (e) {
     try { closeSync(location.fd); unlinkSync(location.receiptPath); } catch { /* the reservation is gone either way */ }
     const err = e instanceof Error ? e : new Error(String(e));
-    return startupFailed("startup.arguments_invalid", `the arguments could not be interpreted: ${err.message || err.name}`, "fix the arguments; see the command's --help");
+    return fail("startup.arguments_invalid", `the arguments could not be interpreted: ${err.message || err.name}`, "fix the arguments; see the command's --help");
   }
 
   const sessionRaw = opts.session ?? env.PARLEY_SESSION;
@@ -155,12 +160,36 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
     ...(dryRun ? { dry_run: true } : {}),
   });
   run.flushDeferredFailures();
-  if (run.sinkFailed) return run.end();
+  capture.attach(run);
+  if (run.sinkFailed) { release(); return run.end(); }
   if (location.warning) run.warning(location.warning);
 
   retain(run, location.receiptDir, spec.retention.count, dryRun, now());
 
   if (discovery) {
+    try { discover(run, spec, discovery, commandName, bookkeeping); } catch (e) {
+      const err = e instanceof Error ? e : new Error(String(e));
+      if (!run.ended) run.error({ code: "uncaught.exception", problem: `uncaught ${err.name} during discovery: ${err.message || "(no message)"}`, remedy: `this is a defect in the tool's declaration; report it with the receipt at ${run.receiptPath}` }, { detail: { stack: err.stack } });
+    }
+    release();
+    return run.ended ? run.status ?? 4 : run.end();
+  }
+
+  try {
+    await handler(run, args.filter((a) => a !== commandName));
+  } catch (e) {
+    if (run.ended) { release(); return 4; }
+    const err = e instanceof Error ? e : new Error(String(e));
+    run.error({ code: "uncaught.exception", problem: `uncaught ${err.name}: ${err.message || "(no message)"}`, remedy: `this is a defect in the tool; report it with the receipt at ${run.receiptPath}` }, { detail: { stack: err.stack } });
+  } finally {
+    release();
+  }
+  return run.ended ? run.status ?? 4 : run.end();
+}
+
+function discover(run: Run, spec: ToolSpec, discovery: "schema" | "help", commandName: string | undefined, bookkeeping: Bookkeeping[]): void {
+  const names = Object.keys(spec.commands);
+  {
     const which = discovery === "help" && commandName ? [commandName] : names;
     for (const name of which) {
       const c = spec.commands[name]!;
@@ -175,20 +204,8 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
       if (!doc) { run.warning({ code: "schema.unavailable", problem: `no schema document for ${t.id}@${t.version}`, remedy: "declare the schema on the emitted type" }); continue; }
       run.result({ event: "schema", id: t.id, version: t.version, schema: doc }, SCHEMA_IDS.schema);
     }
-    return run.end(0);
+    run.end(0);
   }
-
-  const release = captureConsole(run);
-  try {
-    await handler(run, args.filter((a) => a !== commandName));
-  } catch (e) {
-    if (run.ended) { release(); return 4; }
-    const err = e instanceof Error ? e : new Error(String(e));
-    run.error({ code: "uncaught.exception", problem: `uncaught ${err.name}: ${err.message || "(no message)"}`, remedy: "this is a defect in the tool; report it with the receipt", detail: { stack: err.stack } });
-  } finally {
-    release();
-  }
-  return run.ended ? run.status ?? 4 : run.end();
 }
 
 function scrubText(s: string, values: ReadonlySet<string>): string { return scrub(s, values) as string; }
@@ -235,41 +252,51 @@ function retain(run: Run, receiptDir: string, count: number, dryRun: boolean, at
 }
 
 // ---- console capture (§1.2) --------------------------------------------------------------
-// One saved copy of the real console, taken the first time a run starts; a stack of active runs.
-// Every function on console is routed into the receipt of the most recent run still open. The
-// real console returns when the last active run releases. Direct writes to a file descriptor and
-// timers that fire after end are outside this net; the README names them as exceptions.
+// One saved copy of the real console, taken when the first capture starts; a stack of captures,
+// each bound to a run once that run's receipt exists and buffering until then. Every function
+// on console is routed into the receipt of the most recent capture that is still open. The real
+// console returns when the last capture releases. Direct writes to a file descriptor and timers
+// that fire after end are outside this net; the README names them as exceptions.
 
 type ConsoleFn = (...a: unknown[]) => unknown;
-const active: Run[] = [];
+interface Capture { run: Run | null; pending: { method: string; text: string }[]; released: boolean }
+const active: Capture[] = [];
 let saved: Map<string, ConsoleFn> | null = null;
 
-function captureConsole(run: Run): () => void {
-  active.push(run);
+function record(c: Capture, method: string, text: string): void {
+  if (c.run === null) { c.pending.push({ method, text }); return; }
+  if (c.run.ended) return;
+  try { c.run.step("captured console output", `a library called console.${method}; stdout and stderr carry only protocol lines (§1.2), so the text is kept here`, { method, text }); } catch { /* the run ended between the check and the write */ }
+}
+
+function captureConsole(): { attach: (run: Run) => void; release: () => void } {
+  const c: Capture = { run: null, pending: [], released: false };
+  active.push(c);
   if (saved === null) {
     saved = new Map();
-    const c = console as unknown as Record<string, unknown>;
+    const con = console as unknown as Record<string, unknown>;
     for (const key of Object.getOwnPropertyNames(console)) {
-      const fn = c[key];
+      const fn = con[key];
       if (typeof fn !== "function") continue;
       saved.set(key, fn as ConsoleFn);
-      c[key] = (...a: unknown[]) => {
-        const target = [...active].reverse().find((r) => !r.ended);
+      con[key] = (...a: unknown[]) => {
+        const target = [...active].reverse().find((x) => !x.released && (x.run === null || !x.run.ended));
         if (!target) return;
-        const text = a.map((x) => (typeof x === "string" ? x : safeJson(x))).join(" ");
-        try { target.step("captured console output", `a library called console.${key}; stdout and stderr carry only protocol lines (§1.2), so the text is kept here`, { method: key, text }); } catch { /* the run ended between the check and the write */ }
+        record(target, key, a.map((x) => (typeof x === "string" ? x : safeJson(x))).join(" "));
       };
     }
   }
-  let released = false;
-  return () => {
-    if (released) return; released = true;
-    const i = active.indexOf(run); if (i >= 0) active.splice(i, 1);
-    if (active.length === 0 && saved !== null) {
-      const c = console as unknown as Record<string, unknown>;
-      for (const [key, fn] of saved) c[key] = fn;
-      saved = null;
-    }
+  return {
+    attach(run) { c.run = run; for (const p of c.pending) record(c, p.method, p.text); c.pending = []; },
+    release() {
+      if (c.released) return; c.released = true;
+      const i = active.indexOf(c); if (i >= 0) active.splice(i, 1);
+      if (active.length === 0 && saved !== null) {
+        const con = console as unknown as Record<string, unknown>;
+        for (const [key, fn] of saved) con[key] = fn;
+        saved = null;
+      }
+    },
   };
 }
 

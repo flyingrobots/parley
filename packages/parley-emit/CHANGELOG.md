@@ -29,4 +29,6 @@ The first version, `0.1.0`, is not yet on npm; this entry becomes its heading wh
   envelope keys from the tool are refused; `end(0)` after an error is refused; retention deletes
   only completed bundles; every `console` function is captured; tree inputs skip `.parley` and
   honour `exclude`; absolute input paths resolve; the ignore file is linked into place whole; the
-  state directory's retention is declared.
+  state directory's retention is declared; console capture starts before the tool's resolvers run;
+  a failing renderer is one warning; a throw during discovery is an error line; an uncaught
+  throw's stack stays in the receipt; a failed `end` in `--human` mode names the receipt.

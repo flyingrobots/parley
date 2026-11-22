@@ -127,16 +127,25 @@ export class Run {
 
   private line(obj: Record_): string { return JSON.stringify(obj) + "\n"; }
 
+  private rendererFailed = false;
+
   private prose(obj: Record_): string {
     let custom: string | null = null;
-    try { custom = this.init.human?.(obj) ?? null; } catch { custom = null; }
+    try { custom = this.init.human?.(obj) ?? null; } catch (e) {
+      custom = null;
+      if (!this.rendererFailed && !this.closed) {
+        this.rendererFailed = true;
+        const msg = e instanceof Error ? e.message : String(e);
+        queueMicrotask(() => { try { if (!this.closed) this.warning({ code: "human.renderer_failed", problem: `the tool's --human renderer threw: ${msg}; the default rendering is used for the rest of the run`, remedy: "fix the renderer; the receipt is complete regardless" }); } catch { /* the run ended first */ } });
+      }
+    }
     if (typeof custom === "string") return custom.endsWith("\n") ? custom : custom + "\n";
     switch (obj.event) {
       // Prose is for a person or a pipe into something like a pull-request comment; the bootstrap
       // line and a successful end say nothing there, so the tool's rendering stands alone. The
       // receipt still carries both.
       case "run": return "";
-      case "end": return obj.status === 0 ? "" : `end: status ${String(obj.status)}${obj.redacted ? ", receipt redacted" : ""}\n`;
+      case "end": return obj.status === 0 ? "" : `end: status ${String(obj.status)}${obj.redacted ? ", receipt redacted" : ""}; receipt at ${String(obj.receipt)}\n`;
       case "error": case "warning": return `${String(obj.event)} ${String(obj.code)}: ${String(obj.problem)}${obj.remedy ? ` (${String(obj.remedy)})` : ""}\n`;
       default: return `${String(obj.event)}: ${JSON.stringify(obj)}\n`;
     }
@@ -228,10 +237,10 @@ export class Run {
 
   warning(d: Diagnostic): number { return this.emit({ to: { stderr: true, receipt: true } }, { event: "warning", ...this.diagnostic(d) }, SCHEMA_IDS.warning); }
 
-  /** A structured error (§6). The run then closes with status 2 unless `end` is given another non-zero status. */
-  error(d: Diagnostic): number {
+  /** A structured error (§6). The run then closes with status 2 unless `end` is given another non-zero status. `receiptExtra` goes to the receipt copy only. */
+  error(d: Diagnostic, receiptExtra?: Record_): number {
     this.errorReported = true;
-    return this.emit({ to: { stderr: true, receipt: true } }, { event: "error", ...this.diagnostic(d) }, SCHEMA_IDS.error);
+    return this.emit({ to: { stderr: true, receipt: true } }, { event: "error", ...this.diagnostic(d) }, SCHEMA_IDS.error, receiptExtra);
   }
 
   private diagnostic(d: Diagnostic): Record_ {

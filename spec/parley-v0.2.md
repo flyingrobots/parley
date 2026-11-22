@@ -85,8 +85,9 @@ recorded in the receipt, is one event and **MUST** carry the same `seq`, the sam
 `(run, seq)` therefore identifies an event uniquely, and a consumer merging streams **MUST** treat
 two lines with the same pair as one event. Remembering which pairs it has seen is deduplication,
 not interpretation, and does not conflict with the stand-alone rule above. Because the bootstrap
-line (§3) is the first line a run emits on any stream, it is always `seq: 0`; every other line is
-`seq >= 1`, and nothing else is pinned.
+line (§3.1) is the first line a run emits on any stream, it is always `seq: 0`; every other line
+is `seq >= 1`, and nothing else is pinned. The one exception is a run that fails before it can
+bootstrap (§3.2), whose single diagnostic line is `seq: 0` instead.
 
 ---
 
@@ -163,11 +164,23 @@ environment, and **MUST NOT** serve when it holds neither.
 
 ---
 
-## 3. The bootstrap line
+## 3. The run: bootstrap, startup failure, end
+
+A run opens with one line and closes with one line. Between them, every stream carries the
+events of §1.3. Four facts about a run are separate and each has its own evidence: that it
+**completed** (an `end` event exists, §3.3), that it **succeeded** (`end.status` is `0`), that its
+output **validates** (§4.5), and that it is **eligible for replay** (§2.3, §5.3). None implies
+another.
+
+### 3.1 The bootstrap line
 
 The **first** line the run emits on any stream, and so the first line of stdout, emitted
 **before work begins**. It is written to stdout only; it is not mirrored into the receipt, whose
 first line is the receipt head (§5).
+
+Before announcing the receipt path, a program **MUST** create the receipt file, or reserve it
+exclusively, so the path it prints exists. Then it emits the bootstrap line, the receipt head,
+and the command's output, in that order.
 
 ```json
 {"event":"run","t":1795326412345,"seq":0,
@@ -188,6 +201,71 @@ digests belong in the receipt's own first line (§5).
 bootstrap schema. They move for unrelated reasons (§4.4) and agree only by coincidence. `paths`
 names the files this run writes; `receipt` is the only one the protocol defines, and a program
 **MAY** add others it documents.
+
+### 3.2 Startup failure
+
+A run that cannot reach the bootstrap line, because no receipt location is usable, the
+arguments cannot be parsed, or the program cannot read its own declaration, **MUST NOT** fabricate
+a bootstrap line naming a receipt that does not exist. It emits exactly one line, on stderr, and
+exits `3` (§3.4):
+
+```json
+{"event":"startup.failed","t":1795326412345,"seq":0,"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8",
+ "tool":"theme-book","v":"0.2.1","code":"startup.receipt_unwritable",
+ "problem":"No writable receipt location: .parley is read-only and $XDG_STATE_HOME is unset",
+ "remedy":"set XDG_STATE_HOME or make .parley writable",
+ "_schema":{"id":"parley.startup.failed","version":"1.0.0"}}
+```
+
+It carries `run` because the execution still has an identity, `seq: 0` because it is the only line
+the run emits, and the §6 error fields because it is an error. There is no receipt and no `end`.
+This is the one line a run may emit without a bootstrap line before it.
+
+### 3.3 The terminal event
+
+A run that bootstrapped **MUST** close with an `end` event, the final logical event of the run,
+written to stdout and to the receipt as one event (§1.3: same `seq`, `t` and `event`). Its `seq`
+is the run's final sequence number; there is no separate field for it.
+
+```json
+{"event":"end","t":1795326412401,"seq":9,"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8",
+ "status":0,"receipt":".parley/receipts/01JD3KQ8Z6V9X2M4N7P1R3T5W8.jsonl","redacted":true,
+ "_schema":{"id":"parley.end","version":"1.0.0"}}
+```
+
+- `status` is the exit status the process is about to exit with (§3.4).
+- `receipt` repeats the receipt path, so the last line a reader sees names it as well as the
+  first.
+- `redacted` is `true` when any redaction occurred anywhere in the run: the head carries
+  `redacted` (§5.3), or a `redaction` event was emitted (§5.3), or a sidecar holds a replaced value.
+  A replay decision (§2.3) reads this field, not the writer's memory.
+
+Once emission of `end` begins its contents are fixed. A program **MUST NOT** emit a replacement
+`end` and **MUST NOT** emit ordinary events after it. If a write or close fails after `end` was
+emitted, the process's observed exit status may differ from `end.status`; a reader holding both
+**MUST** report the disagreement rather than pick one.
+
+A failed command still finishes: an `end` with a non-zero `status` closes a **complete failed
+receipt**. A receipt or stdout capture with no `end` is **incomplete lifecycle evidence**: the
+reader knows the run did not finalise, and nothing more. EOF is not success.
+
+`end` records the producer's terminal outcome. It cannot make independent file and pipe writes
+atomic; a startup failure (§3.2) and a failure of the output or receipt sinks (status `4`) are the
+named exceptions to the two-copy guarantee.
+
+### 3.4 Exit status
+
+| Status | Meaning |
+| --- | --- |
+| `0` | The command completed and succeeded. |
+| `2` | The command failed and reported a structured error (§6). |
+| `3` | Setup failed before the bootstrap line; the only output is the §3.2 diagnostic. |
+| `4` | Protocol output, receipt writing or finalisation failed, including a failure while writing the bootstrap line. Whatever remained possible through working sinks was preserved, subject to the immutable `end`. |
+| signal-derived | Termination by signal: the documented exception. Terminal output may be absent. |
+| other | Tool-owned and documented by the tool. A tool **MUST NOT** redefine `0`, `2`, `3` or `4`. |
+
+A condition the program recovered from, so that the command still succeeded, is a warning (§6),
+not a terminal error, and does not change the status.
 
 ---
 
@@ -326,6 +404,34 @@ declared secret is never part of the preimage.
 Subsequent lines carry the program's reasoning as it works — one line per decision, emitted as it
 happens rather than buffered, so a person watching sees the thing working.
 
+The receipt also carries every result, error and warning the run emitted, as copies of the
+stdout and stderr lines (§1.3: same `seq`, `t` and `event`), and closes with the `end` event
+(§3.3). A reader tomorrow then has the answer, not only the reasoning that led to it. These copies
+are subject to §5.3 like everything else in the receipt.
+
+**Sidecars.** A result record whose UTF-8 serialisation, excluding its terminating newline,
+exceeds **65,536 bytes** **MAY** be stored beside the receipt instead of inside it. The stdout copy
+is unaffected. The receipt then carries a `sidecar` event in the record's place:
+
+```json
+{"event":"sidecar","t":1795326412395,"seq":8,"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8",
+ "source":7,"path":"01JD3KQ8Z6V9X2M4N7P1R3T5W8/7.json","bytes":2097152,
+ "sha256":"3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855b",
+ "_schema":{"id":"parley.sidecar","version":"1.0.0"}}
+```
+
+- `source` is the `seq` of the record the sidecar holds; the sidecar event has its own `seq` and
+  schema and does not pretend to be the result.
+- `path` is relative to the receipt's directory.
+- `bytes` and `sha256` describe the **stored bytes**, which is not the semantic `digest` of §7.1.
+- The receipt and its sidecars are one bundle: copied together, retained together (§5.1), and
+  deleted together.
+- Every sidecar **MUST** be finalised before `end` reports success.
+- A reader that finds a sidecar missing or its digest mismatched **MUST** treat the bundle as
+  unavailable for replay (§2.3).
+- §5.3 applies to a sidecar's contents exactly as to the receipt. A sidecar is not a place to put
+  what the receipt may not hold.
+
 ### 5.1 Retention
 
 Receipts accumulate. A conforming program **MUST** state a retention policy and **SHOULD**
@@ -372,17 +478,46 @@ that differ only in a secret, for example two tokens
   selecting two accounts, have the same `inv` (§2.2 excludes the secret) and identical receipts,
   and their answers may differ.
 
+**Late redaction.** A redaction decided after the head is written, under the MAY above or because
+a declared secret surfaced in a later record or a sidecar, **MUST** be discoverable from the
+completed receipt and not only from the writer's memory. The program replaces the value in place
+and emits a `redaction` event into the receipt naming where:
+
+```json
+{"event":"redaction","t":1795326412398,"seq":6,"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8",
+ "in":4,"at":"/detail/url",
+ "_schema":{"id":"parley.redaction","version":"1.0.0"}}
+```
+
+`in` is the `seq` of the affected record (a result, an error, a reasoning line or a sidecar event)
+and `at` is a JSON Pointer within it. The `end` event's `redacted` flag (§3.3) is `true` whenever
+the head carries `redacted` or any `redaction` event was emitted, so a replay decision has one
+place to look.
+
 A schema checks the shape of `redacted`, not its truth. Whether an indexed element contains
 `[redacted]`,
 whether a pointer resolves, and whether a `[redacted]` marker in the head has a matching entry
 while `redacted` is present are a reader's checks, and a reader that performs them **SHOULD**
 report a mismatch as a defect in the writer.
 
+### 5.4 Persistence
+
+"Durable" here means ordinary-path persistence, not crash-safe durability. On every path that is
+not a hard crash the program **MUST** write and close the receipt and its sidecars; it makes no
+`fsync` or power-loss promise. A write or close error is an outcome, not something to swallow: it
+**MUST** produce exit status `4` (§3.4) and, where a sink still works, an error line saying so.
+
+A reader **MUST** ignore a final line that is not newline-terminated, including an otherwise
+parseable `end`. A newline-terminated `end` establishes that the run reported termination.
+Replay (§2.3) additionally requires the records it needs, intact sidecars, a successful outcome,
+and eligibility under §2.3 and §5.3; termination alone is none of those.
+
 ---
 
 ## 6. Errors
 
-Errors go to stderr, as JSON Lines, and **MUST** carry structure rather than prose. `code` is a
+Errors go to stderr, as JSON Lines, and are retained in the receipt (§5). They **MUST** carry
+structure rather than prose. `code` is a
 stable identifier of at least two dot-separated segments of lowercase letters, digits and
 underscores, such as `contrast.unsatisfiable` or `http.404`, never a sentence; `problem` is one
 sentence and never empty:

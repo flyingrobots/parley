@@ -70,9 +70,9 @@ describe("schemas/", () => {
       for (const k of ["run", "tool", "v", "inv", "session"]) if (s.properties[k]) expect(s.properties[k].minLength).toBe(1);
     });
 
-    test(`${f}: seq is const 0 only for the bootstrap line, otherwise minimum 1 (§1.3)`, () => {
+    test(`${f}: seq is const 0 only for the bootstrap and startup-failure lines, otherwise minimum 1 (§1.3)`, () => {
       const seq = s.properties.seq;
-      if (s.properties.event?.const === "run") expect(seq.const).toBe(0);
+      if (s.properties.event?.const === "run" || s.properties.event?.const === "startup.failed") expect(seq.const).toBe(0);
       else {
         expect(seq.const).toBeUndefined();
         expect(seq.minimum).toBeGreaterThanOrEqual(1);

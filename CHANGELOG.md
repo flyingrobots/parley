@@ -7,6 +7,25 @@ The spec and each message schema are versioned separately from this package.
 
 ### Changed
 
+- Spec §3 is now the run lifecycle: §3.1 bootstrap (the receipt file is created or reserved before
+  it is announced); §3.2 startup failure (one `startup.failed` line on stderr, exit 3, no
+  fabricated bootstrap); §3.3 the terminal `end` event, written to stdout and the receipt as one
+  event, immutable once emission begins, carrying `status`, `receipt` and an aggregate `redacted`
+  flag; §3.4 the exit-status contract (0, 2, 3, 4, signal-derived, tool-owned). Completion,
+  success, validation and replay eligibility are named as separate facts.
+  (flyingrobots/parley#15)
+- §5: the receipt retains every result, error and warning line and closes with `end`. A result
+  over 65,536 serialised bytes may be stored as a sidecar, referenced by a `sidecar` event with
+  the stored bytes' length and SHA-256; receipt and sidecars are one bundle; a missing or
+  mismatched sidecar makes the bundle unavailable for replay. §5.4 defines persistence as
+  ordinary-path: written and closed, no fsync promise, write errors are exit 4, an unterminated
+  final line is ignored. (flyingrobots/parley#21)
+- §5.3: a redaction decided after the head is written is recorded by a `redaction` event naming
+  the affected record and pointer, and `end.redacted` aggregates all redaction state, so replay
+  decisions read the receipt rather than the writer's memory. (flyingrobots/parley#13)
+- New draft schemas: `parley.end` 1.0.0, `parley.sidecar` 1.0.0, `parley.redaction` 1.0.0,
+  `parley.startup.failed` 1.0.0, each with a validated example in the spec.
+
 - §4.5 and §4.6 amended: the same-major promise did not hold for open schemas (a minor that adds
   an optional typed field rejects an older line carrying another type under that name). Full
   validation is now against the schema for the exact advertised `(id, version)`; `_schema.version`

@@ -46,6 +46,21 @@ subject matter*.
 A path printed at the end is a path you never receive on the failure path — which is exactly when
 you want it.
 
+## Why a run closes with an `end` event
+
+A stream that only opens cannot tell a reader whether it finished. Bazel's build event protocol
+and Terraform's JSON output both close explicitly for this reason. `end` carries the exit status
+the process is about to use, so a captured stream or a receipt file read tomorrow says whether the
+run completed and whether it succeeded, which are different facts. Its absence says only that the
+run did not finalise; EOF is not success.
+
+## Why the receipt keeps the result
+
+A receipt that holds the reasoning but not the answer sends tomorrow's reader back to a stdout
+capture that no longer exists. Keeping the result, error and warning lines in the receipt makes it
+self-sufficient, and the 64 KiB sidecar threshold keeps a large answer from bloating the file
+that every reader opens first.
+
 ## Why errors carry `measured`, `limit` and `remedy`
 
 An error naming the constraint, the distance from it, and the lever resolves in one step.

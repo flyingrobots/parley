@@ -1,3 +1,3 @@
 ```json
-{"event":"error","t":…,"seq":…,"code":"x.y","problem":"p","_schema":{"id":"parley.error","version":"1.0.0"}}
+{"event":"error","t":…,"seq":…,"code":"x.y","problem":"p","_schema":{"id":"parley.error","version":"2.0.0"}}
 ```

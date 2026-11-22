@@ -1,13 +1,14 @@
 # The output contract
 
-Why the [specification](../../../spec/parley-v0.1.md) takes the shape it does. Each rule here came
+Why the [specification](../../../spec/parley-v0.2.md) takes the shape it does. Each rule here came
 from something that actually went wrong.
 
 ## Why JSON Lines rather than one JSON document
 
 A document must be complete before it parses. Lines parse as they arrive, so a caller can follow
-a long run, and a crashed run still yields everything up to the crash. Interleaving is safe when
-each line carries its own `run` identity.
+a long run, and a crashed run still yields everything up to the crash. Interleaved output stays
+attributable because every line carries its own `run` identity, which §1.3 requires for exactly
+that reason.
 
 ## Why stdout stays small
 
@@ -21,7 +22,14 @@ The moment anyone wants a receipt is *after* something looked wrong — and by t
 gone. Only whoever knew in advance to capture it has a copy. A file can be read tomorrow, by a
 different process, that did not run the command.
 
-## Why two identifiers
+## Why `seq` is one counter across every stream
+
+An error goes to stderr and into the receipt. If each stream numbered its own lines, a reader
+merging them could not tell the two copies were one event, and could not order a receipt line
+against a stdout line at all. One counter per run makes `(run, seq)` the event's identity wherever
+it was written.
+
+## Why `run` and `inv` are both needed
 
 `run` distinguishes two executions of the same question; `inv` recognises that they *were* the
 same question. Both are needed. The pair is what makes change detection a string comparison and

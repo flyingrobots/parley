@@ -1,38 +1,85 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://flyingrobots.dev/parley/schemas/parley.run.bootstrap/1.0.0",
+  "$id": "https://flyingrobots.dev/parley/schemas/parley.run.bootstrap/1.1.0",
   "title": "parley run bootstrap",
   "description": "First line of stdout, emitted before work begins so a crashed run still names its receipt.",
   "type": "object",
-  "required": ["event", "t", "seq", "tool", "v", "inv", "run", "paths", "_schema"],
-  "additionalProperties": false,
+  "required": [
+    "event",
+    "t",
+    "seq",
+    "tool",
+    "v",
+    "inv",
+    "run",
+    "paths",
+    "_schema"
+  ],
   "properties": {
-    "event": { "const": "run" },
-    "t": { "type": "integer", "description": "POSIX time in milliseconds." },
-    "seq": { "const": 0 },
-    "tool": { "type": "string" },
-    "v": { "type": "string", "description": "The program's own version, distinct from any schema version." },
-    "inv": { "type": "string", "description": "Content-addressed identity of the question: tool, version, normalised args, and the bytes of every declared input." },
-    "run": { "type": "string", "description": "Unique, lexicographically sortable identity of this execution." },
-    "session": { "type": "string", "description": "Working period spanning runs. Supplied by the caller or inherited." },
+    "event": {
+      "const": "run"
+    },
+    "t": {
+      "type": "integer",
+      "description": "POSIX time in milliseconds."
+    },
+    "seq": {
+      "const": 0,
+      "description": "The bootstrap line is always the first line the run emits, so it is the only line with a pinned seq."
+    },
+    "tool": {
+      "type": "string"
+    },
+    "v": {
+      "type": "string",
+      "description": "The program's own version, distinct from any schema version."
+    },
+    "inv": {
+      "type": "string",
+      "description": "Content-addressed identity of the question: tool, version, normalised args, and the bytes of every declared input."
+    },
+    "run": {
+      "type": "string",
+      "description": "Unique, lexicographically sortable identity of this execution."
+    },
+    "session": {
+      "type": "string",
+      "description": "Working period spanning runs. Supplied by the caller or inherited."
+    },
     "paths": {
       "type": "object",
-      "required": ["receipt"],
-      "additionalProperties": false,
+      "required": [
+        "receipt"
+      ],
       "properties": {
-        "receipt": { "type": "string" },
-        "log": { "type": "string" },
-        "error": { "type": "string" }
+        "receipt": {
+          "type": "string"
+        },
+        "log": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        }
       }
     },
-    "_schema": { "$ref": "#/$defs/schemaRef" }
-  },
-  "$defs": {
-    "schemaRef": {
+    "_schema": {
       "type": "object",
-      "required": ["id", "version"],
+      "required": [
+        "id",
+        "version"
+      ],
       "additionalProperties": false,
-      "properties": { "id": { "type": "string" }, "version": { "type": "string" } }
+      "properties": {
+        "id": {
+          "const": "parley.run.bootstrap"
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^1\\.[0-9]+\\.[0-9]+$",
+          "description": "Any 1.x.y: a reader validates every line of the major it was built against and ignores fields it does not know (spec \u00a74.5)."
+        }
+      }
     }
   }
 }

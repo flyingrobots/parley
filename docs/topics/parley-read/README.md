@@ -2,10 +2,11 @@
 
 The reader library: `@flyingrobots/parley-read`, under `packages/parley-read`. It opens the
 receipt bundles a repository has accumulated and returns every run's records, under the rules the
-[specification](../../../spec/parley-v0.2.md) binds a reader to. This page is the reference for
-what the package does on `main`; the package
-[README](../../../packages/parley-read/README.md) is the front door with a captured load, and the
-[test plan](test-plan.md) beside this page is the contract ledger.
+[specification](../../../spec/parley-v0.2.md) binds a reader to, and it answers a read over those
+records — refused unless it states who it is for and what it wants, and recorded as a run of its
+own. This page is the reference for what the package does on `main`; the package
+[README](../../../packages/parley-read/README.md) is the front door with a captured load and a
+captured read, and the [test plan](test-plan.md) beside this page is the contract ledger.
 
 It is a library with no command, and it is not published. The repository's `bun test` runs its
 suite and `bun run typecheck` checks it strictly, over `src`, `scripts` and `test`.
@@ -15,6 +16,10 @@ suite and `bun run typecheck` checks it strictly, over `src`, `scripts` and `tes
 | Export | Job |
 | --- | --- |
 | `loadReceipts(opts)` | Every run in both receipt locations for a working directory, as bundles; `opts` takes `cwd`, `env`, `home`, `sidecars` and a `validate` validator |
+| `queryReceipts(request, opts)` | A read: refused without an asker, a view and a window, else recorded as a `parley.query` event through the writer and answered with the window's records in time order; `opts` takes the loader's options plus `tool`, `stdout`, `stderr`, `session` and `now` |
+| `planQuery(request)` | The refusal rules and the budget default, as a pure function: it reads nothing, writes nothing and records nothing |
+| `queryRecord(query)` | The `parley.query` payload for an accepted read, without the envelope the writer owns |
+| `VIEWS`, `DEFAULT_BUDGET`, `QUERY_SCHEMA`, `NO_RETENTION` | The five view tokens, the one documented budget default (`{"records": 20}`), the pair a read emits, and the retention policy a read states |
 | `readReceiptFile(path, opts)` | One receipt file, as a `FileRead`: its line count, the runs it holds, its quarantined lines and one bundle per run |
 | `receiptLocations(opts)`, `repoReceiptDir(cwd)`, `stateReceiptDir(opts)` | Where receipts are for a working directory, each location reported present or absent |
 | `LineBuffer`, `splitLines`, `readFileLines`, `CHUNK_BYTES` | Newline buffering: bytes in, complete lines out, the unterminated tail kept apart |
@@ -171,18 +176,90 @@ over a line and called validation.
 The sixteen schemas are drafts: no release has snapshotted a version yet (§4.5), which is why the
 package records the commit it copied them at.
 
+## Making a read
+
+A read states three things, and two of them are never inferred. The shapes, the vocabulary and the
+reasoning are [the reader representation](../reader/README.md); what this library adds is the
+entry point, the refusal and the record.
+
+| It states | Or else |
+| --- | --- |
+| `asker` — who the read is for, `tool` required | Refused `query.asker_unnamed`: §2.1 forbids inventing an identity, so a read whose caller cannot be named is not recorded under a guess. A `cwd` that is not an absolute POSIX path, or an empty `task`, is refused `query.asker_invalid` rather than emitted as a line that fails its own schema |
+| `view` — one of `what-ran`, `what-failed`, `what-changed`, `how-it-decided`, `everything` | Refused `query.view_missing`, or `query.view_unknown` for a token outside the five: there is no privileged view, and a guessed view is a different answer to a different question |
+| `window` — `from` and `to`, POSIX milliseconds, inclusive at both ends | Refused `query.window_missing`, `query.window_invalid` for a bound that is not a non-negative integer, or `query.window_inverted` when `to` is below `from` |
+| `budget` — `records` required, `bytes` and `ms` optional | Defaulted to `{"records": 20}`, visibly: the answer carries `budgetDefaulted`. A bound that is not a positive integer is refused `query.budget_invalid` |
+| `note` — free text, optional | Refused `query.note_empty` for an empty string, which `parley.query` does not carry |
+
+A refusal carries `code`, `problem` and `remedy` — §6's fields, so a caller that is itself a
+parley tool can hand one to `run.error` — with the `field` it is about and the `section` it is
+measured against. Every refusal that applies is returned, not just the first, so one round trip
+tells a caller everything that is missing.
+
+Two fields are inferred rather than refused, as the decision has it: `asker.cwd` is the directory
+the read was made against when the caller does not state it, and the recorded query says so.
+`asker.task` is "from the environment" in that decision without a variable named, so it comes from
+the request and is omitted when absent — this library does not read a variable it would be
+inventing (§2.1).
+
+### A refused read is not a run
+
+It writes nothing: no receipt, no `.parley` directory, nothing anywhere. §9 records a question
+that *was asked*, and a question nobody could state has no asker to attribute it to. `planQuery`
+is the same rules as a pure function, for a caller that wants to know whether a read would be
+accepted before making it.
+
+### An accepted read is recorded
+
+The `parley.query` event goes through the writer
+([`@flyingrobots/parley-emit`](../parley-emit/README.md)), so a read is a run like any other
+parley program: a bootstrap line, a receipt under the working directory it read, two decisions
+recorded as `receipt.step`, and an `end`. The receipt lands beside the ones being read, which is
+what makes the loader find the question on the next read, and the answer names the record by
+`(run, seq)` so a result can say which query it answers.
+
+Three consequences worth stating:
+
+- **A read does not answer itself.** Its own records are in the store a moment after they are
+  written, and they are excluded from its own answer; `counts.own` says how many there were. The
+  next read sees them.
+- **A read never expires the history it reads.** §5.1 asks every tool for a retention policy, and
+  the one a read states deletes nothing: expiring the receipts it was asked to read would destroy
+  the history in order to answer a question about it.
+- **The read's own identity is the reading program's**, `parley-read` at the package version by
+  default, or whatever a host program embedding the reader names itself in `opts.tool`. That is
+  not the asker: the asker is who the read is *for*, and `run` on a `parley.query` line is the
+  read's own run, never a run being read.
+
+### What the answer is, and what it is not
+
+The answer is every record in the window, ascending by `t` with `(run, seq)` breaking a tie so two
+records stamped the same millisecond come back in one stable order. A record whose `t` is not a
+number cannot be placed in a window at all; it is not in the answer and `counts.undated` says how
+many there were, rather than dropping it silently.
+
+| Recorded | Applied |
+| --- | --- |
+| `asker` | Nothing branches on it: two askers asking the same thing get the same answer |
+| `view` | **Nothing yet.** The answer is the window, unprojected. Shaping it to the view is [flyingrobots/parley#49](https://github.com/flyingrobots/parley/issues/49), and a test pins the two being the same today so it cannot drift silently |
+| `budget` | **Nothing yet.** Nothing is truncated and no excluded count is claimed, because a count of what was left out belongs to the digest that left it out ([flyingrobots/parley#50](https://github.com/flyingrobots/parley/issues/50)) |
+| `window` | Yes, and echoed verbatim in the answer |
+| `note` | Never parsed |
+
+No `parley.lens` line is emitted. A lens states a loss bound and the records a result was built
+from; a read that returns the records has no loss to state, and the lens is the digest's (#50).
+
 ## What it does not do
 
-- Query or rank. It returns what the receipts say; choosing among runs is the caller's.
+- Rank, project or truncate. A read returns its window in time order; the view and the budget are
+  recorded and applied to nothing (flyingrobots/parley#49, flyingrobots/parley#50).
 - Recompute `inv` or any semantic digest (§7.1). It checks a sidecar's stored bytes against the
   digest the receipt declared, and nothing else.
 - Judge conformance. The [doctor](../conformance/README.md) names violated rules; a defect here is
   what the loader could not read or could not validate.
 - Read stdout or stderr. Those streams are not on disk; the loader reads receipt bundles.
-- Answer a query. A read that states an asker, a view and a budget is
-  [the reader representation](../reader/README.md) and
-  [flyingrobots/parley#2](https://github.com/flyingrobots/parley/issues/2); this loader is the
-  layer such a query would be answered from, and it ranks and projects nothing itself.
+- Serve a reader over the network, or hold an index. A read is a function call that loads the
+  directory it was pointed at, once, per read; the store's indexing is
+  [flyingrobots/parley#2](https://github.com/flyingrobots/parley/issues/2).
 - Write, create or repair anything.
 - Windows paths. v0.2 of the spec is POSIX-only.
 

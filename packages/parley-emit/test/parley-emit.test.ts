@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, statSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, writeFileSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 import { doctor } from "../../../scripts/doctor.ts";
-import { defineTool, main, SCHEMA_SOURCE, SCHEMAS, ulid, type Run, type Sink, type ToolSpec } from "../src/index.ts";
+import { defineTool, main, SCHEMA_SOURCE, SCHEMAS, ulid, writeWholeLine, type Run, type Sink, type ToolSpec } from "../src/index.ts";
 
 const SCHEMAS_DIR = resolve(import.meta.dir, "../../../schemas");
 
@@ -877,5 +877,265 @@ process.exit(await main(tool, ["t", "count"], (run) => { console.log("touch cons
     expect(s.stderr.objs[0]!.code).toBe("startup.arguments_invalid");
     expect(s.stderr.text.includes(SECRET2)).toBe(false);
     expect(String(s.stderr.objs[0]!.problem)).toContain("[redacted]");
+  });
+});
+
+// ---- PE-22: the shared history stream (spec §8, informative) -----------------------------
+// The sink is opt-in, receives the receipt's bytes and nothing else, appends whole lines, keeps
+// daily segments by age, and never changes a run that has no stream configured.
+
+const DAY_MS = 86_400_000;
+const segmentFor = (t: number) => `${new Date(t).toISOString().slice(0, 10)}.jsonl`;
+
+function historyScratch() {
+  const s = scratch();
+  return { ...s, hist: mkdtempSync(join(tmpdir(), "parley-history-")) };
+}
+
+function segmentPath(hist: string): string {
+  const names = readdirSync(hist).filter((f) => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(f));
+  expect(names.length).toBe(1);
+  return join(hist, names[0]!);
+}
+
+function segmentText(hist: string): string { return readFileSync(segmentPath(hist), "utf8"); }
+function segmentObjs(hist: string): Record<string, unknown>[] {
+  return segmentText(hist).trimEnd().split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>);
+}
+const bookkeepingOf = (head: Record<string, unknown>) => (head.effects as { bookkeeping: { op: string; scope: string }[] }).bookkeeping;
+const pathsOf = (boot: Record<string, unknown>) => boot.paths as Record<string, string>;
+
+describe("PE-22 the shared history stream", () => {
+  test("a run with no stream configured is untouched", async () => {
+    const { dir, env } = scratch();
+    const r = await runCount(dir, env, ["count"], (run) => { run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" }); });
+    expect(r.violations).toEqual([]);
+    expect(r.status).toBe(0);
+    expect(pathsOf(r.stdout.objs[0]!)).toEqual({ receipt: r.path! });
+    expect(bookkeepingOf(r.receiptLines[0]!).some((b) => b.scope.includes("history"))).toBe(false);
+    expect(bookkeepingOf(r.receiptLines[0]!).length).toBe(5);
+    expect(r.stderr.lines).toEqual([]);
+    expect(existsSync(join(env.XDG_STATE_HOME!, "parley", "history"))).toBe(false);
+  });
+
+  test("the stream receives the receipt's bytes exactly", async () => {
+    const { dir, env, hist } = historyScratch();
+    const r = await runCount(dir, { ...env, PARLEY_HISTORY: hist }, ["count"], (run) => {
+      run.step("counted the things", "the stream carries reasoning as well as results");
+      run.warning({ code: "input.encoding_guessed", problem: "no charset declared", remedy: "declare it" });
+      run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" });
+    });
+    expect(r.violations).toEqual([]);
+    const seg = segmentPath(hist);
+    expect(seg).toBe(join(hist, segmentFor(Date.now())));
+    expect(pathsOf(r.stdout.objs[0]!).history).toBe(seg);
+    expect(readFileSync(seg, "utf8")).toBe(r.receipt);
+    expect(segmentObjs(hist).every((o) => o.run === r.stdout.objs[0]!.run)).toBe(true);
+    expect(bookkeepingOf(r.receiptLines[0]!)).toContainEqual({ op: "append", scope: seg });
+    expect(bookkeepingOf(r.receiptLines[0]!)).toContainEqual({ op: "delete", scope: `${hist}/` });
+    expect(statSync(seg).mode & 0o777).toBe(0o600);
+  });
+
+  test("an existing state directory enables the stream and a created one is owner-only", async () => {
+    const { dir, env } = scratch();
+    const hist = join(env.XDG_STATE_HOME!, "parley", "history");
+    mkdirSync(hist, { recursive: true });
+    const r = await runCount(dir, env, ["count"], (run) => { run.result({ event: "result", value: 2 }, { id: "t.count", version: "1.0.0" }); });
+    expect(r.violations).toEqual([]);
+    expect(segmentText(hist)).toBe(r.receipt);
+
+    const made = join(env.XDG_STATE_HOME!, "elsewhere", "history");
+    const r2 = await runCount(dir, { ...env, PARLEY_HISTORY: made }, ["count"], () => {});
+    expect(r2.violations).toEqual([]);
+    expect(statSync(made).mode & 0o777).toBe(0o700);
+  });
+
+  test("the stream can be switched off explicitly", async () => {
+    const { dir, env } = scratch();
+    const hist = join(env.XDG_STATE_HOME!, "parley", "history");
+    mkdirSync(hist, { recursive: true });
+    const r = await runCount(dir, { ...env, PARLEY_HISTORY: "off" }, ["count"], () => {});
+    expect(r.violations).toEqual([]);
+    expect(readdirSync(hist)).toEqual([]);
+    expect(pathsOf(r.stdout.objs[0]!).history).toBeUndefined();
+    expect(bookkeepingOf(r.receiptLines[0]!).length).toBe(5);
+  });
+
+  test("two tools in two repositories share one timeline ordered by t", async () => {
+    const a = scratch(), b = scratch();
+    const hist = mkdtempSync(join(tmpdir(), "parley-history-"));
+    const runOne = async (name: string, s: { dir: string; env: Record<string, string> }, session: string) => {
+      const cap = streams();
+      const status = await main(tool({ name }), [name, "count"], async (run) => {
+        run.step(`${name} worked here`, "two tools, two repositories, one timeline");
+        run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" });
+      }, { cwd: s.dir, env: { ...s.env, PARLEY_HISTORY: hist, PARLEY_SESSION: session }, ...cap, resolved: (args) => ({ command: "count", args }) });
+      expect(status).toBe(0);
+      const checked = check(s.dir, cap);
+      expect(checked.violations).toEqual([]);
+      return { id: cap.stdout.objs[0]!.run as string, receipt: checked.receipt };
+    };
+    const one = await runOne("alpha", a, "ses_one");
+    const two = await runOne("beta", b, "ses_two");
+
+    const lines = segmentObjs(hist);
+    expect(lines.every((l) => typeof l.run === "string" && l.run !== "")).toBe(true);
+    expect(new Set(lines.map((l) => l.run))).toEqual(new Set([one.id, two.id]));
+    const heads = lines.filter((l) => l.event === "receipt.head");
+    expect(heads.map((h) => h.tool).sort()).toEqual(["alpha", "beta"]);
+    expect(heads.map((h) => h.session).sort()).toEqual(["ses_one", "ses_two"]);
+    expect(heads.find((h) => h.tool === "alpha")!.run).toBe(one.id);
+    expect(bookkeepingOf(heads.find((h) => h.tool === "alpha")!).some((bk) => bk.scope.startsWith(a.dir))).toBe(true);
+    expect(bookkeepingOf(heads.find((h) => h.tool === "beta")!).some((bk) => bk.scope.startsWith(b.dir))).toBe(true);
+
+    // One timeline: ordering the whole stream by (t, seq) keeps every run's own order intact,
+    // and each run's slice is exactly its receipt.
+    const sorted = [...lines].sort((x, y) => (x.t as number) - (y.t as number) || (x.seq as number) - (y.seq as number));
+    for (const { id, receipt } of [one, two]) {
+      const mine = sorted.filter((l) => l.run === id);
+      expect(mine.map((l) => l.seq as number)).toEqual([...mine.map((l) => l.seq as number)].sort((p, q) => p - q));
+      expect(mine[0]!.event).toBe("receipt.head");
+      expect(mine.at(-1)!.event).toBe("end");
+      expect(mine.map((l) => JSON.stringify(l)).join("\n") + "\n").toBe(receipt);
+    }
+    expect(lines.length).toBe(sorted.length);
+  });
+
+  test("an unreachable stream is a warning, not a failure", async () => {
+    const { dir, env } = scratch();
+    const blocked = join(dir, "blocked");
+    mkdirSync(blocked); chmodSync(blocked, 0o500);
+    try {
+      const r = await runCount(dir, { ...env, PARLEY_HISTORY: join(blocked, "history") }, ["count"], (run) => { run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" }); });
+      expect(r.status).toBe(0);
+      expect(r.violations).toEqual([]);
+      expect(r.stderr.objs.filter((o) => o.event === "warning" && o.code === "history.unavailable").length).toBe(1);
+      expect(pathsOf(r.stdout.objs[0]!).history).toBeUndefined();
+      expect(bookkeepingOf(r.receiptLines[0]!).length).toBe(5);
+    } finally { chmodSync(blocked, 0o700); }
+
+    const rel = await runCount(dir, { ...env, PARLEY_HISTORY: "history" }, ["count"], () => {});
+    expect(rel.status).toBe(0);
+    expect(rel.violations).toEqual([]);
+    expect(rel.stderr.objs.filter((o) => o.event === "warning" && o.code === "history.unavailable").length).toBe(1);
+    expect(existsSync(join(dir, "history"))).toBe(false);
+  });
+
+  test("a stream that fails mid-run is one warning and leaves the status alone", async () => {
+    const { dir, env } = scratch();
+    const s = streams();
+    let appends = 0;
+    const sink = { dir: "/nonexistent", path: "/nonexistent/today.jsonl", append() { appends += 1; throw new Error("ENOSPC: no space left on device"); }, close() {} };
+    const status = await main(tool(), ["t", "count"], async (run) => {
+      run.step("one", "a");
+      run.step("two", "b");
+      run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" });
+    }, { cwd: dir, env, ...s, history: sink, resolved: (args) => ({ command: "count", args }) });
+    expect(status).toBe(0);
+    expect(appends).toBe(1);
+    const r = check(dir, s);
+    expect(r.violations).toEqual([]);
+    expect(s.stderr.objs.filter((o) => o.event === "warning" && o.code === "history.write_failed").length).toBe(1);
+    expect(r.receiptLines.filter((o) => o.event === "warning" && o.code === "history.write_failed").length).toBe(1);
+    expect(r.receiptLines.at(-1)).toMatchObject({ event: "end", status: 0 });
+  });
+
+  test("a short append is abandoned rather than continued", () => {
+    const file = join(mkdtempSync(join(tmpdir(), "parley-history-")), "seg.jsonl");
+    const fd = openSync(file, "a", 0o600);
+    try {
+      expect(() => writeWholeLine(fd, '{"a":1}\n', () => 3)).toThrow(/truncated/);
+      expect(writeWholeLine(fd, '{"a":1}\n')).toBe(8);
+      expect(readFileSync(file, "utf8")).toBe('{"a":1}\n');
+    } finally { closeSync(fd); }
+  });
+
+  test("stream retention keeps the configured number of daily segments and never the live one", async () => {
+    const { dir, env, hist } = historyScratch();
+    const stale = [segmentFor(Date.now() - 2 * DAY_MS), segmentFor(Date.now() - 400 * DAY_MS)];
+    const keep = [segmentFor(Date.now() - DAY_MS)];
+    for (const name of [...stale, ...keep]) writeFileSync(join(hist, name), "{}\n");
+    writeFileSync(join(hist, "notes.txt"), "not a segment");
+    const r = await runCount(dir, { ...env, PARLEY_HISTORY: hist, PARLEY_HISTORY_DAYS: "2" }, ["count"], () => {});
+    expect(r.violations).toEqual([]);
+    expect(readdirSync(hist).sort()).toEqual([segmentFor(Date.now()), ...keep, "notes.txt"].sort());
+    const step = r.receiptLines.find((o) => o.event === "receipt.step" && String(o.decision).startsWith("history retention")) as { decision: string; detail: { segments: string[] } };
+    expect(step.detail.segments.sort()).toEqual(stale.sort());
+
+    const dry = historyScratch();
+    for (const name of stale) writeFileSync(join(dry.hist, name), "{}\n");
+    const d = await runCount(dry.dir, { ...dry.env, PARLEY_HISTORY: dry.hist, PARLEY_HISTORY_DAYS: "2" }, ["count", "--dry-run"], () => {});
+    expect(d.violations).toEqual([]);
+    expect(readdirSync(dry.hist).filter((f) => stale.includes(f)).sort()).toEqual(stale.sort());
+    expect(d.receiptLines.some((o) => o.event === "receipt.step" && String(o.decision).startsWith("history retention: would delete"))).toBe(true);
+  });
+
+  test("concurrent appends from separate processes never tear a line", async () => {
+    const { dir, env, hist } = historyScratch();
+    const script = join(dir, "h.ts");
+    writeFileSync(script, `import { defineTool, main } from ${JSON.stringify(resolve(import.meta.dir, "../src/index.ts"))};
+const tool = defineTool({ name: "t" + process.argv[2], version: "0.0.1", commands: { count: { intent: "count", effects: { reads: [], writes: [], network: false, idempotent: true }, secrets: [], emits: [{ id: "t.count", version: "1.0.0" }] } }, retention: { count: 100 } });
+process.exit(await main(tool, ["t", "count"], (run) => {
+  for (let i = 0; i < 60; i++) run.step("step " + i, "hammering the shared stream", { pad: "z".repeat(900) });
+  run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" });
+}));`);
+    const procs = Array.from({ length: 8 }, (_, i) => Bun.spawn(["bun", script, String(i)], { cwd: dir, env: { ...process.env, ...env, PARLEY_HISTORY: hist }, stdout: "pipe", stderr: "pipe" }));
+    const results = await Promise.all(procs.map(async (p) => {
+      const [out, err, status] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
+      return { out, err, status };
+    }));
+    for (const { err, status } of results) { expect(err).toBe(""); expect(status).toBe(0); }
+
+    const raw = segmentText(hist);
+    expect(raw.endsWith("\n")).toBe(true);
+    const objs = raw.slice(0, -1).split("\n").map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(objs.every((o) => typeof o.run === "string" && o.run !== "")).toBe(true);
+    const byRun = new Map<string, Record<string, unknown>[]>();
+    for (const o of objs) byRun.set(o.run as string, [...(byRun.get(o.run as string) ?? []), o]);
+    expect(byRun.size).toBe(8);
+    let total = 0;
+    for (const { out } of results) {
+      const boot = JSON.parse(out.split("\n")[0]!) as Record<string, unknown>;
+      const receipt = readFileSync(pathsOf(boot).receipt, "utf8");
+      const mine = byRun.get(boot.run as string)!;
+      expect(mine.map((l) => JSON.stringify(l)).join("\n") + "\n").toBe(receipt);
+      total += mine.length;
+    }
+    expect(total).toBe(objs.length);
+  });
+
+  test("a large record reaches the stream as its receipt line", async () => {
+    const { dir, env, hist } = historyScratch();
+    const rows = Array.from({ length: 3000 }, (_, i) => ({ i, text: "x".repeat(30) }));
+    const s = streams();
+    const status = await main(tool(), ["t", "count"], async (run) => {
+      run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" }, { rows });
+    }, { cwd: dir, env: { ...env, PARLEY_HISTORY: hist }, ...s, resolved: () => ({ command: "count", pad: "y".repeat(70_000) }) });
+    expect(status).toBe(0);
+    const r = check(dir, s);
+    expect(r.violations).toEqual([]);
+    expect(segmentText(hist)).toBe(r.receipt);
+    const objs = segmentObjs(hist);
+    expect(objs[0]!.event).toBe("receipt.head");
+    expect(Buffer.byteLength(JSON.stringify(objs[0]), "utf8")).toBeGreaterThan(65_536);
+    expect(objs.some((o) => o.event === "sidecar")).toBe(true);
+    expect(segmentText(hist).includes('"rows"')).toBe(false);
+  });
+
+  test("the stream carries the receipt's redaction and nothing more", async () => {
+    const { dir, env, hist } = historyScratch();
+    const s = streams();
+    const status = await main(tool(), ["t", "count", "--token", SECRET2], async (run) => {
+      run.step("used the token", "the value must not reach the stream", { url: `https://x.invalid/?k=${SECRET2}` });
+      run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" });
+    }, { cwd: dir, env: { ...env, PARLEY_HISTORY: hist }, ...s, resolved: (args) => ({ command: "count", args }) });
+    expect(status).toBe(0);
+    const r = check(dir, s);
+    expect(r.violations).toEqual([]);
+    const text = segmentText(hist);
+    expect(text).toBe(r.receipt);
+    expect(text.includes(SECRET2)).toBe(false);
+    expect(text).toContain("[redacted]");
+    expect(segmentObjs(hist).some((o) => o.event === "redaction")).toBe(true);
   });
 });

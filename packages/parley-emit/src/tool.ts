@@ -3,6 +3,7 @@
 import { closeSync, openSync, readSync, readdirSync, rmSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { historyBookkeeping, historyDays, isHistoryFailure, openHistory, resolveHistory, retainHistory, type HistoryPlan, type HistorySink } from "./history.ts";
 import { computeInv, type InputDecl } from "./inv.ts";
 import { bookkeepingFor, chooseLocation, isLocationFailure, type Bookkeeping } from "./location.ts";
 import { carriesSecret, classifySecrets, collectSecretValues, redactArgv, scrub } from "./redact.ts";
@@ -59,6 +60,8 @@ export interface MainOptions {
   inputs?: (args: string[], command: string) => InputDecl[] | Promise<InputDecl[]>;
   /** The resolved interpretation after defaults (§5): order-normalised and free of volatile values, since it enters inv. The default records the command and its arguments. */
   resolved?: (args: string[], command: string) => Record<string, unknown> | Promise<Record<string, unknown>>;
+  /** The shared history stream (§8). The default resolves it from the environment; `null` is no stream. */
+  history?: HistorySink | null;
 }
 
 /**
@@ -140,6 +143,21 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
   const location = chooseLocation({ cwd, run: id, env, home: opts.home ?? homedir(), secrets: secretValues });
   if (isLocationFailure(location)) return fail(location.code, location.problem, location.remedy);
 
+  // The shared history stream (§8): opt-in, and unable to fail the run. With none configured
+  // nothing below it happens, so the run is the run that existed before the stream did.
+  let history: HistorySink | undefined;
+  let historyPlan: HistoryPlan | null = null;
+  let historyWarning: { code: string; problem: string; remedy: string } | undefined;
+  if (opts.history !== undefined) history = opts.history ?? undefined;
+  else {
+    historyPlan = resolveHistory(env, opts.home ?? homedir(), now());
+    if (historyPlan) {
+      const opened = openHistory(historyPlan);
+      if (isHistoryFailure(opened)) { historyWarning = opened; historyPlan = null; }
+      else history = opened;
+    }
+  }
+
   // Everything the tool supplies before the bootstrap line can throw; a throw here is a startup failure (§3.2), not a stack trace.
   let resolvedRaw: Record<string, unknown>, inputs: InputDecl[];
   try {
@@ -171,11 +189,11 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
 
   const run = new Run({
     tool: spec.name, v: spec.version, id, session, dryRun, stdout, stderr, receiptFd: location.fd, receiptPath: location.receiptPath, receiptDir: location.receiptDir,
-    secretValues, now, cwd, command: commandName ?? discovery!, resolved, inputs, headRedacted, human: human ? spec.human ?? (() => null) : undefined,
+    secretValues, now, cwd, command: commandName ?? discovery!, resolved, inputs, headRedacted, human: human ? spec.human ?? (() => null) : undefined, history,
   });
 
   run.bootstrap(inv);
-  const bookkeeping = bookkeepingFor(cwd, env, opts.home);
+  const bookkeeping = [...bookkeepingFor(cwd, env, opts.home), ...(history ? historyBookkeeping(history) : [])];
   run.head({
     tool: spec.name, v: spec.version, ...(inv ? { inv } : {}), ...(session ? { session } : {}),
     argv: argvRedacted, resolved, ...(headRedacted ? { redacted } : {}), inputs: inputDescriptors,
@@ -186,8 +204,10 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
   capture.attach(run);
   if (run.sinkFailed) { release(); return run.end(); }
   if (location.warning) run.warning(location.warning);
+  if (historyWarning) run.warning(historyWarning);
 
   retain(run, location.receiptDir, spec.retention.count, dryRun, now());
+  if (history) retainStream(run, history.dir, historyPlan?.days ?? historyDays(env), dryRun, now());
 
   if (discovery) {
     try { discover(run, spec, discovery, commandName, bookkeeping); } catch (e) {
@@ -272,6 +292,19 @@ function retain(run: Run, receiptDir: string, count: number, dryRun: boolean, at
     try { rmSync(join(receiptDir, name), { force: true }); rmSync(join(receiptDir, base), { recursive: true, force: true }); deleted.push(name); } catch { /* a bundle another run is deleting */ }
   }
   run.step(`retention: deleted ${deleted.length} receipt bundle(s)`, `${files.length} receipts exceeded the retention count of ${count}; the oldest completed bundles are deleted with their sidecars (§5.1)`, { receipts: deleted });
+}
+
+/**
+ * §5.1 for the shared history stream (§8): keep `days` daily segments, today's included, and
+ * delete the rest whole, because an append-only file with concurrent writers can be expired by
+ * unlinking a segment nobody is writing to and cannot be expired by rewriting. Recorded as a
+ * decision, like the receipt's retention, and skipped on a dry run.
+ */
+function retainStream(run: Run, dir: string, days: number, dryRun: boolean, at: number): void {
+  const segments = retainHistory(dir, days, at, dryRun);
+  if (!segments.length) return;
+  if (dryRun) { run.step(`history retention: would delete ${segments.length} segment(s)`, `the shared history stream keeps ${days} daily segment(s), today's included; a dry run performs no retention deletion (§4.3)`, { segments }); return; }
+  run.step(`history retention: deleted ${segments.length} segment(s)`, `the shared history stream keeps ${days} daily segment(s), today's included; older segments are deleted whole, since an append-only file with concurrent writers cannot be rewritten safely (§5.1, §8)`, { segments });
 }
 
 // ---- console capture (§1.2) --------------------------------------------------------------

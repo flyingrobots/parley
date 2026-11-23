@@ -327,8 +327,8 @@ Spec §9 says the purpose shapes the result: "I am about to change this program'
 should return records touching that surface, not the last fifty things in chronological order. It
 is the **ranking function**, not a filter applied afterwards, and that is exactly what this is —
 `rankRecords` returns every record it was given, reordered. Over-filtering is the failure mode §9
-names, and nothing here can drop a record even in principle; bounding an answer and saying what it
-left out is [flyingrobots/parley#50](https://github.com/flyingrobots/parley/issues/50).
+names, and nothing here can drop a record even in principle. Bounding an answer and saying what it
+left out happens one step later, above the full order: [the digest](#the-digest-and-what-it-left-out).
 
 ### The order, stated as a key
 

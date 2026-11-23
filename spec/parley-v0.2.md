@@ -834,8 +834,8 @@ the ranking that orders a result by purpose, and the bounded digest that carries
 and states what it excluded have an implementation and tests
 ([flyingrobots/parley#48](https://github.com/flyingrobots/parley/issues/48),
 [flyingrobots/parley#49](https://github.com/flyingrobots/parley/issues/49),
-[flyingrobots/parley#50](https://github.com/flyingrobots/parley/issues/50)); fetching what a
-digest excluded does not
+[flyingrobots/parley#50](https://github.com/flyingrobots/parley/issues/50)), and so does opening
+the records a digest names by `(run, seq)`
 ([flyingrobots/parley#51](https://github.com/flyingrobots/parley/issues/51)). The direction is
 kept here so the format above stays shaped for it.
 

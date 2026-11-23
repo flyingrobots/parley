@@ -5,6 +5,12 @@ on its own; the spec and each message schema move separately (spec §4.4).
 
 ## [Unreleased]
 
+### Changed
+
+- `src/schemas.ts` re-synced for a change to the draft `parley.query` 1.0.0: an optional `records`
+  field for a drill-down (flyingrobots/parley#51). The writer's behaviour is unchanged and no
+  version moved; discovery serves the updated draft.
+
 ### Added
 
 - **A built-in that refuses a suspected secret** (flyingrobots/parley#60). `refuseSuspectedSecrets(patterns?)`

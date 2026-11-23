@@ -1,7 +1,7 @@
 # parley-read — test plan
 
 Evidence lives in `packages/parley-read/test/parley-read.test.ts`, and for the drill-down
-(RD-30 to RD-34) in `packages/parley-read/test/open.test.ts`. Cases about the reader rules
+(RD-30 to RD-34, and RD-60) in `packages/parley-read/test/open.test.ts`. Cases about the reader rules
 build a receipt bundle by hand, byte by byte, because the point of those rules is the bytes a
 conforming writer cannot promise; cases about what the loader returns for real output run the
 writer (`@flyingrobots/parley-emit`) and load what it left behind.
@@ -38,6 +38,7 @@ writer (`@flyingrobots/parley-emit`) and load what it left behind.
 | RD-33 | A drill-down is a recorded read: refused without an asker, a view, a window and at least one well-formed id, writing nothing; accepted, it is recorded through the writer as a `parley.query` event that names the ids it opens, read back `validated`, and the record of it is history the next drill-down can open | §9, §2.1, §4.5 |
 | RD-34 | Every id a real digest names opens: on receipts a real tool wrote, the `(run, seq)` pairs a `parley.lens` record carries, read back from the read's own receipt, each resolve to the full record | §9, §1.3 |
 | RD-50 | Every record a lens names carries a fixed summary beside its `(run, seq)`: the record's `event` and `t` as the loader reports them, and the outcome the ranking established for its run over the whole window. A field the record does not carry usably is absent, never invented, and the summary is part of the line `budget.bytes` bounds | §9, §1.3, §1.2a, §4.5 |
+| RD-60 | The drill-down accepts an optional `budget.bytes`: records open whole, in the order asked, while their summed size fits, and a record past the bound is `over_budget` with its size and no part of its contents; the bound is inclusive, outcomes that return no contents cost nothing, and the budget applied is the one recorded | §9 |
 
 | ID | Case | Oracle | Evidence | Status |
 | --- | --- | --- | --- | --- |

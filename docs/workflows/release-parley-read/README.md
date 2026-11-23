@@ -18,8 +18,8 @@ and the first publish.
    workspace still links the local copy; `scripts/release.test.ts` checks both.
 3. Merge that through a pull request; the checks workflow must be green.
 4. **Publish parley-emit first** when the range names a parley-emit version that is not on npm yet:
-   tag `parley-emit-vX.Y.Z` and wait for its `publish` job and for `npm view
-   @flyingrobots/parley-emit version` to name it.
+   tag `parley-emit-vX.Y.Z`, wait for its `publish` job to stage it and for the owner to approve
+   it, until `npm view @flyingrobots/parley-emit version` names it.
 5. Tag the merge commit on `main` as `parley-read-vX.Y.Z` and push the tag.
 
 The tag starts `.github/workflows/release-parley-read.yml`, which:
@@ -28,7 +28,19 @@ The tag starts `.github/workflows/release-parley-read.yml`, which:
 | --- | --- |
 | `sanity` | Refuses a tag whose version differs from `package.json` or has no changelog heading; checks the manifest fields; runs `bun test`, `bun run check`, `bun run typecheck`; refuses a stale `src/schemas.ts`; refuses a parley-emit range nothing on npm satisfies; dry-runs the pack; fails if `npm publish --dry-run` reports that it would rewrite or remove anything in the manifest, if the packed `package.json` differs from the repository's, or if any dependency uses a `workspace:` range |
 | `release` | Creates the GitHub release named after the tag, with the changelog section as notes and the tarball plus `SHA256SUMS` attached |
-| `publish` | In the `npm` environment, publishes with OIDC provenance through npm's trusted publishing; no token lives in the repository |
+| `publish` | In the `npm` environment, stages the version with `npm stage publish` and OIDC provenance through npm's trusted publishing; no token lives in the repository. Nothing is installable yet |
+
+**A release ends with the owner's approval.** The trusted publisher is allowed to stage and nothing
+else, so a workflow cannot put code in front of users on its own. The owner lists what is waiting
+and approves it with their one-time password, or does the same on the package's **Staged Packages**
+tab on npmjs.com:
+
+```bash
+npm stage list @flyingrobots/parley-read
+npm stage approve <stage-id>
+```
+
+These commands need an interactive login and cannot be run from CI.
 
 ## One-time setup: the first publish is manual
 
@@ -54,7 +66,9 @@ Then, on npmjs.com, in the settings of `@flyingrobots/parley-read`, add a truste
 | Repository | `parley` |
 | Workflow | `release-parley-read.yml` |
 | Environment | `npm` |
+| Allow `npm publish` | unchecked |
+| Allow `npm dist-tag` | unchecked |
 
-The repository's `npm` environment already exists for parley-emit. Every later tag publishes through
-the workflow with provenance. A manual publish carries no provenance statement; that is the one
+The repository's `npm` environment already exists for parley-emit. Every later tag is staged by
+the workflow with provenance and approved by the owner. A manual publish carries no provenance statement; that is the one
 version without it.

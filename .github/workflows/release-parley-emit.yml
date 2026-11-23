@@ -1,8 +1,8 @@
 name: Release parley-emit
 
 # A tag `parley-emit-vX.Y.Z` on main releases packages/parley-emit: sanity checks, a GitHub
-# release carrying the tarball, then publication to npm through OIDC trusted publishing (no
-# token in the repository). The package version moves on its own; a release here publishes no
+# release carrying the tarball, then a staged publish to npm through OIDC trusted publishing (no
+# token in the repository); the owner approves the staged version before it is installable. The package version moves on its own; a release here publishes no
 # schema version (spec §4.5).
 
 on:
@@ -167,5 +167,7 @@ jobs:
           registry-url: https://registry.npmjs.org
       - run: bun install --frozen-lockfile
 
-      - name: Publish to npm with OIDC provenance (npm 11.5.1 or later for trusted publishing)
-        run: cd "$PACKAGE_DIR" && npx -y npm@latest publish --access public --provenance
+      # The trusted publisher on npmjs.com allows `npm stage publish` only: this stages the version,
+      # and the owner approves it with two-factor authentication. Staging needs npm 11.15.0 or later.
+      - name: Stage on npm with OIDC provenance; the owner approves
+        run: cd "$PACKAGE_DIR" && npx -y npm@latest stage publish --access public --provenance

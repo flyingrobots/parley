@@ -5,6 +5,19 @@ on its own; the spec and each message schema move separately (spec §4.4).
 
 ## [Unreleased]
 
+## [0.2.3] — 2026-11-23
+
+No change to the library or the schemas it ships. This version exists so that a tag carries the
+new release workflow.
+
+### Changed
+
+- **Releases are staged, then approved by the owner** (flyingrobots/parley#85). The release
+  workflow runs `npm stage publish` in place of `npm publish`: the npm trusted publisher is allowed
+  to stage and nothing else, and a version becomes installable only when the owner approves it with
+  two-factor authentication. 0.2.0, 0.2.1 and 0.2.2 never reached npm for that reason; this is the
+  first version staged, and it carries everything they changed.
+
 ## [0.2.2] — 2026-11-22
 
 Retention's rule for a receipt that may still be being written is now the spec's (§5.1,

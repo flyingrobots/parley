@@ -16,8 +16,8 @@ const paths = schemaFiles("schemas");
 const files = paths.map((p) => p.replace(/^schemas\//, ""));
 const load = (f: string) => JSON.parse(readFileSync(`schemas/${f}`, "utf8"));
 // The id a file's location promises: the basename for a draft, the parent directory for a snapshot.
-const idOf = (f: string) => f.startsWith("released/") ? f.split("/")[1] : f.replace(/\.schema\.json$/, "");
-const versionOf = (f: string) => f.startsWith("released/") ? f.split("/")[2].replace(/\.schema\.json$/, "") : null;
+const idOf = (f: string) => f.startsWith("released/") ? f.split("/")[1] ?? "" : f.replace(/\.schema\.json$/, "");
+const versionOf = (f: string) => f.startsWith("released/") ? (f.split("/")[2] ?? "").replace(/\.schema\.json$/, "") : null;
 
 function walk(node: unknown, path: string, visit: (n: Record<string, unknown>, p: string) => void) {
   if (node && typeof node === "object" && !Array.isArray(node)) {

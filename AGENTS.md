@@ -35,7 +35,8 @@ example that is deliberately incomplete.
 `packages/` holds the conforming implementations as Bun workspace packages: `parley-emit` writes
 and `parley-read` reads. They are consumers of the spec and the draft schemas: `bun run sync-schemas` in a package copies
 the drafts in, pinned by commit and digest, and a test fails when the copy is stale. The gate for
-the whole repository is `bun test`, `bun run check` and `bun run typecheck`.
+the whole repository is `bun test`, `bun run check` and `bun run typecheck`. `bun run typecheck` also type-checks `scripts/` and every package's `test/`
+through the root `tsconfig.json`, under the same strict options as the packages.
 
 ## Hard don'ts
 

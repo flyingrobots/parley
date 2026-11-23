@@ -95,7 +95,7 @@ describe("parley-emit-py: the doctor over captured runs of examples/count.py", (
     const errs = objs(c.stderr);
     expect(errs.length).toBe(1);
     expect(errs[0]).toMatchObject({ event: "startup.failed", seq: 0, code: "startup.arguments_invalid" });
-    expect(String(errs[0]!.problem)).toContain("files takes no arguments");
+    expect(String(errs[0]?.problem)).toContain("files takes no arguments");
     const vs = doctor({ stdout: c.stdout, stderr: c.stderr }, SCHEMAS_DIR);
     expect(vs.filter((v) => v.event === "doctor.violation")).toEqual([]);
     expect(vs.at(-1)).toMatchObject({ event: "doctor.summary", passed: true, status: null });
@@ -112,7 +112,7 @@ describe("parley-emit-py: the doctor over captured runs of examples/count.py", (
     expect(c.stderr).not.toContain("Traceback");
     const errs = objs(c.stderr);
     expect(errs.map((o) => o.code)).toEqual(["uncaught.exception"]);
-    expect(String(errs[0]!.problem)).toContain("PermissionError");
+    expect(String(errs[0]?.problem)).toContain("PermissionError");
     const rec = objs(receiptOf(c).text).find((o) => o.event === "error") as { detail: { traceback: string } };
     expect(rec.detail.traceback).toContain("Traceback");
     expect(violations(c)).toEqual([]);
@@ -146,8 +146,9 @@ describe("parley-emit-py: the doctor over captured runs of examples/count.py", (
     expect(c.stdout).toBe("2 file(s)\n");
     expect(c.stderr).toBe("");
     const load = expectLoadsClean(c, 1);
-    const file = load.bundles[0]!.sources[0]!.receipt;
-    const vs = doctor({ receipt: readFileSync(file, "utf8") }, SCHEMAS_DIR);
+    const file = load.bundles[0]?.sources[0]?.receipt;
+    expect(file).toBeDefined();
+    const vs = doctor({ receipt: readFileSync(file ?? "", "utf8") }, SCHEMAS_DIR);
     expect(vs.filter((v) => v.event === "doctor.violation")).toEqual([]);
     expect(vs.at(-1)).toMatchObject({ event: "doctor.summary", passed: true, status: 0 });
   }, SLOW);
@@ -231,7 +232,12 @@ describe("parley-emit-py: the bounded checker against ajv", () => {
       }
     }
     const got = check(cases);
-    const want = cases.map((c) => Boolean(ajv.validate(SCHEMAS.find((s) => s.id === c.id && s.version === c.version)!.schema, c.value)));
+    const schemaOf = (c: { id: string; version: string }) => {
+      const found = SCHEMAS.find((s) => s.id === c.id && s.version === c.version);
+      if (!found) throw new Error(`no shipped schema for ${c.id}@${c.version}`);
+      return found.schema;
+    };
+    const want = cases.map((c) => Boolean(ajv.validate(schemaOf(c), c.value)));
     const disagreements = cases.map((c, i) => ({ c, py: got[i], ajv: want[i] })).filter((x) => x.py !== x.ajv);
     expect(disagreements).toEqual([]);
     expect(cases.length).toBeGreaterThan(700);
@@ -258,7 +264,7 @@ describe("parley-emit-py: identity and vendoring", () => {
     expect(lines.length).toBe(1);
     const validate = new Ajv2020({ strict: false, allErrors: true }).compile(JSON.parse(readFileSync(join(PKG, "vendor-info.schema.json"), "utf8")));
     expect(validate(lines[0]), JSON.stringify(validate.errors)).toBe(true);
-    expect(lines[0]!.sha256).toBe(createHash("sha256").update(readFileSync(join(PKG, "parley_emit.py"))).digest("hex"));
+    expect(lines[0]?.sha256).toBe(createHash("sha256").update(readFileSync(join(PKG, "parley_emit.py"))).digest("hex"));
     for (const args of [["--help"], ["--nope"]]) {
       const q = spawnSync(PY, [join(PKG, "parley_emit.py"), ...args], { encoding: "utf8" });
       for (const l of objs(q.stdout + q.stderr)) expect(validate(l), JSON.stringify(validate.errors)).toBe(true);

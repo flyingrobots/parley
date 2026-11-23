@@ -190,33 +190,36 @@ export function doctor(input: { stdout?: string; stderr?: string; receipt?: stri
  * need stdout and stderr and are not run, which is why a pass here says less than a full pass.
  */
 function receiptAlone(receipt: Line[], V: (rule: string, section: string, stream: Source, line: number, problem: string) => void): { run: string | null; status: number | null } {
-  const head = receipt[0]?.obj;
-  if (!head || head.event !== "receipt.head") V("R5.head_first", "§5", "receipt", receipt[0]?.n ?? 0, "first receipt line is not receipt.head");
-  const first = receipt[0]?.obj?.run;
-  const run = typeof first === "string" ? first : null;
+  // Every line here parsed (the caller kept only those), so carry the record beside its line number.
+  const rs = receipt.flatMap((l) => (l.obj ? [{ n: l.n, obj: l.obj }] : []));
+  const seqOf = (o: Record<string, unknown>): number | null => (typeof o.seq === "number" && Number.isInteger(o.seq) ? o.seq : null);
+  const head = rs[0]?.obj;
+  if (!head || head.event !== "receipt.head") V("R5.head_first", "§5", "receipt", rs[0]?.n ?? 0, "first receipt line is not receipt.head");
+  const first = head?.run;
+  const run = typeof first === "string" ? first : null; // the head's run, or the first line's when the head is missing
   const seen = new Set<number>();
-  for (const l of receipt) {
-    const o = l.obj!;
-    if (run !== null && o.run !== run) V("R6.run", "§1.3", "receipt", l.n, `run ${String(o.run)} is not this run's ${run}`);
-    if (Number.isInteger(o.seq)) {
-      if (seen.has(o.seq as number)) V("R6.duplicate", "§1.3", "receipt", l.n, `seq ${String(o.seq)} appears twice on receipt`);
-      seen.add(o.seq as number);
-    }
+  for (const r of rs) {
+    if (run !== null && r.obj.run !== run) V("R6.run", "§1.3", "receipt", r.n, `run ${String(r.obj.run)} is not this run's ${run}`);
+    const seq = seqOf(r.obj);
+    if (seq === null) continue;
+    if (seen.has(seq)) V("R6.duplicate", "§1.3", "receipt", r.n, `seq ${seq} appears twice on receipt`);
+    seen.add(seq);
   }
-  const last = receipt[receipt.length - 1];
-  if (!last || last.obj!.event !== "end") V("R7.receipt_no_end", "§3.3", "receipt", last?.n ?? 0, "last receipt line is not end: incomplete lifecycle evidence, EOF is not success");
-  const end = receipt.find((l) => l.obj!.event === "end");
+  const last = rs[rs.length - 1];
+  if (!last || last.obj.event !== "end") V("R7.receipt_no_end", "§3.3", "receipt", last?.n ?? 0, "last receipt line is not end: incomplete lifecycle evidence, EOF is not success");
+  const end = rs.find((r) => r.obj.event === "end");
   if (!end) return { run, status: null };
-  const e = end.obj!;
-  const status = Number.isInteger(e.status) ? (e.status as number) : null;
-  const maxSeq = Math.max(...receipt.map((l) => (Number.isInteger(l.obj!.seq) ? (l.obj!.seq as number) : -1)));
-  if (e.seq !== maxSeq) V("R7.end_not_final", "§3.3", "receipt", end.n, `end seq ${String(e.seq)} is not the run's final seq ${maxSeq}`);
-  for (const l of receipt) if (Number.isInteger(l.obj!.seq) && (l.obj!.seq as number) > (e.seq as number)) V("R7.after_end", "§3.3", "receipt", l.n, "event after end");
-  const errors = receipt.filter((l) => l.obj!.event === "error").length;
+  const e = end.obj;
+  const status = typeof e.status === "number" && Number.isInteger(e.status) ? e.status : null;
+  const endSeq = seqOf(e);
+  const maxSeq = Math.max(...rs.map((r) => seqOf(r.obj) ?? -1));
+  if (endSeq !== maxSeq) V("R7.end_not_final", "§3.3", "receipt", end.n, `end seq ${String(e.seq)} is not the run's final seq ${maxSeq}`);
+  if (endSeq !== null) for (const r of rs) { const seq = seqOf(r.obj); if (seq !== null && seq > endSeq) V("R7.after_end", "§3.3", "receipt", r.n, "event after end"); }
+  const errors = rs.filter((r) => r.obj.event === "error").length;
   if (status === 2 && errors === 0) V("R7.status2_no_error", "§3.4", "receipt", end.n, "status 2 but no structured error was recorded");
   if (status === 0 && errors > 0) V("R7.status0_with_error", "§3.4", "receipt", end.n, "status 0 but an error was recorded; a recovered condition is a warning");
   const headRedacted = head?.event === "receipt.head" && head.redacted !== undefined;
-  const anyRedaction = receipt.some((l) => l.obj!.event === "redaction");
+  const anyRedaction = rs.some((r) => r.obj.event === "redaction");
   if (typeof e.redacted === "boolean" && e.redacted !== (headRedacted || anyRedaction)) V("R8.redacted_aggregate", "§3.3", "receipt", end.n, `end.redacted is ${String(e.redacted)} but the receipt says ${headRedacted || anyRedaction}`);
   return { run, status };
 }

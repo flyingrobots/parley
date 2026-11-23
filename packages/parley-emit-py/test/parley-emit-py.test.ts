@@ -129,6 +129,21 @@ describe("parley-emit-py: the doctor over captured runs of examples/count.py", (
     expectLoadsClean(c, 1);
   }, SLOW);
 
+  test("PY-4c the two writers' example tools list the same types under --help, startup.failed among them", () => {
+    // flyingrobots/parley#92: count.py and count.ts are the same tool; their discovery must agree.
+    const c = example(["files", "--help"]);
+    const at = scratch();
+    const t = spawnSync("bun", [join(ROOT, "packages", "parley-emit", "examples", "count.ts"), "files", "--help"], { cwd: at.dir, env: { ...process.env, ...at.env }, encoding: "utf8" });
+    expect(c.status).toBe(0); expect(t.status).toBe(0);
+    const py = objs(c.stdout), ts = objs(t.stdout);
+    const emits = (out: Record<string, unknown>[]) => out.filter((o) => o.event === "command").map((o) => o.emits);
+    const schemas = (out: Record<string, unknown>[]) => out.filter((o) => o.event === "schema").map((o) => `${o.id}@${o.version}`);
+    expect(emits(ts)).toEqual(emits(py));
+    expect(schemas(ts)).toEqual(schemas(py));
+    expect(schemas(ts)).toContain("parley.error@2.0.0");
+    expect(schemas(ts)).toContain("parley.startup.failed@1.0.0");
+  }, SLOW);
+
   test("PY-4a --schema: every message type the writer can emit, and the doctor passes", () => {
     const c = example(["--schema"]);
     expect(c.status).toBe(0);

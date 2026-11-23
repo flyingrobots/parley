@@ -31,9 +31,17 @@ const tool = defineTool({
   human: (line) => (line.event === "result" ? `${String(line.files)} file(s)` : null),
 });
 
+// The resolved interpretation, and the argument check. It runs before the bootstrap line, so a
+// usage error is a startup failure: exit 3, one startup.failed line, no receipt (spec §3.2,
+// flyingrobots/parley#91). A mistaken call did no work, and a receipt of it would be noise.
+function interpret(args: string[], command: string): Record<string, unknown> {
+  if (args.length) throw new Error(`${command} takes no arguments, and was given ${args.length}`);
+  return { command, args: [] };
+}
+
 const status = await main(tool, ["count", ...process.argv.slice(2)], (run) => {
   const names = readdirSync(run.cwd).filter((n) => statSync(join(run.cwd, n)).isFile());
   run.step(`counted ${names.length} regular file(s)`, "directories and special files are not files; only regular files count", { names });
   run.result({ event: "result", files: names.length }, { id: "count.result", version: "1.0.0" });
-});
+}, { resolved: interpret });
 process.exit(status);

@@ -230,7 +230,46 @@ rather than moving its version.
   - *Another refusal code beside those `planQuery` returns*. A refusal is pure and pre-load; a verdict about whether
     real history fits a budget can only come from a read that ran. No schema moved.
 
+- **Three places the spec left a second writer to guess, written into it** (flyingrobots/parley#91,
+  flyingrobots/parley#92, flyingrobots/parley#93). The Python writer (flyingrobots/parley#84) found
+  them; the decisions are recorded on those issues, and each is now a sentence of the spec:
+  - **§3.2, §3.4: the bootstrap line is the boundary for a usage error.** One found before it is a
+    startup failure, exit 3, one `startup.failed` line, no receipt; one found after it is a command
+    error, exit 2, a complete failed receipt. A program **MUST** document where it checks its
+    arguments and **SHOULD** check them before the bootstrap line, because a mistaken call did no
+    work and a receipt of it is noise. Both writers' example tools now check in `resolved`, before
+    it. Rejected: always 3, and always 2, as hard rules, because each forbids a conforming program
+    for no gain to a caller, who already tells the two apart by the exit status.
+  - **§4.2: "every error type it can produce" includes `parley.startup.failed`**, because every
+    command can produce one and a caller parsing stderr needs the shape of every line that can
+    appear there. `parley-emit`'s default error list changes to match the Python writer's.
+    Rejected: describing it once under `--schema` only, which makes a caller read two discovery
+    outputs to learn what one call can write.
+  - **§5.3: scrub widely, resolve narrowly.** The values of every command's declared flags and
+    variables are scrubbed, whichever command runs, and `redacted.env` names every command's
+    declared variables that are present; only the running command's credential sources are
+    resolved and listed in `redacted.sources`, and a source only another command declares **MUST
+    NOT** be resolved. Both writers already did this. Rejected: the running command's declarations
+    only, because a secret in the environment can leak through a command that did not declare it;
+    every command's sources, because resolving another command's source runs side effects the call
+    never asked for.
+
+  **The spec version does not move.** These are normative sentences added to `0.2.0` while it is
+  still the unreleased proposal under this entry, which is how AGENTS.md and the §5.1 precedent
+  above (flyingrobots/parley#75, also after `parley-emit` 0.1.0 shipped) treat a change before
+  release: recorded here, not versioned. No implementation that conformed stops conforming: both
+  writers already scrubbed widely and resolved narrowly, and `parley-emit` 0.1.0's `--help`, which
+  omitted `parley.startup.failed`, already fell short of §4.2's own words, so the fix is to the
+  writer and not to the spec. A tool must now document where it checks its arguments; that is new
+  work for a tool's README, not a change to any line it emits. No schema moved.
+
 ### Added
+
+- **The doctor checks that discovery names the startup failure** (flyingrobots/parley#92):
+  `R10.help_startup_failed`, §4.2. A run whose stdout carries a `command` line and ends with status
+  0 must carry a `schema` line for `parley.startup.failed`. A discovery run that failed part-way
+  owes no complete list and is not checked. `parley.tooling.doctor` stays 1.1.0, because `rule` is
+  an open string and no line shape changed.
 
 - **A read that cannot meet its budget declines, and names the budget that would**
   (flyingrobots/parley#71): `queryReceipts` and `openRecords` in `packages/parley-read` apply

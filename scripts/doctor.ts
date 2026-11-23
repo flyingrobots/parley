@@ -179,6 +179,12 @@ export function doctor(input: { stdout?: string; stderr?: string; receipt?: stri
     }
   }
 
+  // R10 a discovery run that succeeded names the startup failure among the error types (§4.2,
+  // flyingrobots/parley#92): every command can produce one, so `--help` lists its schema, and
+  // `--schema` lists every schema. A discovery run that failed part-way owes no complete list.
+  const firstCommand = stdout.find((l) => l.obj!.event === "command");
+  if (firstCommand && status === 0 && !stdout.some((l) => l.obj!.event === "schema" && l.obj!.id === "parley.startup.failed")) V("R10.help_startup_failed", "§4.2", "stdout", firstCommand.n, "a discovery run has no schema line for parley.startup.failed, an error type every command can produce");
+
   const summary: Summary = { event: "doctor.summary", passed: out.length === 0, violations: out.length, lines: counts, run, status, partial };
   return [...out, summary];
 }

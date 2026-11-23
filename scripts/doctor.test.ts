@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { doctor, inspectSegment, type SegmentVerdict, type Verdict } from "./doctor.ts";
 
 const F = "scripts/fixtures/doctor";
@@ -24,6 +27,23 @@ describe("parley doctor", () => {
     const vs = doctor({ stdout: read("startup-failed", "stdout"), stderr: read("startup-failed", "stderr") });
     expect(rules(vs)).toEqual([]);
     expect(summary(vs).status).toBeNull();
+  });
+  // A real `--help` run, captured from the Python writer's example each time rather than kept as a
+  // fixture, so the paths in it are this machine's scratch directory and never a contributor's.
+  const helpRun = () => {
+    const dir = mkdtempSync(join(tmpdir(), "parley-doctor-help-"));
+    const p = spawnSync(process.env.PARLEY_PYTHON ?? "python3", [join(import.meta.dir, "..", "packages", "parley-emit-py", "examples", "count.py"), "files", "--help"], { cwd: dir, env: { ...process.env, XDG_STATE_HOME: join(dir, "state") }, encoding: "utf8" });
+    const receipt = JSON.parse(lines(p.stdout)[0] ?? "{}").paths.receipt as string;
+    return { stdout: p.stdout, stderr: p.stderr, receipt: readFileSync(receipt, "utf8") };
+  };
+  const withoutStartupSchema = (s: string) => lines(s).filter((l) => { const o = JSON.parse(l); return !(o.event === "schema" && o.id === "parley.startup.failed"); }).join("\n") + "\n";
+  test("a --help run that lists parley.startup.failed conforms", () => {
+    expect(rules(doctor(helpRun()))).toEqual([]);
+  });
+  test("detects: a discovery run with no schema line for parley.startup.failed (flyingrobots/parley#92)", () => {
+    const c = helpRun();
+    const vs = doctor({ ...c, stdout: withoutStartupSchema(c.stdout), receipt: withoutStartupSchema(c.receipt) });
+    expect(rules(vs)).toEqual(["R10.help_startup_failed"]);
   });
   test("every violation and the summary validate against the doctor's output schema", async () => {
     const Ajv2020 = (await import("ajv/dist/2020.js")).default;

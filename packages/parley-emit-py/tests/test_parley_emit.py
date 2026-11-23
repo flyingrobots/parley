@@ -310,6 +310,42 @@ class TestRedaction(unittest.TestCase):
         self.assertNotIn("redacted", o.receipt_lines[0])
         self.assertIs(o.stdout.objs[-1]["redacted"], False)
 
+    def test_scrub_widely_resolve_narrowly(self):
+        """flyingrobots/parley#93, spec section 5.3: another command's variable is scrubbed and
+        listed in redacted.env; its credential source is never resolved."""
+        d, _, env = scratch()
+        other = "b-token-value-q7"
+        called = []
+
+        def source(name):
+            def resolve():
+                called.append(name)
+                return True
+            return resolve
+
+        effects = {"reads": [], "writes": [], "network": False, "idempotent": True}
+        two = pe.define_tool(
+            name="t", version="0.0.1",
+            commands={
+                "a": {"intent": "The command that runs", "effects": effects, "secrets": ["--token", "A_TOKEN", "alpha"], "emits": [{"id": "t.count", "version": "1.0.0", "schema": RESULT}]},
+                "b": {"intent": "A command that does not run", "effects": effects, "secrets": ["B_TOKEN", "beta"], "emits": [{"id": "t.count", "version": "1.0.0", "schema": RESULT}]},
+            },
+            retention={"count": 100},
+            sources={"alpha": source("alpha"), "beta": source("beta")},
+        )
+        out, err = Capture(), Capture()
+        status = pe.main(two, ["t", "a", "--note=" + other], lambda run, a: run.step("noted", "the argument is echoed", {"note": other}),
+                         cwd=d, env={**env, "B_TOKEN": other}, stdout=out, stderr=err)
+        self.assertEqual(status, 0)
+        o = Outcome(status, out, err, out.objs[0]["paths"]["receipt"])
+        head = o.receipt_lines[0]
+        self.assertEqual(head["argv"], ["t", "a", "--note=[redacted]"])
+        self.assertEqual(head["redacted"]["env"], ["B_TOKEN"])
+        self.assertEqual(head["redacted"]["sources"], ["alpha"])
+        self.assertEqual(called, ["alpha"])
+        self.assertNotIn(other, o.everything)
+        assert_valid(self, o)
+
     def test_a_secret_in_the_working_directory_path_relocates_the_receipt(self):
         d, state, env = scratch()
         zone = os.path.join(d, "zone-x9")

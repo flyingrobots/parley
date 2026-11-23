@@ -229,7 +229,9 @@ describe("PE-26 retention is per tool", () => {
     expect(other.every((p) => existsSync(p))).toBe(true);
     expect(names(join(dir, ".parley", "receipts")).length).toBe(64);
     expect(last.receiptLines.some((o) => o.event === "receipt.step" && /retention/.test(String(o.decision)))).toBe(false);
-  });
+    // Sixty-four real writer runs: a loaded machine stretches them past the default 5 s, and the
+    // case is about which receipts survive, not how fast.
+  }, 60_000);
 
   test("the tool's own excess is still expired, oldest first, and a neighbour's receipts are never counted", async () => {
     const { dir, env } = scratch();
@@ -241,7 +243,9 @@ describe("PE-26 retention is per tool", () => {
     expect(other.every((p) => existsSync(p))).toBe(true);
     expect(names(join(dir, ".parley", "receipts")).length).toBe(64);
     expect(next.violations).toEqual([]);
-  });
+    // Sixty-four real writer runs: a loaded machine stretches them past the default 5 s, and the
+    // case is about which receipts survive, not how fast.
+  }, 60_000);
 
   test("a file whose head cannot be read is not the tool's and is left alone", async () => {
     const { dir, env } = scratch();

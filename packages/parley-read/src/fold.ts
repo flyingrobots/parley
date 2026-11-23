@@ -44,9 +44,12 @@ import type { Outcome } from "./rank.ts";
 
 /** What a representative's run section says it stands for. */
 export interface RunFold {
-  /** How many runs the representative stands for, itself included. Always at least 2. */
-  readonly runs: number;
-  /** How many records of the other runs, in the window, the fold left out of the digest. */
+  /**
+   * How many other runs the representative stands for, itself excluded (flyingrobots/parley#100):
+   * the section reads as "this run, plus `others` like it". Always at least 1.
+   */
+  readonly others: number;
+  /** How many records of those other runs, in the window, the fold left out of the digest. */
   readonly records: number;
 }
 
@@ -155,7 +158,7 @@ export function foldRuns(ranked: readonly LoadedRecord[], outcomes?: Readonly<Re
       away.add(run);
       records += byRun.get(run)!.length;
     }
-    folds.set(best, { runs: group.length, records });
+    folds.set(best, { others: group.length - 1, records });
     folded += records;
   }
   if (away.size === 0) return none;

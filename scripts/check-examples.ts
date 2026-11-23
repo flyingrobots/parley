@@ -43,7 +43,7 @@ function fencedBlocks(file: string, text: string): Block[] {
   const blocks: Block[] = [];
   let open: Block | null = null;
   for (let i = 0; i < lines.length; i++) {
-    const l = lines[i];
+    const l = lines[i] ?? "";
     if (open) {
       if (/^```\s*$/.test(l)) { blocks.push(open); open = null; } else open.body.push(l);
       continue;
@@ -153,11 +153,11 @@ if (import.meta.main) {
     const verdicts = check(roots.length ? roots : DEFAULT_ROOTS, "schemas");
     for (const v of verdicts) write(v, process.stdout);
     const summary = verdicts[verdicts.length - 1];
-    if (summary.event === "summary" && summary.examples === 0) {
+    if (summary?.event === "summary" && summary.examples === 0) {
       write({ event: "error", code: "check.no_examples", problem: "no fenced json or jsonl blocks found; refusing to report success over nothing" }, process.stderr);
       process.exit(2);
     }
-    process.exit(summary.event === "summary" && summary.passed ? 0 : 1);
+    process.exit(summary?.event === "summary" && summary.passed ? 0 : 1);
   } catch (e) {
     write({ event: "error", code: "check.crashed", problem: (e as Error).message }, process.stderr);
     process.exit(2);

@@ -963,7 +963,7 @@ function segmentObjs(hist: string): Record<string, unknown>[] {
   return segmentText(hist).trimEnd().split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>);
 }
 const bookkeepingOf = (head: Record<string, unknown>) => (head.effects as { bookkeeping: { op: string; scope: string }[] }).bookkeeping;
-const pathsOf = (boot: Record<string, unknown>) => boot.paths as Record<string, string>;
+const pathsOf = (boot: Record<string, unknown>) => boot.paths as Record<string, string> & { receipt: string };
 
 describe("PE-22 the shared history stream", () => {
   test("a run with no stream configured is untouched", async () => {
@@ -1556,7 +1556,8 @@ describe("PE-23 the history sink's transform", () => {
     for (const s of SCHEMAS) expect(schemaSubsetGap(s.schema), `${s.id}@${s.version}`).toBeNull();
     expect(schemaSubsetGap({ type: "object", properties: { a: { $ref: "#/$defs/x" } } })).toBe("$ref");
     expect(schemaSubsetGap({ type: "string", format: "uri" })).toBe("format uri");
-    expect(checkRecord({ a: 1 }, { properties: { a: { uniqueItems: true } } }).unsupported).toBe("uniqueItems");
+    const unsupported = checkRecord({ a: 1 }, { properties: { a: { uniqueItems: true } } });
+    expect("unsupported" in unsupported ? unsupported.unsupported : undefined).toBe("uniqueItems");
   });
 
   test("the doctor reports a segment's projection and its withheld gaps", async () => {
@@ -1813,7 +1814,7 @@ describe("PE-25 refuseSuspectedSecrets", () => {
     expect(warns.length).toBe(1);
     expect(String(warns[0]!.problem)).toContain(`seq ${String(r.receiptLines[0]!.seq)}`);
     const vs = inspectSegment(segmentText(hist)) as { event: string; seq?: number }[];
-    expect(vs.filter((v) => v.event === "doctor.gap").map((v) => v.seq)).toContain(r.receiptLines[0]!.seq);
+    expect(vs.filter((v) => v.event === "doctor.gap").map((v) => v.seq)).toContain(r.receiptLines[0]!.seq as number | undefined);
     expect(vs.at(-1)).toMatchObject({ event: "doctor.segment", runs: 1, projected: 1, torn: 0, passed: true });
   });
 

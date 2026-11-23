@@ -9,7 +9,7 @@ const rules = (vs: Verdict[]) => vs.filter((v) => v.event === "doctor.violation"
 const summary = (vs: Verdict[]) => vs[vs.length - 1] as Extract<Verdict, { event: "doctor.summary" }>;
 const lines = (s: string) => s.split("\n").filter(Boolean);
 const edit = (s: string, i: number, f: (o: Record<string, unknown>) => Record<string, unknown> | null) => {
-  const ls = lines(s); const o = JSON.parse(ls[i]); const r = f(o);
+  const ls = lines(s); const o = JSON.parse(ls[i] ?? ""); const r = f(o);
   if (r === null) ls.splice(i, 1); else ls[i] = JSON.stringify(r);
   return ls.join("\n") + "\n";
 };
@@ -106,7 +106,7 @@ describe("parley doctor", () => {
     ["non-JSON line on stderr is quarantined", (c) => ({ stderr: c.stderr + "node: deprecation warning\n" }), ["R1.quarantined"]],
     ["non-JSON line on stdout is a contract failure", (c) => ({ stdout: c.stdout.replace("\n{\"event\":\"end\"", "\nprogress 40/120\n{\"event\":\"end\"") }), ["R1.stdout_not_json"]],
     ["unterminated final line is ignored and reported", (c) => ({ stderr: c.stderr + '{"event":"warning"' }), ["R1.unterminated"]],
-    ["bootstrap not first", (c) => ({ stdout: lines(c.stdout).slice(1, 2).concat(lines(c.stdout)[0], lines(c.stdout)[2]).join("\n") + "\n" }), ["R4.bootstrap_seq", "R4.first_not_bootstrap", "R5.head_tool"]],
+    ["bootstrap not first", (c) => ({ stdout: lines(c.stdout).slice(1, 2).concat(lines(c.stdout)[0] ?? "", lines(c.stdout)[2] ?? "").join("\n") + "\n" }), ["R4.bootstrap_seq", "R4.first_not_bootstrap", "R5.head_tool"]],
     ["bootstrap mirrored into the receipt", (c) => ({ receipt: lines(c.stdout)[0] + "\n" + c.receipt }), ["R4.bootstrap_mirrored", "R5.head_first"]],
     ["seq collision with a different event", (c) => ({ receipt: edit(c.receipt, 3, (o) => ({ ...o, seq: 3 })) }), ["R6.copies_disagree", "R6.duplicate"]],
     ["copies disagree on a shared field", (c) => ({ receipt: edit(c.receipt, 1, (o) => ({ ...o, value: 6 })) }), ["R6.copies_disagree"]],

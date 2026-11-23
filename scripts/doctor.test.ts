@@ -76,6 +76,30 @@ describe("parley doctor", () => {
     for (const v of vs) expect(validate(stamp(v)), JSON.stringify(validate.errors)).toBe(true);
   });
 
+  // A run under --human writes prose to stdout and stderr by request (spec §1.1); its receipt is
+  // still the record, and is checked alone.
+  test("a receipt alone conforms: the record of a run whose streams were prose", () => {
+    const vs = doctor({ receipt: read("conforming", "receipt") });
+    expect(rules(vs)).toEqual([]);
+    expect(summary(vs)).toMatchObject({ passed: true, status: 0, run: "01JD3KN8A3B6C1D4E9F2G7H5J8", lines: { stdout: 0, stderr: 0, receipt: 7 } });
+  });
+  const receiptAlone: [string, (r: string) => string, string[]][] = [
+    ["no end", (r) => edit(r, 6, () => null), ["R7.receipt_no_end"]],
+    ["head not first", (r) => edit(r, 0, () => null), ["R5.head_first"]],
+    ["an event after end", (r) => r + '{"event":"receipt.step","t":1795326412402,"seq":8,"run":"01JD3KN8A3B6C1D4E9F2G7H5J8","decision":"late","because":"x","_schema":{"id":"parley.receipt.step","version":"1.0.0"}}\n', ["R7.after_end", "R7.end_not_final", "R7.receipt_no_end"]],
+    ["status 2 with no error", (r) => edit(r, 6, (o) => ({ ...o, status: 2 })), ["R7.status2_no_error"]],
+    ["end.redacted disagrees", (r) => edit(r, 6, (o) => ({ ...o, redacted: false })), ["R8.redacted_aggregate"]],
+    ["a line from another run", (r) => edit(r, 3, (o) => ({ ...o, run: "01JD3KS9T4U8V1W5X2Y7Z3A6B9" })), ["R6.run"]],
+  ];
+  test("a receipt alone that does not exist is a violation, not a pass", () => {
+    expect(rules(doctor({ receipt: undefined, receiptPresent: false }))).toEqual(["R5.receipt_missing"]);
+  });
+  for (const [name, mutate, expected] of receiptAlone) {
+    test(`detects in a receipt alone: ${name}`, () => {
+      expect(rules(doctor({ receipt: mutate(read("conforming", "receipt")) }))).toEqual([...expected].sort());
+    });
+  }
+
   const cases: [string, (c: ReturnType<typeof conforming>) => Partial<ReturnType<typeof conforming>>, string[]][] = [
     ["missing end on stdout", (c) => ({ stdout: edit(c.stdout, 2, () => null) }), ["R7.no_end"]],
     ["missing end in the receipt only", (c) => ({ receipt: edit(c.receipt, 6, () => null) }), ["R7.receipt_no_end", "R9.not_retained"]],

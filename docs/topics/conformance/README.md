@@ -29,6 +29,22 @@ Capture stdout and stderr separately and pass the receipt the bootstrap line ann
 | R8 | §3.3 | `end.redacted` matches the receipt: the head's `redacted` or any `redaction` event. |
 | R9 | §5 | Every result, error and warning has a copy or a sidecar in the receipt. |
 
+## Checking a receipt alone
+
+```text
+bun run doctor --receipt .parley/receipts/01M8....jsonl
+```
+
+A run under `--human` writes prose to stdout and stderr, because the caller asked for prose
+(spec §1.1); the doctor would rightly call that prose a contract failure on stdout. The receipt of
+such a run is still the record, so `--receipt` without `--stdout` or `--stderr` checks the receipt
+on its own: R1 to R3 on its lines, R5 (the head is first), R6 within the receipt (one run, no
+`seq` twice), R7 (it ends with `end`, which carries the final `seq` and a status that agrees with
+the errors it records) and R8 (`end.redacted` agrees with the head and the `redaction` events). R4
+and R9 need the streams and are not run, so a pass here says less than a pass over all three: it
+says the record is complete and well formed, not that stdout carried what the receipt says it did.
+A `--receipt` path that does not exist is `R5.receipt_missing`.
+
 ## Reading a segment of the shared stream
 
 ```text

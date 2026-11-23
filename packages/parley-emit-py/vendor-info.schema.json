@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flyingrobots.dev/parley/tooling/parley.tooling.vendor_info/1.0.0",
+  "title": "parley_emit.py vendoring output line",
+  "description": "One line of output from `python3 parley_emit.py --vendor-info` (or `--help`, or a usage error). Tooling output, not a protocol message; lives beside the file rather than under schemas/.",
+  "type": "object",
+  "required": ["event", "_schema"],
+  "oneOf": [
+    {
+      "properties": {
+        "event": { "const": "vendor.info" },
+        "file": { "type": "string", "pattern": "^/" },
+        "bytes": { "type": "integer", "minimum": 1 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "SHA-256 of the file's bytes: what a vendored copy is pinned by." },
+        "version": { "type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$" },
+        "spec": { "type": "string", "minLength": 1 },
+        "schemas": { "type": "object", "required": ["commit", "files"], "properties": { "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" }, "files": { "type": "integer", "minimum": 0 } }, "additionalProperties": false },
+        "verify": { "type": "string", "minLength": 1, "description": "A shell command that checks a copy against the digest." },
+        "_schema": { "$ref": "#/$defs/stamp" }
+      },
+      "required": ["file", "bytes", "sha256", "version", "spec", "schemas", "verify"],
+      "additionalProperties": false
+    },
+    {
+      "properties": { "event": { "const": "vendor.help" }, "usage": { "type": "string", "minLength": 1 }, "intent": { "type": "string", "minLength": 1 }, "_schema": { "$ref": "#/$defs/stamp" } },
+      "required": ["usage", "intent"],
+      "additionalProperties": false
+    },
+    {
+      "properties": { "event": { "const": "vendor.error" }, "code": { "type": "string", "pattern": "^[a-z0-9_]+(\\.[a-z0-9_]+)+$" }, "problem": { "type": "string", "minLength": 1 }, "remedy": { "type": "string", "minLength": 1 }, "_schema": { "$ref": "#/$defs/stamp" } },
+      "required": ["code", "problem", "remedy"],
+      "additionalProperties": false
+    }
+  ],
+  "$defs": { "stamp": { "type": "object", "required": ["id", "version"], "additionalProperties": false, "properties": { "id": { "const": "parley.tooling.vendor_info" }, "version": { "const": "1.0.0" } } } }
+}

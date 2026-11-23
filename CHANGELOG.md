@@ -23,7 +23,13 @@ the entry under it names each schema version it releases, and those are separate
   **MUST** be published as declared. It is no longer scrubbed of a declared secret value that
   occurs in it by coincidence, which rewrote `"type": "object"` when the secret was `object`
   (flyingrobots/parley#111).
-- Both sentences add or move a normative term, so the spec's next release is `0.2.1`. The status
+- Spec §5.1: a program **MUST NOT** delete an incomplete receipt, one whose final line is not a
+  newline-terminated `end`, under its policy until the receipt has gone unmodified for at least 24
+  hours. It still counts toward the policy, so a complete receipt may be deleted in its place. No lock is defined: a run that writes nothing for
+  over a day and then appends while retention deletes its receipt loses it. That window is accepted
+  rather than closed by a cross-writer lock protocol (flyingrobots/parley#112). Both writers
+  already behaved this way.
+- These sentences add or move a normative term, so the spec's next release is `0.2.1`. The status
   line keeps saying `0.2.0` until that release is cut. No schema version moves, and no released
   schema's bytes change. Decided under the owner's delegation of 2026-11-22.
 

@@ -197,9 +197,11 @@ counted and never deleted; that is the decision recorded on flyingrobots/parley#
 here from the start. A receipt with no `end` is deleted only once it is more than a day old, so a
 run still in flight is never a candidate. The age is judged from the receipt at the decision rather
 than at the scan, and a receipt whose size or modification time moved before the unlink is spared
-(flyingrobots/parley#112); that narrows the race with a run that appends, and closing it would need
-a lock. A bundle goes together or not at all: the sidecars are removed only once the receipt is
-gone (flyingrobots/parley#113). A dry run deletes nothing and says what it would have
+(flyingrobots/parley#112). That narrows the race with a run that appends. No lock closes it, by
+decision: a run that writes nothing for over a day is treated as crashed, and if it then appends
+while retention deletes its receipt, that receipt is lost (spec section 5.1). A bundle goes
+together or not at all: the sidecars are removed only once the receipt is gone
+(flyingrobots/parley#113). A dry run deletes nothing and says what it would have
 deleted. Telling whose a receipt is means reading the first line of each one in the directory on
 every run.
 

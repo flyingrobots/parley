@@ -69,7 +69,10 @@ Per tool: only bundles whose receipt head names this tool are counted and delete
 modification time, with their sidecar directories (flyingrobots/parley#75). A bundle with no `end`
 is deleted only after a day, judged from the receipt as it is at the decision, and a receipt whose
 size or modification time moved between the decision and the unlink is spared
-(flyingrobots/parley#112). That narrows the race with a run that appends but does not close it.
+(flyingrobots/parley#112). That narrows the race with a run that appends but does not close it,
+and by decision no lock does: spec §5.1 treats a run with no write for a day as crashed and accepts
+that such a run, appending while retention deletes its receipt, loses it. A bundle with no `end`
+still counts toward the limit, so a complete one is deleted in its place.
 The sidecars go only once the receipt is gone, so a receipt that cannot be unlinked keeps its
 bundle whole and is not reported deleted (flyingrobots/parley#113). A dry run deletes nothing and
 records what it would have deleted.

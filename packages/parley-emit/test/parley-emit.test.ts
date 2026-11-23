@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { appendFileSync, chmodSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, utimesSync, writeFileSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 import { doctor } from "../../../scripts/doctor.ts";
@@ -882,6 +882,68 @@ describe("PE-16 retention and in-flight runs (F-5)", () => {
       });
     });
     expect(existsSync(stale)).toBe(true);
+  });
+
+  // PE-16d to PE-16f (flyingrobots/parley#112): no lock. An incomplete receipt is exempt until it
+  // has gone unmodified for 24 hours; a complete one has no writer left (§3.3). The decision time
+  // is injected, so no test sleeps or depends on the wall clock.
+  const HOUR = 3_600_000;
+  function plant(rdir: string, n: number, ended: boolean, mtimeMs: number): string {
+    const id = ulid(n);
+    const p = join(rdir, `${id}.jsonl`);
+    const head = { event: "receipt.head", t: 1, seq: 1, run: id, tool: "t", v: "0.0.1", argv: [], resolved: {}, inputs: [], _schema: { id: "parley.receipt.head", version: "2.0.0" } };
+    const end = { event: "end", t: 2, seq: 2, run: id, status: 0, receipt: p, redacted: false, _schema: { id: "parley.end", version: "1.0.0" } };
+    writeFileSync(p, JSON.stringify(head) + "\n" + (ended ? JSON.stringify(end) + "\n" : ""));
+    utimesSync(p, mtimeMs / 1000, mtimeMs / 1000);
+    return p;
+  }
+  // A whole second survives utimes exactly on every filesystem, so the 24-hour boundary is exact.
+  const wholeSecond = (ms: number) => Math.floor(ms / 1000) * 1000;
+  function retentionStep(lines: Record<string, unknown>[]) {
+    return lines.find((o) => o.event === "receipt.step" && /^retention:/.test(String(o.decision ?? ""))) as { decision?: string } | undefined;
+  }
+
+  test("retention spares an incomplete receipt written within the grace period", async () => {
+    const { dir, env } = scratch();
+    await runCount(dir, env, ["count"], () => {});
+    const rdir = join(dir, ".parley", "receipts");
+    const written = wholeSecond(Date.now() - 2 * HOUR);
+    const flight = plant(rdir, 5, false, written);
+    const r = await runCount(dir, env, ["count"], (run) => { retain(run, run.receiptDir, 1, false, written + HOUR); });
+    expect(existsSync(flight)).toBe(true);
+    expect(retentionStep(r.receiptLines)?.decision).toBe("retention: deleted 1 receipt bundle(s)");
+    // The first run's receipt, complete, went in the in-flight one's place.
+    expect(readdirSync(rdir).filter((f) => f.endsWith(".jsonl")).length).toBe(2);
+  });
+
+  test("retention deletes a complete receipt beyond the count whatever its age", async () => {
+    const { dir, env } = scratch();
+    const rdir = join(dir, ".parley", "receipts");
+    await runCount(dir, env, ["count"], () => {});
+    const written = wholeSecond(Date.now() - 2 * HOUR);
+    const done = plant(rdir, 5, true, written);
+    const side = join(rdir, basename(done, ".jsonl"));
+    mkdirSync(side); writeFileSync(join(side, "3.json"), "{}");
+    const flight = plant(rdir, 6, false, written + 1000);
+    const r = await runCount(dir, env, ["count"], (run) => { retain(run, run.receiptDir, 2, false, written + HOUR); });
+    expect(existsSync(done)).toBe(false);
+    expect(existsSync(side)).toBe(false);
+    expect(existsSync(flight)).toBe(true);
+    expect(retentionStep(r.receiptLines)?.decision).toBe("retention: deleted 2 receipt bundle(s)");
+  });
+
+  test("retention deletes an incomplete receipt once it is unmodified past the grace period", async () => {
+    const { dir, env } = scratch();
+    await runCount(dir, env, ["count"], () => {}, { name: "other" });
+    const rdir = join(dir, ".parley", "receipts");
+    const written = wholeSecond(Date.now() - 3 * 24 * HOUR);
+    const crashed = plant(rdir, 5, false, written);
+    const atGrace = await runCount(dir, env, ["count"], (run) => { retain(run, run.receiptDir, 1, false, written + 24 * HOUR); });
+    expect(existsSync(crashed)).toBe(true);
+    expect(retentionStep(atGrace.receiptLines)?.decision).toBe("retention: nothing to delete");
+    const past = await runCount(dir, env, ["count"], (run) => { retain(run, run.receiptDir, 2, false, written + 24 * HOUR + 1); });
+    expect(existsSync(crashed)).toBe(false);
+    expect(retentionStep(past.receiptLines)?.decision).toBe("retention: deleted 1 receipt bundle(s)");
   });
 });
 

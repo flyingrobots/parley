@@ -56,8 +56,9 @@ it. This page is the reference for what the package does on `main`; the package
    there is one), and `redacted` when any declared secret was supplied (§3.1, §5).
 5. Report a bootstrap write failure now that the head is in place; warn if the receipt was
    relocated or the stream could not be opened; enforce retention by count unless `--dry-run`,
-   deleting only bundles whose receipt ends with `end` or that are incomplete and older than a
-   day, and expire the stream's segments by age; record each decision as a step
+   deleting only bundles whose receipt ends with `end` or that are incomplete and unmodified for
+   more than a day (no lock: a run silent that long is treated as crashed, flyingrobots/parley#112),
+   and expire the stream's segments by age; record each decision as a step
    (§5, §5.1, §4.3, §8).
 6. Discovery: emit `command` lines and `schema` lines, then `end` (§4.1, §4.2); a command that
    declares no `errors` lists `parley.error` and `parley.startup.failed` (flyingrobots/parley#92);

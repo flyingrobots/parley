@@ -10,6 +10,22 @@ release's digest is recorded on its GitHub release (tag `parley-emit-py-vX.Y.Z`)
 
 ## [Unreleased]
 
+## [0.1.2] — 2026-11-22
+
+Retention's rule for a receipt that may still be being written is now the spec's (spec section
+5.1, flyingrobots/parley#112). The behaviour, the schemas it embeds and the `--vendor-info` line's
+shape are unchanged; its digest moves with the file.
+
+### Changed
+
+- **No lock protocol: an incomplete receipt is exempt from retention until it has gone unmodified
+  for 24 hours.** This is the decision on flyingrobots/parley#112. A receipt whose last line is not
+  `end` is kept, and a complete receipt is deleted in its place. Past 24 hours with no write, its
+  run is treated as crashed. A complete receipt cannot be appended to (spec section 3.3), so
+  deleting it races no writer. The window that remains is accepted: a run silent for over a day
+  that appends while retention deletes its receipt loses it. New injected-clock tests pin each case
+  (PY-13h to PY-13j).
+
 ## [0.1.1] — 2026-11-22
 
 Fixes for the findings raised on the vendored copy in flyingrobots/taskalisk#71 (copied at parley

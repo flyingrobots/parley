@@ -21,7 +21,7 @@ repository's schemas; cases about a single field or a refusal assert that field.
 | PE-13 | The shipped schemas are byte-identical to the repository's top-level schemas and pinned by commit | §4.5 |
 | PE-14 | A declared secret value reaches no stream, receipt or `inv` on any path: no command selected, discovery, a secret inside the working-directory path, a secret colliding with an envelope word, a secret in an input path | §5.3, §2.2, §3.2 |
 | PE-15 | A throw from a tool callback before the bootstrap line is a startup failure; a throwing renderer falls back | §3.2, §6 |
-| PE-16 | Retention never deletes a receipt still in flight and deletes a bundle's sidecars with it | §5.1 |
+| PE-16 | Retention never deletes a receipt still in flight (no `end`, modified within 24 hours) and deletes a bundle's sidecars with it | §5.1 |
 | PE-17 | The head is the receipt's first line whatever its size or the state of stdout; a sidecar failure and envelope keys from the tool are handled | §5, §5.4, §1.3 |
 | PE-18 | Every `console` function is captured, from before the resolvers run and in a real process; overlapping runs restore the console; a failing renderer is reported once; a throw during discovery is an error line | §1.2, §6 |
 | PE-19 | Tree inputs skip `.parley`, honour `exclude` and follow content; stdin and absolute inputs are digested; `receiptExtra` is scrubbed | §2.2, §5.3 |
@@ -85,6 +85,9 @@ repository's schemas; cases about a single field or a refusal assert that field.
 | PE-16a | Retention 1, a run held open while another runs | the open run's receipt survives and ends 0 | `retention never deletes a receipt that has not ended` | implemented |
 | PE-16b | A bundle with a sidecar, then retention | receipt and sidecar directory both gone | `retention deletes a bundle's sidecar directory with its receipt` | implemented |
 | PE-16c | An incomplete receipt older than a day whose owner appends after the scan and before the decision (flyingrobots/parley#112) | it is not deleted: the age is read at the decision, and a receipt whose size or mtime moved since is skipped | `retention re-reads a receipt's age at the decision and spares one that moved` | implemented |
+| PE-16d | `retain` with an injected clock: an incomplete receipt of this tool beyond the count, last written an hour before the decision (flyingrobots/parley#112) | it survives, and the step says every excess receipt is still in flight | `retention spares an incomplete receipt written within the grace period` | implemented |
+| PE-16e | `retain` with an injected clock: a complete receipt (last line `end`) beyond the count, last written an hour before the decision | it is deleted with its sidecars: nothing may append after `end` (§3.3) | `retention deletes a complete receipt beyond the count whatever its age` | implemented |
+| PE-16f | `retain` with an injected clock: an incomplete receipt beyond the count, at exactly 24 hours since its last write and at 24 hours and 1 ms | spared at exactly 24 hours, deleted past it: its run is treated as crashed | `retention deletes an incomplete receipt once it is unmodified past the grace period` | implemented |
 | PE-17a | `resolved` of 70,000 bytes | head is the first receipt line, no sidecar, doctor passes | `a head over the sidecar threshold is still the receipt's first line` | implemented |
 | PE-17b | stdout throws on the bootstrap write | head first, then the error, `end` status 4 | `a stdout failure on the bootstrap write still puts the head first` | implemented |
 | PE-17c | A file where the sidecar directory should go | `sink.` error on stderr and in the receipt; `end` status 4 in the receipt (the record itself: PE-21e) | `a sidecar write failure is an error line and the receipt still ends` | implemented |

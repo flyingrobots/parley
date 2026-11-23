@@ -634,6 +634,16 @@ A program's retention policy bounds the receipts that program wrote, which a rec
 names (`tool`). Receipts of other programs may share the directory, a reader's record of a read
 included, and a program **MUST NOT** count them toward its policy or delete them under it.
 
+A receipt whose final line is not a newline-terminated `end` (§3.3, §5.4) is incomplete, and its
+run may still be writing it. A program **MUST NOT** delete an incomplete receipt under its policy
+until the receipt has gone unmodified, by its modification time, for at least 24 hours. After
+that, its run is treated as crashed. An incomplete receipt still counts toward the policy, so a
+complete one may be deleted in its place. A complete receipt has no
+writer left, since nothing may follow `end` (§3.3), so a program may delete it at any age, together
+with its sidecars (§5). No lock between a running program and retention is defined, and the window
+this leaves is accepted. A run that writes nothing for more than 24 hours, and then appends while
+retention deletes its receipt, loses that receipt.
+
 ### 5.2 Repository hygiene
 
 A program writing into `.parley/` **MUST** first ensure that `.parley/.gitignore` exists and

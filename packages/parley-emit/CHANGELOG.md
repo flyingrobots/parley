@@ -5,6 +5,20 @@ on its own; the spec and each message schema move separately (spec §4.4).
 
 ## [Unreleased]
 
+## [0.2.2] — 2026-11-22
+
+Retention's rule for a receipt that may still be being written is now the spec's (§5.1,
+flyingrobots/parley#112). The behaviour and the schemas it ships are unchanged.
+
+### Changed
+
+- **No lock protocol: an incomplete receipt is exempt from retention until it has gone unmodified
+  for 24 hours.** This is the decision on flyingrobots/parley#112. A receipt whose last line is not
+  `end` is kept, and a complete receipt is deleted in its place. Past 24 hours with no write, its
+  run is treated as crashed. A complete receipt cannot be appended to (§3.3), so deleting it races
+  no writer. The window that remains is accepted: a run silent for over a day that appends while
+  retention deletes its receipt loses it. New injected-clock tests pin each case (PE-16d to PE-16f).
+
 ## [0.2.1] — 2026-11-22
 
 Fixes for findings raised on the vendored Python writer in flyingrobots/taskalisk#71 that hold for

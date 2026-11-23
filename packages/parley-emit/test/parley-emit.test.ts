@@ -867,7 +867,11 @@ process.exit(await main(tool, ["t", "count"], (run) => { console.log("touch cons
     const r = await runCount(dir, { ...env, T_TOKEN: "abcdef" }, ["count", "--token", "abc"], (run) => { run.step("s", "b", { a: "abcdef", b: "abc", c: "xabcdefx" }); });
     const step = r.receiptLines.find((o) => o.event === "receipt.step") as { detail: Record<string, string> };
     expect(step.detail).toEqual({ a: "[redacted]", b: "[redacted]", c: "x[redacted]x" });
-    expect(r.receipt.includes("def")).toBe(false);
+    // The tail a shorter-secret-first scrub would leave is "[redacted]def". The receipt also holds
+    // lowercase hex (the state directory's hashed path, digests), where "def" turns up by chance in
+    // about one run in sixty, so the check is for the secret and for the tail itself.
+    expect(r.receipt.includes("abcdef")).toBe(false);
+    expect(r.receipt.includes("[redacted]def")).toBe(false);
   });
 
   test("a secret inside the session is a startup failure; one inside the public tool version is not", async () => {

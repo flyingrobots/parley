@@ -350,6 +350,60 @@ there rather than silently going unchecked. A tool whose own type needs a constr
 subset will see its projected lines withheld as `history.transform_uncheckable`, which is the
 fail-closed direction: better a gap you can see than a line nobody checked.
 
+### A built-in: declaredProjection
+
+The common reason to project the stream is a list the caller already knows: a username in a
+path, a hostname, a private repository name — fine in a local receipt, wrong on a shared
+timeline. Writing that scrub by hand risks getting longest-first replacement or key renaming
+subtly wrong, so this package ships it (flyingrobots/parley#59):
+
+```ts
+import { declaredProjection } from "parley-emit";
+
+await main(tool, argv, handler, {
+  history: { transform: declaredProjection(["db-prod-7"]) },
+});
+```
+
+It applies the **same scrubber** the receipt's own redaction uses (§5.3) to the stream copy's
+body alone: longest value first, so a value that contains another is replaced whole and leaves no
+tail, and a key that carries a declared value is renamed. The envelope — `event`, `t`, `seq`,
+`run`, `_schema` — is read off the record and put back untouched; it is never the scrub's to touch,
+even when a declared value happens to equal one of those fields' own value (the literal event name
+`"result"`, say).
+
+**The writer's own identity scalars are exempt too, at any depth.** A record the receipt holds may
+itself be writer-built (`receipt.head`, `end`), and fields like `tool`, `v`, `inv`, `sha256`,
+`name`, `id`, `version` and `code` carry no pattern a validator would reject a corrupted value by
+— they are plain strings. Without this, a declared value that happened to coincide with, say, the
+tool's own name would silently rename `tool` on the stream's head, with nothing to catch it. This
+is the same `DIGEST_KEYS` the receipt's own redaction of a writer-built record already exempts
+(`src/run.ts`); `argv` is not one of them, so the same declared value legitimately still scrubs
+there, since it is the tool's own caller-chosen data.
+
+**An empty declared set configures no transform at all.** `declaredProjection([])` returns
+`undefined` rather than an inert identity function, so `MainOptions.history.transform` is itself
+`undefined`: the writer's own check never builds a projection for it, and the stream copy carries
+no `parley.history.transform` opening line — the run that existed before the built-in did.
+
+**The opening line never discloses what was declared.** The returned function is declared with a
+literal name rather than built by string assembly, so its name on the stream is always the literal
+`declaredProjection`, whatever was declared; and the SHA-256 digest the line also carries is of the
+function's *source text*, which only ever closes over the declared values and never embeds them —
+two different declared sets digest identically.
+
+Captured from `count` 0.1.0 with `declaredProjection(["db-prod-7"])` configured, against a working
+directory holding `readme.txt` and `db-prod-7-backup.txt`, on 2026-11-22. The receipt's step names
+both files; the stream copy's does not, and the value is absent from the stream end to end:
+
+```jsonl
+{"event":"receipt.step","t":1795391463645,"seq":4,"run":"01M82TQ85WMZ7X3AA0R2DW3M7G","decision":"counted 2 regular file(s)","because":"a declared hostname in one of the names is fine in the receipt and wrong on the shared timeline","detail":{"names":["db-prod-7-backup.txt","readme.txt"]},"_schema":{"id":"parley.receipt.step","version":"1.0.0"}}
+```
+
+```jsonl
+{"event":"receipt.step","t":1795391463645,"seq":4,"run":"01M82TQ85WMZ7X3AA0R2DW3M7G","decision":"counted 2 regular file(s)","because":"a declared hostname in one of the names is fine in the receipt and wrong on the shared timeline","detail":{"names":["[redacted]-backup.txt","readme.txt"]},"_schema":{"id":"parley.receipt.step","version":"1.0.0"}}
+```
+
 ### Three more decisions the owner may overrule
 
 flyingrobots/parley#57 left the shape of the enforcement to the implementation. These three are

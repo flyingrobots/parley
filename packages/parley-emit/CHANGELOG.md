@@ -7,6 +7,17 @@ on its own; the spec and each message schema move separately (spec §4.4).
 
 ### Changed
 
+- **BREAKING for a caller that puts a writer flag after `--`: `--` now ends the writer's flags**
+  (flyingrobots/parley#103). The writer used to remove every argument equal to one of its own
+  flags (`--human`, `--humanize`, `--dry-run`, `--schema`, `--help`, `-h`) wherever it stood, so a
+  tool flag whose value had one of those texts lost it and switched the writer's behaviour
+  (`edit --note -h` became `--help` discovery and the tool never saw `-h`). Now the writer's flags
+  are recognised only before the first `--`; that `--` is removed and every argument after it
+  reaches `resolved`, `inputs` and the handler untouched, so `edit -- --note -h` gives the tool
+  `["--note", "-h"]`. Before a `--` nothing changes: `edit --note -h` is still discovery, by a
+  stated rule. A `--` used to reach the tool; the first one no longer does, and `edit -- --dry-run`
+  is no longer a dry run. Nothing after `--` is ever the command. The Python writer follows the
+  same rule.
 - **BREAKING for a caller that names a flag before the command: the command is now the first
   argument once the writer's flags are set aside, and only that one argument is removed**
   (flyingrobots/parley#101). The writer used to take the first argument anywhere that named a
@@ -15,8 +26,8 @@ on its own; the spec and each message schema move separately (spec §4.4).
   (`--reason plan edit` ran `plan`). Now `edit --reason edit` gives `["--reason", "edit"]`, and in
   a tool with more than one command a first argument that names none is
   `startup.unknown_command`, exit 3, so `--verbose edit` must be written `edit --verbose`. The
-  writer's own flags are still recognised anywhere. A tool with one command may still omit its
-  name. The Python writer follows the same rule.
+  writer's own flags are still recognised anywhere before the first `--` (flyingrobots/parley#103).
+  A tool with one command may still omit its name. The Python writer follows the same rule.
 - **BREAKING for a consumer that pins its discovery output: `<command> --help` now lists
   `parley.startup.failed@1.0.0` beside `parley.error@2.0.0`** (flyingrobots/parley#92, spec §4.2).
   A command that declares no `errors` now has the default `[parley.error, parley.startup.failed]`,

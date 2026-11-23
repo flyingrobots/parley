@@ -36,6 +36,14 @@ package registry. A copy is pinned by the SHA-256 `--vendor-info` prints.
 
 ### Fixed
 
+- **`--` ends the writer's flags** (flyingrobots/parley#103). `main` used to remove every argument
+  equal to one of its own flags wherever it stood, so a tool flag whose value was `-h`, `--help`,
+  `--schema`, `--dry-run`, `--human` or `--humanize` lost it and switched the writer's behaviour.
+  Now those flags are recognised only before the first `--`; that `--` is removed and every
+  argument after it reaches `resolved`, `inputs` and the handler untouched (`edit -- --note -h`
+  gives the tool `["--note", "-h"]`; `edit -- a -- b` gives `["a", "--", "b"]`), and nothing after
+  it is ever the command. The TypeScript writer follows the same rule. A vendored copy carries the
+  defect until it is re-vendored; `--vendor-info` names the new digest.
 - **The command is chosen by position, and only that one argument is removed**
   (flyingrobots/parley#101). `main` used to remove every argument equal to the command's name and
   take the first argument anywhere that named a command, so a flag value equal to a command name

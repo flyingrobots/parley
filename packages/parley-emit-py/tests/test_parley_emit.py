@@ -844,6 +844,69 @@ class TestCommandSelection(unittest.TestCase):
             self.assertEqual(handler, ["--label", "count"], argv)
 
 
+def dash(argv, commands=None):
+    """Run argv through `main`; return (status, resolved's view, the handler's args, its dry_run, stdout objects, stderr codes)."""
+    d, _, env = scratch()
+    out, err = Capture(), Capture()
+    seen = {}
+
+    def resolved(args, command):
+        seen["resolved"] = (command, list(args))
+        return {"command": command, "args": list(args)}
+
+    def handler(run, args):
+        seen["handler"] = list(args)
+        seen["dry_run"] = run.dry_run
+
+    over = {"commands": commands} if commands is not None else {}
+    status = pe.main(tool(**over), ["t", *argv], handler, cwd=d, env=env, stdout=out, stderr=err, resolved=resolved)
+    return status, seen.get("resolved"), seen.get("handler"), seen.get("dry_run"), out.objs, [x.get("code") for x in err.objs]
+
+
+class TestDoubleDash(unittest.TestCase):
+    """PY-22: `--` ends the writer's flags; the first `--` is removed and everything after it reaches the tool."""
+
+    def test_a_writer_flag_before_the_double_dash_is_the_writers(self):
+        status, _, handler, _, out, _ = dash(["edit", "--note", "-h"], TWO_COMMANDS)
+        self.assertEqual(status, 0)
+        self.assertIsNone(handler)
+        self.assertEqual([o["name"] for o in out if o.get("event") == "command"], ["edit"])
+
+    def test_after_the_double_dash_a_writer_flags_text_reaches_the_tool(self):
+        status, resolved, handler, _, out, _ = dash(["edit", "--", "--note", "-h"], TWO_COMMANDS)
+        self.assertEqual(status, 0)
+        self.assertEqual(resolved, ("edit", ["--note", "-h"]))
+        self.assertEqual(handler, ["--note", "-h"])
+        self.assertFalse(any(o.get("event") == "command" for o in out))
+
+    def test_only_the_first_double_dash_is_removed(self):
+        status, resolved, handler, _, _, _ = dash(["edit", "--"], TWO_COMMANDS)
+        self.assertEqual(status, 0)
+        self.assertEqual(resolved, ("edit", []))
+        self.assertEqual(handler, [])
+        status, resolved, handler, _, _, _ = dash(["edit", "--", "a", "--", "b"], TWO_COMMANDS)
+        self.assertEqual(status, 0)
+        self.assertEqual(resolved, ("edit", ["a", "--", "b"]))
+        self.assertEqual(handler, ["a", "--", "b"])
+
+    def test_writer_flags_after_the_double_dash_are_not_the_writers(self):
+        status, _, handler, dry_run, out, _ = dash(["edit", "--", "--dry-run", "--human"], TWO_COMMANDS)
+        self.assertEqual(status, 0)
+        self.assertIs(dry_run, False)
+        self.assertNotIn("dry_run", out[0])
+        self.assertEqual(handler, ["--dry-run", "--human"])
+
+    def test_the_command_is_never_taken_from_after_the_double_dash(self):
+        status, _, handler, _, _, codes = dash(["--", "edit"], TWO_COMMANDS)
+        self.assertEqual(status, 3)
+        self.assertEqual(codes, ["startup.unknown_command"])
+        self.assertIsNone(handler)
+        status, resolved, handler, _, _, _ = dash(["--", "count"])
+        self.assertEqual(status, 0)
+        self.assertEqual(resolved, ("count", ["count"]))
+        self.assertEqual(handler, ["count"])
+
+
 class TestHygiene(unittest.TestCase):
     def test_the_ignore_file_is_created_whole(self):
         d, _, env = scratch()

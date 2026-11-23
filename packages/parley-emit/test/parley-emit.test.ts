@@ -318,6 +318,69 @@ describe("PE-27 the command is chosen by position (flyingrobots/parley#101)", ()
   });
 });
 
+describe("PE-28 -- ends the writer's flags (flyingrobots/parley#103)", () => {
+  const plain = { reads: [], writes: [], network: false, idempotent: true };
+  const twoCommands: ToolSpec["commands"] = {
+    plan: { intent: "plan", effects: plain, emits: [{ id: "t.count", version: "1.0.0" }] },
+    edit: { intent: "edit", effects: plain, emits: [{ id: "t.count", version: "1.0.0" }] },
+  };
+  async function run(argv: string[], commands?: ToolSpec["commands"]) {
+    const { dir, env } = scratch();
+    const s = streams();
+    let resolvedSaw: [string, string[]] | undefined, handlerSaw: string[] | undefined, dryRun: boolean | undefined;
+    const status = await main(tool(commands ? { commands } : {}), ["t", ...argv], (r, args) => { handlerSaw = [...args]; dryRun = r.dryRun; }, {
+      cwd: dir, env, ...s, resolved: (args, command) => { resolvedSaw = [command, [...args]]; return { command, args: [...args] }; },
+    });
+    const out = s.stdout.lines.map((l) => JSON.parse(l) as Record<string, unknown>);
+    return { status, resolved: resolvedSaw, handler: handlerSaw, dryRun, out, codes: s.stderr.objs.map((o) => o.code) };
+  }
+
+  test("a writer flag before -- is the writer's, even as a tool flag's value", async () => {
+    const r = await run(["edit", "--note", "-h"], twoCommands);
+    expect(r.status).toBe(0);
+    expect(r.handler).toBeUndefined();
+    expect(r.out.filter((o) => o.event === "command").map((o) => o.name)).toEqual(["edit"]);
+  });
+
+  test("after --, a writer flag's text reaches the tool", async () => {
+    const r = await run(["edit", "--", "--note", "-h"], twoCommands);
+    expect(r.status).toBe(0);
+    expect(r.resolved).toEqual(["edit", ["--note", "-h"]]);
+    expect(r.handler).toEqual(["--note", "-h"]);
+    expect(r.out.some((o) => o.event === "command")).toBe(false);
+  });
+
+  test("-- with nothing after it gives the tool nothing, and only the first -- is removed", async () => {
+    const empty = await run(["edit", "--"], twoCommands);
+    expect(empty.status).toBe(0);
+    expect(empty.resolved).toEqual(["edit", []]);
+    expect(empty.handler).toEqual([]);
+    const two = await run(["edit", "--", "a", "--", "b"], twoCommands);
+    expect(two.status).toBe(0);
+    expect(two.resolved).toEqual(["edit", ["a", "--", "b"]]);
+    expect(two.handler).toEqual(["a", "--", "b"]);
+  });
+
+  test("writer flags after -- are not the writer's", async () => {
+    const r = await run(["edit", "--", "--dry-run", "--human"], twoCommands);
+    expect(r.status).toBe(0);
+    expect(r.dryRun).toBe(false);
+    expect(r.out[0]!.dry_run).toBeUndefined();
+    expect(r.handler).toEqual(["--dry-run", "--human"]);
+  });
+
+  test("the command is never taken from after --", async () => {
+    const bad = await run(["--", "edit"], twoCommands);
+    expect(bad.status).toBe(3);
+    expect(bad.codes).toEqual(["startup.unknown_command"]);
+    expect(bad.handler).toBeUndefined();
+    const one = await run(["--", "count"]);
+    expect(one.status).toBe(0);
+    expect(one.resolved).toEqual(["count", ["count"]]);
+    expect(one.handler).toEqual(["count"]);
+  });
+});
+
 describe("PE-6 repository hygiene", () => {
   test("first write creates the ignore file", async () => {
     const { dir, env } = scratch();

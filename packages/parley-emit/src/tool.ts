@@ -111,17 +111,24 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
   const stdout = opts.stdout ?? fdSink(1), stderr = opts.stderr ?? fdSink(2);
   const now = opts.now ?? Date.now;
   const rawArgs = argv.slice(1);
-  const human = rawArgs.some((a) => a === "--human" || a === "--humanize");
-  const dryRun = rawArgs.includes("--dry-run");
-  const discovery = rawArgs.includes("--schema") ? "schema" : rawArgs.includes("--help") || rawArgs.includes("-h") ? "help" : null;
-  const args = rawArgs.filter((a) => !OWN_FLAGS.has(a));
+  // `--` ends the writer's flags (flyingrobots/parley#103): the writer's own flags are recognised
+  // anywhere before the first `--`, that `--` is removed, and every argument after it is the
+  // tool's, untouched, a writer flag's text or a second `--` included.
+  const dash = rawArgs.indexOf("--");
+  const own = dash === -1 ? rawArgs : rawArgs.slice(0, dash);
+  const after = dash === -1 ? [] : rawArgs.slice(dash + 1);
+  const human = own.some((a) => a === "--human" || a === "--humanize");
+  const dryRun = own.includes("--dry-run");
+  const discovery = own.includes("--schema") ? "schema" : own.includes("--help") || own.includes("-h") ? "help" : null;
+  const args = own.filter((a) => !OWN_FLAGS.has(a));
   const names = Object.keys(spec.commands);
   // The command is chosen by position (flyingrobots/parley#101): once the writer's flags are set
-  // aside, the first remaining argument is the command, and only that one argument is removed. A
-  // tool with one command may omit it. A later argument with a command's text is the tool's.
+  // aside, the first remaining argument before any `--` is the command, and only that one argument
+  // is removed. A tool with one command may omit it. A later argument with a command's text is the
+  // tool's, and nothing after `--` is ever the command.
   const named = args.length > 0 && Object.hasOwn(spec.commands, args[0]!);
   const commandName = named ? args[0]! : names.length === 1 ? names[0]! : undefined;
-  const rest = named ? args.slice(1) : args;
+  const rest = [...(named ? args.slice(1) : args), ...after];
   const command = commandName ? spec.commands[commandName]! : undefined;
 
   // Declared secrets of every command: a value passed to the wrong command is still a secret (§5.3).

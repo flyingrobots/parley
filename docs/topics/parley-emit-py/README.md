@@ -13,9 +13,10 @@ derivation, and the README's last section names every place it differs.
 
 ## Lifecycle, as the writer performs it
 
-1. Split `argv` into the writer's flags (`--human`, `--humanize`, `--dry-run`, `--schema`,
-   `--help`, `-h`) and the rest; the command is the first argument that remains, and only that one
-   argument is removed (flyingrobots/parley#101); a tool with one command may omit it.
+1. Split `argv` at the first `--`, which is removed: everything after it is the tool's, untouched
+   (flyingrobots/parley#103). Before it, set aside the writer's flags (`--human`, `--humanize`,
+   `--dry-run`, `--schema`, `--help`, `-h`); the command is the first argument that remains, and
+   only that one argument is removed (flyingrobots/parley#101); a tool with one command may omit it.
 2. Classify the declared secrets of every command into flags, variables and logical sources, and
    collect the values the flags and variables carry. Choose a run id carrying none of them. A
    session carrying one is `startup.secret_in_identity`; no command named is

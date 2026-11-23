@@ -1363,18 +1363,25 @@ def _main(tool: Tool, argv: List[str], handler: Callable[[Run, List[str]], Any],
           state: Dict[str, Any]) -> int:
     cwd = os.path.abspath(cwd_opt if cwd_opt is not None else os.getcwd())
     raw_args = argv[1:]
-    human = any(a in ("--human", "--humanize") for a in raw_args)
-    dry_run = "--dry-run" in raw_args
-    discovery = "schema" if "--schema" in raw_args else ("help" if ("--help" in raw_args or "-h" in raw_args) else None)
-    args = [a for a in raw_args if a not in _OWN_FLAGS]
+    # `--` ends the writer's flags (flyingrobots/parley#103): the writer's own flags are recognised
+    # anywhere before the first `--`, that `--` is removed, and every argument after it is the
+    # tool's, untouched, a writer flag's text or a second `--` included.
+    dash = raw_args.index("--") if "--" in raw_args else -1
+    own = raw_args if dash == -1 else raw_args[:dash]
+    after = [] if dash == -1 else raw_args[dash + 1:]
+    human = any(a in ("--human", "--humanize") for a in own)
+    dry_run = "--dry-run" in own
+    discovery = "schema" if "--schema" in own else ("help" if ("--help" in own or "-h" in own) else None)
+    args = [a for a in own if a not in _OWN_FLAGS]
     names = list(tool.commands)
     # The command is chosen by position (flyingrobots/parley#101): once the writer's flags are set
-    # aside, the first remaining argument is the command, and only that one argument is removed. A
-    # tool with one command may omit it. A later argument with a command's text is the tool's.
+    # aside, the first remaining argument before any `--` is the command, and only that one argument
+    # is removed. A tool with one command may omit it. A later argument with a command's text is the
+    # tool's, and nothing after `--` is ever the command.
     command_name: Optional[str] = None
-    rest = args
+    rest = args + after
     if args and args[0] in tool.commands:
-        command_name, rest = args[0], args[1:]
+        command_name, rest = args[0], args[1:] + after
     elif len(names) == 1:
         command_name = names[0]
     command = tool.commands.get(command_name) if command_name else None

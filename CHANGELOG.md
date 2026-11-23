@@ -14,6 +14,18 @@ the entry under it names each schema version it releases, and those are separate
   new draft version. This replaces the sentence that the change which snapshots a version bumps the
   draft. No normative term was added, removed or moved, so the spec stays `0.2.0` and no schema
   version moves (flyingrobots/parley#107).
+- Spec §5.2: a `.parley/.gitignore` that has the line `*` but also a negation pattern that can
+  match the directory `receipts` is a user's file. The program leaves it alone and uses the
+  state-directory fallback, and it **MUST** treat a negation it cannot evaluate as one that
+  matches. Before this, a file of `*`, `!receipts/` and `!receipts/**` met the letter of §5.2 while
+  leaving receipts where `git add` stages them (flyingrobots/parley#109).
+- Spec §5.3: the schema document a `schema` line publishes is the program's static declaration and
+  **MUST** be published as declared. It is no longer scrubbed of a declared secret value that
+  occurs in it by coincidence, which rewrote `"type": "object"` when the secret was `object`
+  (flyingrobots/parley#111).
+- Both sentences add or move a normative term, so the spec's next release is `0.2.1`. The status
+  line keeps saying `0.2.0` until that release is cut. No schema version moves, and no released
+  schema's bytes change. Decided under the owner's delegation of 2026-11-22.
 
 ## [0.2.0] — 2026-11-22
 

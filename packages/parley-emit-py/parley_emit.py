@@ -28,7 +28,7 @@ import time
 import traceback
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple, Union
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 SPEC_VERSION = "0.2.0"
 
 REDACTED = "[redacted]"

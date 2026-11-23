@@ -5,6 +5,37 @@ on its own; the spec and each message schema move separately (spec §4.4).
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-11-22
+
+Fixes for findings raised on the vendored Python writer in flyingrobots/taskalisk#71 that hold for
+this writer too. The schemas it ships are unchanged.
+
+### Added
+
+- **`run.inputUnreadable(path, code?)`** (flyingrobots/parley#110). It records that the program
+  could not read a declared input, as `{"path", "error": "input.unreadable"}` with no digest, so
+  `inv` is omitted as spec §2.2 requires. Before this, the writer read the path itself at
+  finalisation, so a file that appeared after the program failed to read it got a digest and an
+  `inv` for bytes the program never saw. It throws for a path that is not a declared input and
+  after the inputs are settled; `run.input` after it supplies bytes again.
+
+### Fixed
+
+- **A `.parley/.gitignore` negation that can re-include `receipts/` sends the receipt to the state
+  directory** (flyingrobots/parley#109, spec §5.2). A file of `*`, `!receipts/` and `!receipts/**`
+  used to be accepted, and its receipts were left where `git add` stages them. The
+  `receipt.relocated` warning names the negation. A pattern the check cannot evaluate (an inner
+  `/`, a backslash) is taken to match, and a negation that cannot match, such as `!keep`, still
+  stores in the repository.
+- **`--schema` and `--help` publish schema documents as declared** (flyingrobots/parley#111, spec
+  §5.3). A declared secret whose value occurred in a document, such as `object`, used to rewrite it
+  (`"type": "[redacted]"`) under the original `id` and `version`. Every other discovery field is
+  still scrubbed.
+- **Retention re-reads a receipt's age at the decision** (flyingrobots/parley#112). It used the
+  mtime from the directory scan, so a receipt silent for over a day whose run appended after the
+  scan could be deleted. The writer now skips the unlink when the receipt's size or mtime moved
+  since the decision. This narrows the window without closing it; the issue stays open for a lock.
+
 ## [0.2.0] — 2026-11-22
 
 The schemas this version ships are the released versions of the repository's first schema release,

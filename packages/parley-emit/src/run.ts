@@ -350,11 +350,11 @@ export class Run {
     }
   }
 
-  /** Scrub a payload's values; `event` is envelope, named by the writer or the tool's schema, and is never a secret. */
   /**
-   * Scrub everything but the event name and, for a writer-built record, the one field named by
-   * `verbatim`: the schema document of a `schema` line, a static declaration a secret cannot reach
-   * (§5.3, flyingrobots/parley#111).
+   * Scrub a payload's values. `event` is envelope, named by the writer or the tool's schema, and is
+   * never a secret. For a writer-built record, the one field named by `verbatim` is left as it is:
+   * the schema document of a `schema` line, a static declaration a secret cannot reach (§5.3,
+   * flyingrobots/parley#111).
    */
   private scrubPayload(payload: Record_, found: string[], writer: boolean, verbatim?: string): Record_ {
     const { event, ...all } = payload;

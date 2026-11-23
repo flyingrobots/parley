@@ -3111,3 +3111,16 @@ describe("RD-100 a run section carries the head's resolved", () => {
     }
   });
 });
+
+describe("RD-100 a fold never hides a different resolved", () => {
+  test("runs of one inv whose resolved differs are not folded", () => {
+    // §2.2 keeps the working directory out of `inv`, so two runs in two checkouts can share one.
+    // The section states its run's `resolved`, so folding them would state one run's for both.
+    const at = (n: number, cwd: string) => [
+      loaded(runId(n), 1, "receipt.head", T0 + n * 10, { tool: "t", v: "1", argv: ["t"], inv: "inv_same", resolved: { command: "t", cwd } }),
+      loaded(runId(n), 2, "end", T0 + n * 10 + 1, { status: 0 }),
+    ];
+    const { digested } = digestOf([...at(1, "/a"), ...at(2, "/b"), ...at(3, "/b")]);
+    expect(digested.digest.runs.map((r) => [r.run, r.folded])).toEqual([[runId(1), undefined], [runId(3), { runs: 2, records: 2 }]]);
+  });
+});

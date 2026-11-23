@@ -106,7 +106,9 @@ What got in the way. Each of these is filed:
 
 - **A digest entry is only `(run, seq)`.** Most drill-downs were spent learning what an entry
   *was* before deciding whether it mattered
-  ([flyingrobots/parley#77](https://github.com/flyingrobots/parley/issues/77)).
+  ([flyingrobots/parley#77](https://github.com/flyingrobots/parley/issues/77)) Fixed since: each entry carries its record's `event`, its `t` and its run's
+  `outcome`. A second reader, on the same 50 receipts, opened no id to learn what an entry was
+  ([the re-run below](#re-run-against-the-summarised-lens)).
 - **`what-changed` never surfaced a single result.** Under a change purpose the failure tier
   ranks first, and it includes warnings: the digest's 20 slots went to 14 graft warnings, 3 errors
   and 3 status-2 `end`s
@@ -131,6 +133,75 @@ The plainest lesson is the first item under *What was missed*. A cold resume fro
 alone reconstructs what the *tools* did, precisely and checkably, and it reconstructs a *session*
 only as far as the session acted through parley tools. Version control, the shell and pull requests
 are not parley tools.
+
+
+## Re-run against the summarised lens
+
+After [flyingrobots/parley#77](https://github.com/flyingrobots/parley/issues/77) gave every lens
+entry a summary, the exercise was run again on 2026-11-22 to see whether the summary saved the
+drill-downs it was meant to save.
+
+| | |
+| --- | --- |
+| History | The same 50 footprint receipts, copied byte for byte into a fresh directory. The first reader's own receipts were left out |
+| Window | The same seven days, `1794790009000` to `1795394809000`. The reader was told the time instead of running `date`, so the window matched |
+| Code | `lens-entry-summary` at `ab41bc7`, before flyingrobots/parley#76 and flyingrobots/parley#78 were merged into it. Under `what-changed`, warnings still ranked in the failure tier, and a drill-down had no byte bound |
+| The reader | A fresh agent, under the same rules and the same two instruments, with the asker's task set to `flyingrobots/parley#77` |
+
+The first command, captured:
+
+```text
+$ cold query --view everything --from 1794790009000 --to 1795394809000
+```
+
+The digest line it printed, captured. The receipt of the read holds the same line:
+
+```json
+{"event":"lens","t":1795395743020,"seq":6,"run":"01M82YSV5X7T7FRYS4A1D5M41R","query":{"run":"01M82YSV5X7T7FRYS4A1D5M41R","seq":2},"asker":{"tool":"claude-code","cwd":"/private/tmp/claude-501/-Users-james-git-parley/006f3cdc-373a-4f61-828f-0e1658b9fb66/scratchpad/cold-resume-77c/footprint","task":"flyingrobots/parley#77"},"view":"everything","budget":{"records":20},"window":{"from":1794790009000,"to":1795394809000},"loss":{"bound":"count-only","excluded":488},"records":[{"run":"01M82PGK63JH6SSJXGTQ03C7V3","seq":1,"event":"receipt.head","t":1795387051226,"outcome":"undetermined"},{"run":"01M82PGK63JH6SSJXGTQ03C7V3","seq":2,"event":"receipt.step","t":1795387051227,"outcome":"undetermined"},{"run":"01M82PGK63JH6SSJXGTQ03C7V3","seq":3,"event":"receipt.step","t":1795387051227,"outcome":"undetermined"},{"run":"01M82PGK63JH6SSJXGTQ03C7V3","seq":4,"event":"receipt.step","t":1795387051237,"outcome":"undetermined"},{"run":"01M82PGM6W7EDYPGHW0P8DGTMS","seq":1,"event":"receipt.head","t":1795387052271,"outcome":"undetermined"},{"run":"01M82PGM6W7EDYPGHW0P8DGTMS","seq":2,"event":"receipt.step","t":1795387052272,"outcome":"undetermined"},{"run":"01M82PGM6W7EDYPGHW0P8DGTMS","seq":3,"event":"receipt.step","t":1795387052272,"outcome":"undetermined"},{"run":"01M82PGM6W7EDYPGHW0P8DGTMS","seq":4,"event":"receipt.step","t":1795387052282,"outcome":"undetermined"},{"run":"01M82PGMA3W1CEAJ77XXH02NKV","seq":1,"event":"receipt.head","t":1795387052377,"outcome":"undetermined"},{"run":"01M82PGMA3W1CEAJ77XXH02NKV","seq":2,"event":"receipt.step","t":1795387052379,"outcome":"undetermined"},{"run":"01M82PGMA3W1CEAJ77XXH02NKV","seq":3,"event":"receipt.step","t":1795387052379,"outcome":"undetermined"},{"run":"01M82PGMA3W1CEAJ77XXH02NKV","seq":4,"event":"receipt.step","t":1795387052393,"outcome":"undetermined"},{"run":"01M82PHCBKKHDV83Q12ZCRAWGP","seq":1,"event":"receipt.head","t":1795387077000,"outcome":"undetermined"},{"run":"01M82PHCBKKHDV83Q12ZCRAWGP","seq":2,"event":"receipt.step","t":1795387077001,"outcome":"undetermined"},{"run":"01M82PHCBKKHDV83Q12ZCRAWGP","seq":3,"event":"receipt.step","t":1795387077001,"outcome":"undetermined"},{"run":"01M82PHCBKKHDV83Q12ZCRAWGP","seq":4,"event":"receipt.step","t":1795387077011,"outcome":"undetermined"},{"run":"01M82PHMSSX7B4SPRRN8Z10R2Y","seq":1,"event":"receipt.head","t":1795387085651,"outcome":"undetermined"},{"run":"01M82PHMSSX7B4SPRRN8Z10R2Y","seq":2,"event":"receipt.step","t":1795387085652,"outcome":"undetermined"},{"run":"01M82PHMSSX7B4SPRRN8Z10R2Y","seq":3,"event":"receipt.step","t":1795387085652,"outcome":"undetermined"},{"run":"01M82PHMSSX7B4SPRRN8Z10R2Y","seq":4,"event":"receipt.step","t":1795387085664,"outcome":"undetermined"}],"_schema":{"id":"parley.lens","version":"1.0.0"}}
+```
+
+It names the same first five runs as the first reader's digest did. This time each entry says it
+is a `receipt.head` or a `receipt.step` of a run whose outcome is `undetermined`. The line is
+2,744 bytes; the first reader's line, naming the same twenty records, was 1,420.
+
+| | First reader | Second reader |
+| --- | --- | --- |
+| Queries | 6 | 5 |
+| Drill-downs | 8 | 7 |
+| Ids opened | 53 | 49, all `opened` |
+| Ids opened only to learn an entry's kind or outcome | most of its drill-downs, by its own account | none, by its own account |
+
+The second reader's own words, from its report: "For kind and outcome: none. The digest already
+gave the event kind and outcome for every entry." Its first drill-down went straight to the head
+and the `error` of the three failed runs. Its `what-failed` digest had named those three records as
+`error` entries of `failed` runs.
+
+It reconstructed the same things the first reader did, and also the four bursts and their
+commits. For the hung runs it said "most likely killed by a test timeout", and for the 15:21
+burst "`node` missing from PATH". It also inferred that the bursts were footprint's test suite
+re-run after each commit. These claims were not checked again against `git log`. They match the
+claims the table above did check.
+
+What the summary did not settle, by the second reader's account:
+
+- **Which run an entry belongs to.** An entry has no argv, range, error code or commit.
+  26 of the 49 ids were heads (`seq` 1), most of them opened only to learn a run's arguments,
+  and the three failures had to be opened before the reader could see that they were the same
+  `git.diff_failed` case.
+- **Why an outcome is `undetermined`.** The digest does not say that the run has no `end`; the
+  drill-down's replay ruling does. The reader called this the place where "the most interesting
+  failure", the hung runs, was hidden. This and the item above are
+  [flyingrobots/parley#83](https://github.com/flyingrobots/parley/issues/83).
+- **A drill-down with no byte bound** overflowed once, to 57.7 KB, and was asked again with fewer
+  ids. That is the [flyingrobots/parley#78](https://github.com/flyingrobots/parley/issues/78)
+  failure, and the code under test did not yet have the fix.
+
+The re-run departed from its rules once, and not through the reader. Its first attempt told the
+reader it might run "exactly two commands", and the reader took that to mean two invocations. It
+made one query of 40 records and one drill-down of 12 ids. Six of those ids were opened only to
+learn what `undetermined` meant. The comparison above is from the second attempt, which said each
+command could be run as often as the reader liked. That attempt used a fresh copy of the same
+receipts, so neither attempt read the other's receipts.
 
 ## How the exercise departed from its rules
 

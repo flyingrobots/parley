@@ -282,6 +282,22 @@ describe("schemas/", () => {
       expect(lens({ ...okLens, records: [{ run: "q", seq: -1 }] })).toBe(false);
       expect(lens({ ...okLens, records: [{ run: "q" }] })).toBe(false);
       expect(lens({ ...okLens, records: "q/4" })).toBe(false);
+      // Each entry may carry a summary of the record it names (flyingrobots/parley#77): the
+      // record's event and t, and its run's outcome as the ranking established it. Each is
+      // optional, because a record with no usable event or t is named without one.
+      const entry = { run: "q", seq: 4, event: "error", t: 1, outcome: "failed" };
+      expect(lens({ ...okLens, records: [entry] })).toBe(true);
+      for (const outcome of ["failed", "undetermined", "succeeded"]) {
+        expect(lens({ ...okLens, records: [{ ...entry, outcome }] })).toBe(true);
+      }
+      expect(lens({ ...okLens, records: [{ ...entry, outcome: "unknown" }] })).toBe(false);
+      expect(lens({ ...okLens, records: [{ ...entry, event: "" }] })).toBe(false);
+      expect(lens({ ...okLens, records: [{ ...entry, event: 7 }] })).toBe(false);
+      expect(lens({ ...okLens, records: [{ ...entry, t: -1 }] })).toBe(false);
+      expect(lens({ ...okLens, records: [{ ...entry, t: 1.5 }] })).toBe(false);
+      expect(lens({ ...okLens, records: [{ ...entry, t: null }] })).toBe(false);
+      const { t: _t, event: _e, outcome: _o, ...bare } = entry;
+      expect(lens({ ...okLens, records: [bare] })).toBe(true);
     });
     test("a page with has_more needs a cursor; the last page does not (§7.2)", () => {
       const page = validate("parley.page.schema.json");

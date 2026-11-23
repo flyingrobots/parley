@@ -12,6 +12,7 @@ import {
   loadReceipts,
   onFailureSurface,
   digestBytes,
+  digestFor,
   digestLine,
   planQuery,
   queryReceipts,
@@ -1733,7 +1734,9 @@ describe("RD-22 a digest never reads as complete", () => {
       const { dir, env } = scratch();
       seedDays(dir, receipts);
       const answer = answered(await queryReceipts(
-        { asker: { tool: "t" }, view: "everything", window: SEALED, budget: { records: 20, bytes: BYTES } },
+        // The asker states its cwd, so the line does not grow with the length of the machine's
+        // temporary directory and the measured sizes below hold on any machine.
+        { asker: { tool: "t", cwd: "/w" }, view: "everything", window: SEALED, budget: { records: 20, bytes: BYTES } },
         { cwd: dir, env },
       ));
       named.push(answer.digest.records.length);
@@ -1744,14 +1747,15 @@ describe("RD-22 a digest never reads as complete", () => {
       const held = lensRecord(dir, env, answer.run);
       expect(Buffer.byteLength(JSON.stringify(held.record) + "\n", "utf8")).toBe(answer.digestBytes);
     }
-    // A hundredfold more history: the digest names 20 records at 30 receipts and still 20 at 300.
-    expect(named).toEqual([9, 20, 20]);
-    expect(excluded).toEqual([0, 70, 880]);
-    // Measured, not claimed: every line is inside the stated byte bound, and the last two differ
-    // by exactly the one digit the excluded count gained — the line does not grow with history.
-    expect(sizes.map((b) => b <= BYTES)).toEqual([true, true, true]);
-    expect(sizes[1]!).toBeGreaterThan(sizes[0]!);
-    expect(sizes[2]! - sizes[1]!).toBe(1);
+    // A hundredfold more history, and the bytes now cut before the record count does: each entry
+    // carries its summary (flyingrobots/parley#77), about 65 bytes, so 20 of them no longer fit in
+    // 2048. At 30 receipts 16 entries fit, at 2047 bytes; at 300 the excluded count gains a digit,
+    // the sixteenth entry no longer fits beside it, and 15 are named. Measured, not claimed.
+    expect(named).toEqual([9, 16, 15]);
+    expect(excluded).toEqual([0, 74, 885]);
+    expect(sizes).toEqual([1302, 2047, 1940]);
+    // Every line is inside the stated byte bound: the line does not grow with history.
+    expect(sizes.every((b) => b <= BYTES)).toBe(true);
   }, 120_000);
 
   test("the digest on receipts a real tool wrote validates against its schema", async () => {
@@ -1773,7 +1777,9 @@ describe("RD-22 a digest never reads as complete", () => {
     expect(answer.records.length).toBe(2);
     expect(answer.digest.loss).toEqual({ bound: "count-only", excluded: 9 });
     // The failing run's error is what a change purpose puts first, and the digest keeps it.
-    expect(answer.digest.records[0]).toEqual({ run: broke.run, seq: answer.records[0]!.seq });
+    expect(answer.digest.records[0]).toEqual({
+      run: broke.run, seq: answer.records[0]!.seq, event: "error", t: answer.records[0]!.t!, outcome: "failed",
+    });
     expect(answer.records[0]!.run).toBe(broke.run);
 
     const lens = lensRecord(dir, env, answer.run);
@@ -2122,5 +2128,142 @@ describe("RD-23 the least-projected copy", () => {
     expect(counted.copies).toBe(2);
     expect(note.superseded).toEqual([counted.seq]);
     expect(note.withheld).toEqual([byEvent(bundle, "result")!.seq]);
+  });
+});
+
+// ---- RD-50 a summary beside each record a lens names --------------------------------------
+//
+// flyingrobots/parley#77: a lens that names a record by `(run, seq)` alone makes a cold reader
+// open it to learn what it is. Each entry carries the record's `event` and `t`, and the outcome
+// the ranking established for its run, derived from the loaded record when the lens is built. The
+// oracle in every case below is the loader read again afterwards, never the digest's own builder.
+
+/** The keys a lens entry may carry, and no others. */
+const ENTRY_KEYS = new Set(["run", "seq", "event", "t", "outcome"]);
+
+/** Every loaded record in a directory, by `(run, seq)`, as a fresh load reports it. */
+function loadedById(dir: string, env: Record<string, string>): Map<string, LoadedRecord> {
+  const load = loadReceipts({ cwd: dir, env });
+  return new Map(load.bundles.flatMap((b) => b.records).map((r) => [idOf(r), r] as const));
+}
+
+/** The entries of the lens the read left in its own receipt, as the loader reads them back. */
+function heldEntries(dir: string, env: Record<string, string>, run: string): Record<string, unknown>[] {
+  return (lensRecord(dir, env, run).record as { records: Record<string, unknown>[] }).records;
+}
+
+/** Assert each entry's summary is the loaded record's and its run's ranked outcome, and nothing else. */
+function expectSummariesMatch(entries: readonly Record<string, unknown>[], byId: Map<string, LoadedRecord>, outcomes: Readonly<Record<string, string>>) {
+  for (const entry of entries) {
+    const record = byId.get(`${entry.run}:${entry.seq}`);
+    expect(record).toBeDefined();
+    expect(Object.keys(entry).filter((k) => !ENTRY_KEYS.has(k))).toEqual([]);
+    expect(entry.event).toBe(record!.event!);
+    expect(entry.t).toBe(record!.t!);
+    expect(entry.outcome).toBe(outcomes[record!.run]!);
+  }
+}
+
+describe("RD-50 a lens names each record with a summary of it", () => {
+  test("a lens names each real record with the event and t the loader reports", async () => {
+    const { dir, state, env } = scratch();
+    writeFileSync(join(dir, "a.txt"), "hello");
+    const first = realRun(dir, state);
+    symlinkSync(join(dir, "nothing-here"), join(dir, "dangling"));
+    const broke = realRun(dir, state);
+    rmSync(join(dir, "dangling"));
+    const third = realRun(dir, state);
+    expect([first.status, broke.status, third.status]).toEqual([0, 2, 0]);
+
+    const window = { from: 0, to: Date.now() };
+    const answer = answered(await queryReceipts(
+      { asker: { tool: "t", task: "flyingrobots/parley#77" }, view: "what-changed", window },
+      { cwd: dir, env },
+    ));
+    expect(answer.digest.records.length).toBe(11);
+    const byId = loadedById(dir, env);
+    const held = heldEntries(dir, env, answer.run);
+    expect(held).toEqual(answer.digest.records as unknown as Record<string, unknown>[]);
+    expectSummariesMatch(held, byId, answer.ranking.outcomes);
+    // The failing run's error is what a change purpose puts first, and its entry says so without
+    // being opened.
+    expect(held[0]).toEqual({ run: broke.run, seq: answer.records[0]!.seq, event: "error", t: answer.records[0]!.t!, outcome: "failed" });
+    expect(new Set(held.filter((e) => e.run !== broke.run).map((e) => e.outcome))).toEqual(new Set(["succeeded"]));
+    expect(lensRecord(dir, env, answer.run).validation.state).toBe("validated");
+  }, 60_000);
+
+  test("a lens entry's summary cannot drift from the record it names", async () => {
+    for (const view of VIEWS) {
+      const { dir, env } = scratch();
+      const receipts = repoReceipts(dir);
+      richReceipt(receipts, runId(1), T0 - 3 * DAY, "failed");
+      richReceipt(receipts, runId(2), T0 - 2 * DAY, "warned");
+      richReceipt(receipts, runId(3), T0 - DAY);
+      const answer = answered(await queryReceipts({ asker: { tool: "t" }, view, window: SEALED, budget: { records: 8 } }, { cwd: dir, env }));
+      expect(answer.digest.records.length).toBe(8);
+      const held = heldEntries(dir, env, answer.run);
+      expect(held).toEqual(answer.digest.records as unknown as Record<string, unknown>[]);
+      expectSummariesMatch(held, loadedById(dir, env), answer.ranking.outcomes);
+      expect(held.every((e) => typeof e.event === "string" && typeof e.t === "number" && typeof e.outcome === "string")).toBe(true);
+    }
+  });
+
+  test("an undated record is named with no t rather than a made-up one", () => {
+    const run = runId(7);
+    const dated = loaded(run, 1, "receipt.head", T0);
+    const absent: LoadedRecord = { ...loaded(run, 2, "receipt.step", T0 + 1), t: null };
+    const fractional: LoadedRecord = { ...loaded(run, 3, "receipt.step", T0 + 2), t: 1.5 };
+    const unnamed: LoadedRecord = { ...loaded(run, 4, "receipt.step", T0 + 3), event: null };
+    const plan = planQuery({ asker: { tool: "t" }, view: "everything", window: WIDE });
+    if (plan.refused) throw new Error("the plan was refused");
+    const ranking = rankRecords(plan.query, [dated, absent, fractional, unnamed]);
+    const envelope = { run: runId(8), seq: 30, t: T0 + 10 };
+    const digested = digestFor(plan.query, { run: runId(8), seq: 1 }, ranking.records, envelope, ranking.outcomes);
+    const entry = (seq: number) => digested.digest.records.find((e) => e.seq === seq) as unknown as Record<string, unknown>;
+    expect(entry(1)).toEqual({ run, seq: 1, event: "receipt.head", t: T0, outcome: "undetermined" });
+    expect("t" in entry(2)).toBe(false);
+    expect(entry(2).event).toBe("receipt.step");
+    expect("t" in entry(3)).toBe(false);
+    expect("event" in entry(4)).toBe(false);
+    expect(entry(4).t).toBe(T0 + 3);
+    // The line built from those entries is a lens its own schema accepts.
+    const line = JSON.parse(digestLine(digested.digest, envelope)) as Record<string, unknown>;
+    expect(validator().validate(line).state).toBe("validated");
+    // A ranking whose outcomes are not given carries no outcome: nothing is invented to fill it.
+    const bare = digestFor(plan.query, { run: runId(8), seq: 1 }, ranking.records, envelope);
+    expect(bare.digest.records.some((e) => "outcome" in e)).toBe(false);
+  });
+
+  test("a tool-owned event token is carried verbatim", async () => {
+    const { dir, env } = scratch();
+    richReceipt(repoReceipts(dir), runId(1), T0 - DAY);
+    const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "what-changed", window: SEALED }, { cwd: dir, env }));
+    const result = heldEntries(dir, env, answer.run).find((e) => e.seq === 4)!;
+    expect(result).toEqual({ run: runId(1), seq: 4, event: "result", t: T0 - DAY + 3, outcome: "succeeded" });
+    expect(loadedById(dir, env).get(`${runId(1)}:4`)!.validation.state).toBe("unvalidated");
+  });
+
+  test("a lens entry's outcome is the window's, not the digest's prefix's", async () => {
+    const { dir, env } = scratch();
+    const receipts = repoReceipts(dir);
+    seedDays(dir, 3);
+    // A run whose head and step are in the window and whose end is after it.
+    const open = runId(90);
+    const path = join(receipts, `${open}.jsonl`);
+    writeReceipt(receipts, open, [
+      { ...head(open), t: T0 - 10 * DAY },
+      { ...step(open, 2), t: T0 - 10 * DAY + 1 },
+      { ...end(open, 3, path), t: T0 + 2 * DAY },
+    ]);
+    const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: SEALED, budget: { records: 4 } }, { cwd: dir, env }));
+    const held = heldEntries(dir, env, answer.run);
+    expect(held.map((e) => [e.run, e.seq, e.outcome])).toEqual([
+      [open, 1, "undetermined"],
+      [open, 2, "undetermined"],
+      [runId(0), 1, "succeeded"],
+      [runId(0), 2, "succeeded"],
+    ]);
+    // The digest holds none of the first seeded run's `end`, and its entries still say succeeded.
+    expect(held.some((e) => e.run === runId(0) && e.event === "end")).toBe(false);
   });
 });

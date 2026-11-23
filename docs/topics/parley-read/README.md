@@ -24,7 +24,8 @@ suite and `bun run typecheck` checks it strictly, over `src`, `scripts` and `tes
 | `planQuery(request)` | The refusal rules and the budget default, as a pure function: it reads nothing, writes nothing and records nothing |
 | `queryRecord(query)` | The `parley.query` payload for an accepted read, without the envelope the writer owns |
 | `rankRecords(query, records)` | The ranking, as a pure function from an accepted query and records to the same records in one stated order |
-| `digestFor(query, answers, ranked, envelope)` | The bound, as a pure function from an accepted query and a ranking to the digest's `parley.lens` payload, the records it names, the count it excluded and the bytes its line will take |
+| `digestFor(query, answers, ranked, envelope, outcomes?)` | The bound, as a pure function from an accepted query and a ranking to the digest's `parley.lens` payload, the records it names, the count it excluded and the bytes its line will take; `outcomes` is the ranking's per-run verdict, which each entry carries |
+| `lensEntry(record, outcomes?)` | The entry a digest names one record by: its `(run, seq)` and its summary |
 | `digestLine(digest, envelope)`, `digestBytes(digest, envelope)` | The line the writer will write for a digest, and its length in UTF-8 bytes: how a byte budget is applied before the line exists rather than discovered after it |
 | `runOutcomes(records)`, `onViewSurface(view, record)`, `onFailureSurface(record)`, `impliesChange(view)` | The four questions the ranking asks, each answerable on its own |
 | `TIERS`, `OUTCOMES`, `CHANGE_VIEWS` | The three tiers best first, the three outcomes best-known-worst first, and the views that imply a change |
@@ -354,7 +355,37 @@ exact pair. It carries:
 | `window` | The stretch of history the digest was drawn from, echoed verbatim |
 | `budget` | The budget **actually applied**, a default included: two digests under different budgets are not comparable |
 | `loss` | `bound` and `excluded`: what kind of statement the loss is, and how many records the bound left out |
-| `records` | The records the digest names, in rank order, by `(run, seq)` — the way back a drill-down needs ([flyingrobots/parley#51](https://github.com/flyingrobots/parley/issues/51)) |
+| `records` | The records the digest names, in rank order, by `(run, seq)` — the way back a [drill-down](#opening-records-by-identity) takes — each with a [summary](#what-each-entry-says) of the record it names |
+
+### What each entry says
+
+A name alone makes a reader open a record to learn what it is, so each entry also carries a fixed
+summary of the record it names
+([flyingrobots/parley#77](https://github.com/flyingrobots/parley/issues/77)):
+
+```json illustrative
+{"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8","seq":4,"event":"error","t":1795326412352,"outcome":"failed"}
+```
+
+That entry is a fragment of a lens, not a message of its own; the [package README](../../../packages/parley-read/README.md#a-captured-digest)
+holds a captured one.
+
+| Field | Is | Absent when |
+| --- | --- | --- |
+| `run`, `seq` | The record's identity: the way back to it | Never |
+| `event` | The record's event token as the loader read it, a tool's own token such as `result` included verbatim | The record carries no event token |
+| `t` | The record's POSIX milliseconds as the loader read them | The record has no non-negative integer `t`. A made-up one would sort and read as real |
+| `outcome` | `failed`, `undetermined` or `succeeded`: what the window establishes about the record's run, exactly as [the ranking](#what-a-runs-outcome-is-established-from) established it | No ranking outcomes were given to `digestFor` |
+
+The summary is read off the loaded record and the ranking when the digest is built, and from
+nowhere else, so it cannot drift from the record it names: RD-50b checks every entry of every view
+against the loader read again afterwards. The `outcome` is the **window's** verdict, not the
+digest's prefix's: a run whose `end` the bound cut still says `succeeded`, and a run whose `end`
+is outside the window says `undetermined` rather than a guess.
+
+The summary costs bytes, about 65 an entry, and it is part of the line `budget.bytes` bounds. A
+byte budget therefore names fewer records than it did when an entry was only `(run, seq)`: under
+`{records: 20, bytes: 2048}` the digest names 16 records where it named 20 (RD-22b).
 
 ### The bound, exactly
 
@@ -367,7 +398,7 @@ exact pair. It carries:
 A `bytes` budget too small even for a digest naming no records leaves it naming none: the envelope
 and the lens's own fields are not negotiable, because a lens that dropped them would no longer say
 what it is. The bound is applied **before** the line is written — `digestLine` reconstructs the
-line the writer will write, which a case pins against the line the writer really wrote — and it is
+line the writer will write, every entry's summary included, which a case pins against the line the writer really wrote — and it is
 measured against a seq one digit longer than the one the digest will carry, one byte of headroom,
 so that a `warning` the writer raises in between cannot push the line over a stated bound.
 

@@ -380,17 +380,18 @@ Four things in that order are the whole feature:
 
 ## A captured digest
 
-The same three runs, read again with `budget: {"records": 4}` over the day's window on 2026-11-22.
+Three runs of the same kind, made afresh, then one read with `budget: {"records": 4}` over the day's
+window on 2026-11-22.
 Eleven records are in the window and the digest names four of them, so it says `excluded: 7`.
 These are the two lines that read's own receipt holds, byte for byte — `bun run check` validates
 both against the shipped schemas:
 
 ```jsonl
-{"event":"query","t":1795391920147,"seq":2,"run":"01M82V560AR9BD2BEZSAKRR7MJ","asker":{"tool":"claude-code","cwd":"/var/folders/wt/s8clst9955x1l0qblsl4925w0000gn/T/parley-digest-readme.QpEuMA/work","task":"flyingrobots/parley#50"},"view":"what-changed","budget":{"records":4},"window":{"from":1795305520135,"to":1795391920135},"note":"about to change the counter; what has it done here","_schema":{"id":"parley.query","version":"1.0.0"}}
-{"event":"lens","t":1795391920234,"seq":6,"run":"01M82V560AR9BD2BEZSAKRR7MJ","query":{"run":"01M82V560AR9BD2BEZSAKRR7MJ","seq":2},"asker":{"tool":"claude-code","cwd":"/var/folders/wt/s8clst9955x1l0qblsl4925w0000gn/T/parley-digest-readme.QpEuMA/work","task":"flyingrobots/parley#50"},"view":"what-changed","budget":{"records":4},"window":{"from":1795305520135,"to":1795391920135},"loss":{"bound":"count-only","excluded":7},"records":[{"run":"01M82V55XKZSRC6ERNSAG0QJMH","seq":2},{"run":"01M82V55XKZSRC6ERNSAG0QJMH","seq":3},{"run":"01M82V55V1679ZY07B6X3HEVND","seq":3},{"run":"01M82V55ZV6JPSEQ6Q947C9QW0","seq":3}],"_schema":{"id":"parley.lens","version":"1.0.0"}}
+{"event":"query","t":1795396100487,"seq":2,"run":"01M82Z4RBZ4WCPDDVC1AG1RAXS","asker":{"tool":"claude-code","cwd":"/var/folders/wt/s8clst9955x1l0qblsl4925w0000gn/T/parley-digest-readme.TJIiNe/work","task":"flyingrobots/parley#77"},"view":"what-changed","budget":{"records":4},"window":{"from":1795309700476,"to":1795396100476},"note":"about to change the counter; what has it done here","_schema":{"id":"parley.query","version":"1.0.0"}}
+{"event":"lens","t":1795396100562,"seq":6,"run":"01M82Z4RBZ4WCPDDVC1AG1RAXS","query":{"run":"01M82Z4RBZ4WCPDDVC1AG1RAXS","seq":2},"asker":{"tool":"claude-code","cwd":"/var/folders/wt/s8clst9955x1l0qblsl4925w0000gn/T/parley-digest-readme.TJIiNe/work","task":"flyingrobots/parley#77"},"view":"what-changed","budget":{"records":4},"window":{"from":1795309700476,"to":1795396100476},"loss":{"bound":"count-only","excluded":7},"records":[{"run":"01M82Z4R7V2QQBW7MYJ97QSV4P","seq":2,"event":"error","t":1795396100358,"outcome":"failed"},{"run":"01M82Z4R7V2QQBW7MYJ97QSV4P","seq":3,"event":"end","t":1795396100358,"outcome":"failed"},{"run":"01M82Z4R4D072C3B8WCK1JSG85","seq":3,"event":"result","t":1795396100249,"outcome":"succeeded"},{"run":"01M82Z4RBHY464TVHZ9YSVQP63","seq":3,"event":"result","t":1795396100474,"outcome":"succeeded"}],"_schema":{"id":"parley.lens","version":"1.0.0"}}
 ```
 
-That line is 664 bytes. Four things in it are the whole feature:
+That line is 882 bytes. Five things in it are the whole feature:
 
 - **It names the four best-ranked records of eleven**, and nothing else: the failing run's `error`
   and status-2 `end` first, then the two successful runs' `count.result` records. The bound cut the
@@ -401,6 +402,11 @@ That line is 664 bytes. Four things in it are the whole feature:
   count of 0, and the schema refuses the other pairing.
 - **It is the way back.** Each named record is a `(run, seq)` pair, so a drill-down fetches records
   rather than re-deriving them from a result — see [opening what a digest names](#opening-what-a-digest-names).
+- **Each name says what it is.** Beside its `(run, seq)`, every entry carries the record's
+  `event`, its `t` and its run's `outcome`, so a reader sees an `error` and an `end` in a `failed`
+  run and two `result`s in `succeeded` ones without opening any of them
+  (flyingrobots/parley#77). The summary is read off the loaded record, and it counts against
+  `budget.bytes` like the rest of the line.
 
 ## Opening what a digest names
 

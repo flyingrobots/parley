@@ -10,6 +10,12 @@ its manifest so it cannot be published by accident.
 
 ### Added
 
+- **A summary beside each record a digest names** (flyingrobots/parley#77). Each `parley.lens`
+  entry now carries the record's `event` and `t` as the loader read them and the `outcome` the
+  ranking established for its run over the whole window, each absent when the record does not
+  carry it. `lensEntry(record, outcomes?)` builds one; `digestFor` takes the ranking's `outcomes`
+  as a fifth argument and `queryReceipts` passes them. The summary counts against `budget.bytes`:
+  under `{records: 20, bytes: 2048}` a digest that named 20 records now names 15 or 16 (RD-22b).
 - **A byte budget for the drill-down** (flyingrobots/parley#78): `openRecords` accepts
   `budget: { bytes }`. Records open whole, in the order asked, while their summed size (UTF-8 bytes
   of each record's JSON as returned, sidecar contents included) stays within the bound; every id

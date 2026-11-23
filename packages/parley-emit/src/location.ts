@@ -52,10 +52,50 @@ export function bookkeepingFor(cwd: string, env: Record<string, string | undefin
 }
 
 /**
+ * Whether a `.gitignore` line is a negation that can match the directory `receipts` beside it.
+ * With `*` in force nothing under `receipts/` can be staged unless the directory itself is
+ * re-included, because git cannot re-include a file whose parent directory is excluded
+ * (gitignore(5)). Conservative: a pattern this cannot evaluate (an inner `/`, a backslash, a
+ * class no regex accepts) is taken to match, and the match ignores case, as git does where
+ * `core.ignorecase` is set.
+ */
+function negationReachesReceipts(line: string): boolean {
+  if (!line.startsWith("!")) return false;
+  let pat = line.slice(1).replace(/ +$/, "");
+  if (pat.endsWith("/")) pat = pat.slice(0, -1);
+  if (pat.startsWith("/")) pat = pat.slice(1);
+  while (pat.startsWith("**/")) pat = pat.slice(3);
+  if (pat.includes("/") || pat.includes("\\")) return true;
+  try { return new RegExp(`^${globRegex(pat)}$`, "i").test("receipts"); } catch { return true; }
+}
+
+/** One path component's glob as a regex source: `*` and `**` any run, `?` one character, a bracket a class (`!` or `^` negating it); everything else literal. The caller has already refused a backslash. */
+function globRegex(pat: string): string {
+  let out = "";
+  for (let i = 0; i < pat.length; i++) {
+    const c = pat[i]!;
+    if (c === "*") out += ".*";
+    else if (c === "?") out += ".";
+    else if (c === "[") {
+      const j = pat.indexOf("]", i + 2);
+      if (j === -1) { out += "\\["; continue; }
+      let body = pat.slice(i + 1, j);
+      const neg = body.startsWith("!") || body.startsWith("^");
+      if (neg) body = body.slice(1);
+      out += `[${neg ? "^" : ""}${body.replace(/[\]\\]/g, "\\$&")}]`;
+      i = j;
+    } else out += c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+  return out;
+}
+
+/**
  * §5.2: `.parley/.gitignore` containing `*`, create-if-absent and never overwrite. The file is
  * written whole to a temporary name and linked into place, so no process can read it empty.
+ * Null when the file is ours to rely on; otherwise why it is a user's file: no line `*`, or a
+ * negation that can re-include `receipts/` (flyingrobots/parley#109).
  */
-function hygiene(parleyDir: string, nonce: string): "ok" | "users_file" {
+function hygiene(parleyDir: string, nonce: string): string | null {
   mkdirSync(parleyDir, { recursive: true });
   const file = join(parleyDir, ".gitignore");
   if (!existsSync(file)) {
@@ -65,7 +105,9 @@ function hygiene(parleyDir: string, nonce: string): "ok" | "users_file" {
     try { linkSync(tmp, file); } catch (e) { if ((e as NodeJS.ErrnoException).code !== "EEXIST") { unlinkSafe(tmp); throw e; } } finally { unlinkSafe(tmp); }
   }
   const lines = readFileSync(file, "utf8").split(/\r?\n/);
-  return lines.includes("*") ? "ok" : "users_file";
+  if (!lines.includes("*")) return `${file} exists without a line consisting of *`;
+  const negation = lines.find(negationReachesReceipts);
+  return negation === undefined ? null : `${file} has a line consisting of *, but its negation ${negation} can re-include receipts/, where git add would stage a receipt`;
 }
 
 function reserve(receiptDir: string, run: string): { receiptPath: string; fd: number } {
@@ -83,8 +125,9 @@ export function chooseLocation(opts: { cwd: string; run: string; env: Record<str
     warning = { code: "receipt.relocated", problem: "the receipt path under the working directory would carry a declared secret value, so the receipt went to the state directory", remedy: "run from a directory whose path does not contain the secret, or leave the receipt where it went" };
   } else {
     try {
-      if (hygiene(join(cwd, ".parley"), opts.run) === "ok") return { where: "repo", receiptDir: repoDir, ...reserve(repoDir, opts.run) };
-      warning = { code: "receipt.relocated", problem: `${join(cwd, ".parley", ".gitignore")} exists without a line consisting of *, so it is a user's file and was left alone; the receipt went to the state directory`, remedy: "add a line consisting of * to .parley/.gitignore, or leave the receipt where it went" };
+      const why = hygiene(join(cwd, ".parley"), opts.run);
+      if (why === null) return { where: "repo", receiptDir: repoDir, ...reserve(repoDir, opts.run) };
+      warning = { code: "receipt.relocated", problem: `${why}, so it is a user's file and was left alone; the receipt went to the state directory`, remedy: "make .parley/.gitignore a line consisting of * with no negation that can match receipts, or leave the receipt where it went" };
     } catch {
       // The working directory is not usable; fall back silently (the bootstrap line says where).
     }

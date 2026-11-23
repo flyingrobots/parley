@@ -468,10 +468,62 @@ def _unlink_safe(p: str) -> None:
         pass
 
 
-def _hygiene(parley_dir: str, nonce: str) -> bool:
+def _negation_reaches_receipts(line: str) -> bool:
+    """Whether a `.gitignore` line is a negation that can match the directory `receipts` beside
+    it. With `*` in force nothing under `receipts/` can be staged unless the directory itself is
+    re-included, because git cannot re-include a file whose parent directory is excluded
+    (gitignore(5)). Conservative: a pattern this cannot evaluate (an inner `/`, a backslash, a
+    class no regex accepts) is taken to match, and the match ignores case, as git does where
+    `core.ignorecase` is set."""
+    if not line.startswith("!"):
+        return False
+    pat = line[1:].rstrip(" ")
+    if pat.endswith("/"):
+        pat = pat[:-1]
+    if pat.startswith("/"):
+        pat = pat[1:]
+    while pat.startswith("**/"):
+        pat = pat[3:]
+    if "/" in pat or "\\" in pat:
+        return True
+    try:
+        return re.fullmatch(_glob_regex(pat), "receipts", re.IGNORECASE) is not None
+    except re.error:
+        return True
+
+
+def _glob_regex(pat: str) -> str:
+    """One path component's glob as a regex: `*` and `**` any run, `?` one character, a bracket
+    a class (`!` or `^` negating it); everything else literal. The caller has already refused a
+    backslash, so no escape reaches here."""
+    out, i = "", 0
+    while i < len(pat):
+        c = pat[i]
+        if c == "*":
+            out += ".*"
+        elif c == "?":
+            out += "."
+        elif c == "[":
+            j = pat.find("]", i + 2)
+            if j == -1:
+                out += re.escape(c)
+            else:
+                body = pat[i + 1:j]
+                neg = body[:1] in ("!", "^")
+                body = body[1:] if neg else body
+                out += "[" + ("^" if neg else "") + body.replace("]", "\\]") + "]"
+                i = j
+        else:
+            out += re.escape(c)
+        i += 1
+    return out
+
+
+def _hygiene(parley_dir: str, nonce: str) -> Optional[str]:
     """Spec section 5.2: `.parley/.gitignore` holding a line `*`, create-if-absent and never
     overwritten. Written whole to a temporary name and linked into place, so no process reads it
-    empty. True when the file is ours to rely on; False when it is a user's file without `*`."""
+    empty. None when the file is ours to rely on; otherwise why it is a user's file: no line `*`,
+    or a negation that can re-include `receipts/` (flyingrobots/parley#109)."""
     os.makedirs(parley_dir, exist_ok=True)
     f = os.path.join(parley_dir, ".gitignore")
     if not os.path.exists(f):
@@ -489,7 +541,12 @@ def _hygiene(parley_dir: str, nonce: str) -> bool:
             _unlink_safe(tmp)
     with open(f, "r", encoding="utf-8", errors="replace", newline="") as fh:
         lines = re.split(r"\r?\n", fh.read())
-    return "*" in lines
+    if "*" not in lines:
+        return f"{f} exists without a line consisting of *"
+    for line in lines:
+        if _negation_reaches_receipts(line):
+            return f"{f} has a line consisting of *, but its negation {line} can re-include receipts/, where git add would stage a receipt"
+    return None
 
 
 def _reserve(receipt_dir: str, run: str) -> Tuple[str, int]:
@@ -511,10 +568,11 @@ def _choose_location(cwd: str, run: str, env: Mapping[str, str], home: Optional[
         warning = {"code": "receipt.relocated", "problem": "the receipt path under the working directory would carry a declared secret value, so the receipt went to the state directory", "remedy": "run from a directory whose path does not contain the secret, or leave the receipt where it went"}
     else:
         try:
-            if _hygiene(os.path.join(cwd, ".parley"), run):
+            why = _hygiene(os.path.join(cwd, ".parley"), run)
+            if why is None:
                 path, fd = _reserve(repo_dir, run)
                 return _Location("repo", repo_dir, path, fd)
-            warning = {"code": "receipt.relocated", "problem": f"{os.path.join(cwd, '.parley', '.gitignore')} exists without a line consisting of *, so it is a user's file and was left alone; the receipt went to the state directory", "remedy": "add a line consisting of * to .parley/.gitignore, or leave the receipt where it went"}
+            warning = {"code": "receipt.relocated", "problem": f"{why}, so it is a user's file and was left alone; the receipt went to the state directory", "remedy": "make .parley/.gitignore a line consisting of * with no negation that can match receipts, or leave the receipt where it went"}
         except OSError:
             pass  # the working directory is not usable; fall back silently (the bootstrap line says where)
     try:
@@ -960,6 +1018,7 @@ class Run:
         self._deferred: List[Tuple[str, BaseException]] = []
         self._inputs_settled = False
         self._supplied: Dict[str, bytes] = {}
+        self._unread: Dict[str, str] = {}
         self._final: Optional[int] = None
         self._renderer_failed = False
         self._renderer_warning: Optional[str] = None
@@ -1052,20 +1111,25 @@ class Run:
             return f"{ev} {obj.get('code')}: {obj.get('problem')}{remedy}\n"
         return f"{ev}: {_dumps(obj)}\n"
 
-    def _scrub_payload(self, payload: Record, found: List[str], writer: bool) -> Record:
-        rest = {k: v for k, v in payload.items() if k != "event"}
+    def _scrub_payload(self, payload: Record, found: List[str], writer: bool, verbatim: Optional[str] = None) -> Record:
+        """Scrub everything but the event name and, for a writer-built record, the one field
+        named by `verbatim`: the schema document of a `schema` line, a static declaration a
+        secret cannot reach (spec section 5.3, flyingrobots/parley#111)."""
+        rest = {k: v for k, v in payload.items() if k != "event" and k != verbatim}
         scrubbed = scrub(rest, self._secrets, "", found, DIGEST_KEYS if writer else None, not writer)
+        if verbatim is not None and verbatim in payload:
+            scrubbed = {**scrubbed, verbatim: payload[verbatim]}
         return scrubbed if "event" not in payload else {"event": payload["event"], **scrubbed}
 
     def _emit(self, to: Mapping[str, bool], payload: Record, schema: SchemaRef, receipt_extra: Optional[Record] = None,
-              writer: bool = False, no_sidecar: bool = False, defer: bool = False) -> int:
+              writer: bool = False, no_sidecar: bool = False, defer: bool = False, verbatim: Optional[str] = None) -> int:
         with self._lock:
             if self._closed:
                 raise ParleyClosed()
             self._refuse_envelope_keys(payload, "a record")
             self._refuse_envelope_keys(receipt_extra, "receipt_extra")
             found: List[str] = []
-            scrubbed = self._scrub_payload(payload, found, writer)
+            scrubbed = self._scrub_payload(payload, found, writer, verbatim if writer else None)
             extra_found: List[str] = []
             extra = self._scrub_payload(receipt_extra, extra_found, writer) if receipt_extra else None
             # Serialise before taking a seq: a record that is not JSON is the tool's error, raised to
@@ -1147,8 +1211,8 @@ class Run:
             if not self._closed:
                 self._report_sink_failure(sink, e)
 
-    def _describe(self, record: Record, schema: SchemaRef) -> int:
-        return self._emit({"stdout": True, "receipt": True}, record, schema, writer=True)
+    def _describe(self, record: Record, schema: SchemaRef, verbatim: Optional[str] = None) -> int:
+        return self._emit({"stdout": True, "receipt": True}, record, schema, writer=True, verbatim=verbatim)
 
     def writer_warning(self, code: str, problem: str, **fields: Any) -> int:
         """A warning the writer itself raises; its code is the writer's own identifier and is not
@@ -1196,6 +1260,31 @@ class Run:
     def input(self, path: str, data: Union[bytes, str]) -> None:
         """Supply the bytes of a declared input the writer cannot read itself, such as stdin."""
         self._supplied[path] = data.encode("utf-8") if isinstance(data, str) else bytes(data)
+        self._unread.pop(path, None)
+
+    def input_unreadable(self, path: str, code: str = "input.unreadable") -> None:
+        """Say that the program could not read a declared input, so the writer records it with
+        `error` and no digest, and omits `inv`, rather than reading the path itself at
+        finalisation and digesting bytes the program never saw (spec section 2.2,
+        flyingrobots/parley#110). Refused for a path that is not a declared input, and once the
+        inputs are settled."""
+        with self._lock:
+            if self._closed:
+                raise ParleyClosed()
+            if self._inputs_settled:
+                raise ValueError("the inputs are already settled; call input_unreadable before finalise_inputs or end (spec section 2.2)")
+            if not any(i["path"] == path for i in self._inputs):
+                raise ValueError(f"{path!r} is not a declared input of this run")
+            if not isinstance(code, str) or not CODE.match(code):
+                raise ValueError(f"code {code!r} is not two or more dot-separated lowercase segments (spec section 6)")
+            self._supplied.pop(path, None)
+            self._unread[path] = code
+
+    def _descriptor(self, decl: Mapping[str, Any]) -> Record:
+        code = self._unread.get(decl["path"])
+        if code is None:
+            return digest_input(self.cwd, decl, self._supplied.get(decl["path"]))
+        return {"path": decl["path"], **({"role": decl["role"]} if decl.get("role") else {}), "error": code}
 
     def finalise_inputs(self) -> List[Record]:
         """Digest the declared inputs and emit `receipt.inputs`, with `inv` when every input was
@@ -1205,7 +1294,7 @@ class Run:
                 self._inputs_settled = True
                 return []
             self._inputs_settled = True
-            raw = [digest_input(self.cwd, i, self._supplied.get(i["path"])) for i in self._inputs]
+            raw = [self._descriptor(i) for i in self._inputs]
             inputs = scrub(raw, self._secrets, "", [], DIGEST_KEYS, False)
             inv = compute_inv(self.tool, self.v, self._command, self._resolved, inputs)
             payload: Record = {"event": "receipt.inputs", "inputs": inputs}
@@ -1567,7 +1656,7 @@ def _discover(run: Run, tool: Tool, discovery: str, command_name: Optional[str],
         if doc is None:
             run.warning("schema.unavailable", f"no schema document for {sid}@{ver}", remedy="declare the schema on the emitted type")
             continue
-        run._describe({"event": "schema", "id": sid, "version": ver, "schema": doc}, SCHEMA_IDS["schema"])
+        run._describe({"event": "schema", "id": sid, "version": ver, "schema": doc}, SCHEMA_IDS["schema"], verbatim="schema")
     run.end(0)
 
 
@@ -1624,29 +1713,56 @@ def _retain(run: Run, tool_name: str, receipt_dir: str, count: int, dry_run: boo
     if excess <= 0:
         return
     candidates = sorted((m for m in mine if m[1] != f"{run.id}.jsonl"), key=lambda m: (m[0], m[1]))
-    victims: List[str] = []
-    for mtime, name in candidates:
+    # The scan orders the candidates; each decision re-observes its receipt, because another run
+    # can append between the scan and here (flyingrobots/parley#112). The observation is kept and
+    # compared again just before the unlink.
+    victims: List[Tuple[str, Tuple[int, int]]] = []
+    for _, name in candidates:
         if len(victims) >= excess:
             break
-        if _has_ended(os.path.join(receipt_dir, name)) or at - mtime > _INCOMPLETE_GRACE_MS:
-            victims.append(name)
+        p = os.path.join(receipt_dir, name)
+        seen = _observe(p)
+        if seen is None:
+            continue
+        if _has_ended(p) or at - seen[1] / 1e6 > _INCOMPLETE_GRACE_MS:
+            victims.append((name, seen))
     total = len(mine)
     if not victims:
         run.step("retention: nothing to delete", f"{total} receipts of {tool_name} exceed its retention count of {count}, but every excess receipt is still in flight (no end line yet); only completed bundles, or incomplete ones older than a day, are deleted (spec section 5.1)")
         return
     if dry_run:
-        run.step(f"retention: would delete {len(victims)} receipt bundle(s)", f"{total} receipts of {tool_name} exceed its retention count of {count}; a dry run performs no retention deletion (spec section 4.3)", {"receipts": victims})
+        run.step(f"retention: would delete {len(victims)} receipt bundle(s)", f"{total} receipts of {tool_name} exceed its retention count of {count}; a dry run performs no retention deletion (spec section 4.3)", {"receipts": [n for n, _ in victims]})
         return
     deleted: List[str] = []
-    for name in victims:
-        base = name[: -len(".jsonl")]
+    for name, seen in victims:
+        p = os.path.join(receipt_dir, name)
+        if _observe(p) != seen:
+            continue  # it moved since the decision: its run may be alive (flyingrobots/parley#112)
+        # One bundle (spec section 5): the sidecars go only once the receipt is gone, so a
+        # receipt that cannot be unlinked keeps its records (flyingrobots/parley#113).
         try:
-            _unlink_safe(os.path.join(receipt_dir, name))
-            _rmtree(os.path.join(receipt_dir, base))
-            deleted.append(name)
+            os.unlink(p)
+            ours = True
+        except FileNotFoundError:
+            ours = False  # another run deleted it first; its sidecars still go
         except OSError:
-            pass  # a bundle another run is deleting
+            continue
+        try:
+            _rmtree(os.path.join(receipt_dir, name[: -len(".jsonl")]))
+        except OSError:
+            continue  # a bundle another run is deleting
+        if ours:
+            deleted.append(name)
     run.step(f"retention: deleted {len(deleted)} receipt bundle(s)", f"{total} receipts of {tool_name} exceeded its retention count of {count}; the oldest completed bundles of this tool are deleted with their sidecars, and no other tool's receipts are counted or touched (spec section 5.1)", {"receipts": deleted})
+
+
+def _observe(p: str) -> Optional[Tuple[int, int]]:
+    """A receipt's size and mtime in nanoseconds, or None when it is gone."""
+    try:
+        st = os.stat(p)
+    except OSError:
+        return None
+    return st.st_size, st.st_mtime_ns
 
 
 def _rmtree(p: str) -> None:

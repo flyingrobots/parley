@@ -70,7 +70,7 @@ export interface RunInit {
 }
 
 type SinkName = "stdout" | "stderr" | "receipt";
-interface Emit { to: { stdout?: boolean; stderr?: boolean; receipt?: boolean }; writer?: boolean; noSidecar?: boolean; deferFailures?: boolean }
+interface Emit { to: { stdout?: boolean; stderr?: boolean; receipt?: boolean }; writer?: boolean; noSidecar?: boolean; deferFailures?: boolean; verbatim?: string }
 
 export class Run {
   readonly id: string; readonly tool: string; readonly v: string; readonly session?: string;
@@ -92,6 +92,7 @@ export class Run {
   private deferred: { sink: SinkName; error: unknown }[] = [];
   private inputsSettled = false;
   private supplied = new Map<string, Uint8Array>();
+  private unread = new Map<string, string>();
   private finalStatus: number | null = null;
   private readonly init: RunInit;
 
@@ -350,9 +351,17 @@ export class Run {
   }
 
   /** Scrub a payload's values; `event` is envelope, named by the writer or the tool's schema, and is never a secret. */
-  private scrubPayload(payload: Record_, found: string[], writer: boolean): Record_ {
-    const { event, ...rest } = payload;
-    const scrubbed = scrub(rest, this.init.secretValues, "", found, writer ? { skipKeys: DIGEST_KEYS, scalars: false } : {}) as Record_;
+  /**
+   * Scrub everything but the event name and, for a writer-built record, the one field named by
+   * `verbatim`: the schema document of a `schema` line, a static declaration a secret cannot reach
+   * (§5.3, flyingrobots/parley#111).
+   */
+  private scrubPayload(payload: Record_, found: string[], writer: boolean, verbatim?: string): Record_ {
+    const { event, ...all } = payload;
+    const rest: Record_ = { ...all };
+    if (verbatim !== undefined) delete rest[verbatim];
+    let scrubbed = scrub(rest, this.init.secretValues, "", found, writer ? { skipKeys: DIGEST_KEYS, scalars: false } : {}) as Record_;
+    if (verbatim !== undefined && verbatim in all) scrubbed = { ...scrubbed, [verbatim]: all[verbatim] };
     return event === undefined ? scrubbed : { event, ...scrubbed };
   }
 
@@ -364,7 +373,7 @@ export class Run {
     if (this.closed) throw new ParleyClosed();
     this.refuseEnvelopeKeys(payload, "a record"); this.refuseEnvelopeKeys(receiptExtra, "receiptExtra");
     const found: string[] = [];
-    const scrubbed = this.scrubPayload(payload, found, how.writer === true);
+    const scrubbed = this.scrubPayload(payload, found, how.writer === true, how.writer === true ? how.verbatim : undefined);
     const extraFound: string[] = [];
     const extra = receiptExtra ? this.scrubPayload(receiptExtra, extraFound, how.writer === true) : undefined;
     const at = this.next();
@@ -454,7 +463,7 @@ export class Run {
   head(fields: Record_): void { this.emit({ to: { receipt: true }, writer: true, noSidecar: true }, { event: "receipt.head", ...fields }, SCHEMA_IDS.head); }
 
   /** Internal: a discovery line (§4.1), a writer-built record describing public identity. */
-  describe(record: Record_, schema: SchemaRef): number { return this.emit({ to: { stdout: true, receipt: true }, writer: true }, record, schema); }
+  describe(record: Record_, schema: SchemaRef, verbatim?: string): number { return this.emit({ to: { stdout: true, receipt: true }, writer: true, ...(verbatim !== undefined ? { verbatim } : {}) }, record, schema); }
 
   /** A result: to stdout and the receipt. `receiptExtra` goes to the receipt copy only. */
   result(record: Record_, schema: SchemaRef, receiptExtra?: Record_): number {
@@ -499,13 +508,32 @@ export class Run {
   /** Supply the bytes of a declared input the writer cannot read itself, such as stdin. */
   input(path: string, bytes: Uint8Array | string): void {
     this.supplied.set(path, typeof bytes === "string" ? Buffer.from(bytes, "utf8") : bytes);
+    this.unread.delete(path);
+  }
+
+  /**
+   * Say that the program could not read a declared input, so the writer records it with `error`
+   * and no digest, and omits `inv`, rather than reading the path itself at finalisation and
+   * digesting bytes the program never saw (§2.2, flyingrobots/parley#110). Refused for a path
+   * that is not a declared input, and once the inputs are settled.
+   */
+  inputUnreadable(path: string, code = "input.unreadable"): void {
+    if (this.closed) throw new ParleyClosed();
+    if (this.inputsSettled) throw new TypeError("the inputs are already settled; call inputUnreadable before finaliseInputs or end (spec §2.2)");
+    if (!this.init.inputs.some((i) => i.path === path)) throw new TypeError(`${JSON.stringify(path)} is not a declared input of this run`);
+    if (!CODE.test(code)) throw new TypeError(`code ${JSON.stringify(code)} is not two or more dot-separated lowercase segments (spec §6)`);
+    this.supplied.delete(path);
+    this.unread.set(path, code);
   }
 
   /** Digest the declared inputs and emit `receipt.inputs` with `inv` once settled (§2.2). Idempotent; `end` calls it. */
   finaliseInputs(): InputDescriptor[] {
     if (this.inputsSettled || this.init.inputs.length === 0) { this.inputsSettled = true; return []; }
     this.inputsSettled = true;
-    const raw = this.init.inputs.map((i) => digestInput(this.cwd, i, this.supplied.get(i.path)));
+    const raw = this.init.inputs.map((i): InputDescriptor => {
+      const code = this.unread.get(i.path);
+      return code === undefined ? digestInput(this.cwd, i, this.supplied.get(i.path)) : { path: i.path, ...(i.role ? { role: i.role } : {}), error: code };
+    });
     // The preimage and the record both take the redacted descriptors (§2.2: no secret value in inv).
     const inputs = scrub(raw, this.init.secretValues, "", [], { skipKeys: DIGEST_KEYS, scalars: false }) as InputDescriptor[];
     const inv = computeInv({ tool: this.tool, v: this.v, command: this.init.command, resolved: this.init.resolved, inputs });

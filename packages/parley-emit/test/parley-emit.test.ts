@@ -1685,6 +1685,16 @@ describe("PE-25 refuseSuspectedSecrets", () => {
     expect(warningsOf(bad, "history.transform_failed").length).toBe(1);
     expect(bad.objs.some((o) => o.event === "receipt.step" && o.decision === "counted the things")).toBe(false);
 
+    // Nor can a non-string problem or remedy: a warning whose problem is a number does not
+    // validate, and stderr and the receipt have no re-validation behind them (§4.5).
+    const typed = await projected((rec) => (rec.decision === "counted the things" ? ({ [Symbol.for("parley.history.refusal")]: true, code: "policy.off_timeline", problem: 5, remedy: 7 } as unknown as Record<string, unknown>) : rec), (run) => {
+      run.step("counted the things", "the stream need not carry this");
+      run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" });
+    });
+    expect(typed.violations).toEqual([]);
+    expect(warningsOf(typed, "history.transform_failed").length).toBe(1);
+    expect(typed.stderr.objs.every((o) => o.event !== "warning" || typeof o.problem === "string")).toBe(true);
+
     // And a refusal whose code carries a declared secret value is itself refused: a diagnostic's
     // code is the one string the writer does not scrub (§5.3).
     const { dir, env, hist } = historyScratch();

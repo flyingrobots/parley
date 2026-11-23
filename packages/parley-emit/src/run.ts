@@ -268,15 +268,18 @@ export class Run {
    * Two things are checked first, because a warning's `code` is the one string the writer does
    * not scrub (§5.3) and an unusable one would be a withheld line with no warning at all:
    *
-   *   - A `code` that is not spec §6's shape, or an empty `problem`, is the transform being
-   *     broken, which is `history.transform_failed` like any other way of being broken.
+   *   - A `code` that is not spec §6's shape, a `problem` that is empty, or either of them not a
+   *     string at all, is the transform being broken, which is `history.transform_failed` like
+   *     any other way of being broken. A `remedy` that is not a string is dropped rather than
+   *     emitted, because a `warning` whose `remedy` is a number does not validate (§4.5) and the
+   *     stream is not the only copy: stderr and the receipt have no re-validation behind them.
    *   - A `code` carrying a declared secret value would disclose it on stderr and in the
    *     receipt, so the refusal is itself refused: `history.transform_unredacted`, the same code
    *     a body that restored a replaced value gets. The `problem` and `remedy` are scrubbed like
    *     any other tool-supplied string, so they need no check of their own.
    */
   private refused(r: HistoryRefusal, seq: number, p: HistoryProjection): void {
-    if (!CODE.test(r.code) || !r.problem) {
+    if (typeof r.code !== "string" || typeof r.problem !== "string" || !CODE.test(r.code) || !r.problem) {
       this.withhold({ code: "history.transform_failed", problem: `the history transform ${p.name} refused seq ${seq} with ${JSON.stringify(r.code)} and ${JSON.stringify(r.problem)}, which are not a code of two or more dot-separated lowercase segments and a non-empty problem; that line is not on the shared stream and the refusal could not be reported under its own code`, remedy: "build the refusal with refuse(code, problem), which checks both at the point they are written (spec §6)" });
       return;
     }
@@ -284,7 +287,7 @@ export class Run {
       this.withhold({ code: "history.transform_unredacted", problem: `the history transform ${p.name} refused seq ${seq} under a code carrying a declared secret value; a diagnostic's code is never scrubbed, so neither that line nor that refusal's code reaches any stream`, remedy: "refuse under a code the transform chose, not one built from a value it was handed (spec §5.3)" });
       return;
     }
-    this.withhold({ code: r.code, problem: r.problem, ...(r.remedy === undefined ? {} : { remedy: r.remedy }) });
+    this.withhold({ code: r.code, problem: r.problem, ...(typeof r.remedy === "string" ? { remedy: r.remedy } : {}) });
   }
 
   /**

@@ -14,6 +14,9 @@
 //   §5    a sidecar stands in a record's place; its path is relative to the receipt's directory and
 //         must not leave it; `bytes` and `sha256` describe the stored bytes; a sidecar found missing
 //         or mismatched makes the bundle unavailable for replay.
+//   §8    a copy of a run on the shared history stream may be a projection of the receipt copy, and
+//         a reader that finds the same record in more than one copy prefers the least-projected one,
+//         because the receipt copy is the record and a projection is a view of it.
 //
 // What this module does not do: query, rank, or recompute `inv`. It hands back what the receipts
 // say, with each claim labelled by how well it is established (§1.2a).
@@ -22,16 +25,16 @@ import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { sha256 } from "@flyingrobots/parley-emit";
 import { readFileLines } from "./lines.ts";
 import { isFile, receiptLocations, type LocateOptions, type ReceiptLocation, type Where } from "./locate.ts";
-import { validator, type Validation, type Validator } from "./validate.ts";
+import { ENVELOPE, validator, type Validation, type Validator } from "./validate.ts";
 
 // ---- what a load reports ------------------------------------------------------------------
 
 export type DefectCode =
   | "line.quarantined" | "line.blank" | "line.no_envelope" | "line.unterminated"
-  | "record.invalid" | "record.unknown_pair" | "copies.disagree"
+  | "record.invalid" | "record.unknown_pair" | "copies.disagree" | "copies.projected_disagree"
   | "sidecar.missing" | "sidecar.unreadable" | "sidecar.digest_mismatch"
   | "sidecar.bytes_mismatch" | "sidecar.escapes_bundle" | "sidecar.unparseable"
-  | "receipt.unreadable";
+  | "receipt.unreadable" | "history.unreadable";
 
 /** The quarantine codes: a kept line that is not a record (§1.4, §5.4). */
 export const QUARANTINE_CODES: ReadonlySet<DefectCode> = new Set<DefectCode>([
@@ -75,6 +78,34 @@ export interface SidecarResolution {
   readonly actual?: { readonly bytes: number; readonly sha256: string };
 }
 
+/**
+ * A copy of this run that says it is a **projection** of the receipt copy (§8): the source it came
+ * from opened that run with a `parley.history.transform` line naming the transform that wrote it.
+ * One note per source, whether or not any body differed — that a copy you read is a view of the
+ * record is worth knowing either way.
+ */
+export interface Projection {
+  /** The file whose copy of this run is a projection. */
+  readonly file: string;
+  readonly where: Where;
+  /** What the transform is called, as its `parley.history.transform` line states it. */
+  readonly name: string;
+  /** SHA-256 of the transform's source text, as that line states it. */
+  readonly sha256: string;
+  /** The `seq` the transform line itself took; it reaches no other sink, so no other copy has it (§8). */
+  readonly seq: number;
+  /** The `seq` values where this copy's body differed from the record and the record was returned instead. */
+  readonly superseded: readonly number[];
+  /**
+   * The `seq` values a copy of this run read elsewhere carries and this copy does not: lines this
+   * transform withheld, rather than a gap of unknown cause. A `seq` the copy accounted for with a
+   * `sidecar` event is carried, not withheld (§5).
+   */
+  readonly withheld: readonly number[];
+  /** True when no unprojected copy of this run was read, so the records returned are this projection's. */
+  readonly sole: boolean;
+}
+
 export interface LoadedRecord {
   readonly run: string;
   readonly seq: number;
@@ -88,6 +119,13 @@ export interface LoadedRecord {
   readonly copies: number;
   /** True when the record was stored beside the receipt and restored from there (§5). */
   readonly fromSidecar: boolean;
+  /**
+   * True when every copy of this event came from a source carrying a `parley.history.transform`
+   * line for this run, so the body is a projection's and no whole copy was read (§8).
+   */
+  readonly projected: boolean;
+  /** The transforms whose copies this body came from, named; empty when the body is an unprojected copy's. */
+  readonly projectedBy: readonly string[];
   readonly record: Record<string, unknown>;
   readonly validation: Validation;
 }
@@ -114,6 +152,8 @@ export interface Bundle {
   /** One record per `(run, seq)`, ascending by `seq`. */
   readonly records: readonly LoadedRecord[];
   readonly sidecars: readonly SidecarResolution[];
+  /** The copies of this run that said they were projections, one note per source (§8). */
+  readonly projections: readonly Projection[];
   /** The kept lines that are not records, attributed to this run (§1.4). */
   readonly quarantined: readonly Defect[];
   /** Everything wrong that was found, quarantines included. */
@@ -172,7 +212,14 @@ export interface ReadOptions {
   readonly validate?: Validator;
 }
 
-export interface LoadOptions extends LocateOptions, ReadOptions {}
+export interface LoadOptions extends LocateOptions, ReadOptions {
+  /**
+   * Segments of the shared history stream to read beside the receipts (§8). The stream is opt-in
+   * and this reader never goes looking for it: a caller that has one names it, and a segment it
+   * names but cannot open is a `history.unreadable` defect rather than a throw.
+   */
+  readonly history?: readonly string[];
+}
 
 // ---- scanning one file --------------------------------------------------------------------
 
@@ -182,7 +229,14 @@ interface Raw {
   readonly run: string;
   readonly seq: number;
   readonly obj: Record<string, unknown>;
+  /** Set when the source this line came from is a projection of this line's run (§8). */
+  readonly projection?: Transform;
 }
+
+/** What a source's `parley.history.transform` line says about one run's copy in it (§8). */
+type Transform = Pick<Projection, "file" | "where" | "name" | "sha256" | "seq">;
+
+interface Note extends Transform { superseded: number[]; withheld: number[]; sole: boolean }
 
 interface Scan {
   readonly raw: Raw[];
@@ -228,7 +282,32 @@ function scan(file: string): Scan {
   return { raw, lines: lines.length, quarantined };
 }
 
-/** The run a receipt's file name names (§5: `<run>.jsonl`). */
+const text = (v: unknown): string => (typeof v === "string" ? v : "");
+const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
+/**
+ * Mark the lines of every run this source opened with a `parley.history.transform` line (§8).
+ *
+ * The line is **per run**, so one segment can hold a projected copy of one run beside a whole copy
+ * of another, and the mark is read out of the source's own content rather than from where the file
+ * is, so the preference below never depends on which file was read first. A second such line for
+ * one run in one source is not a second projection: the first names the copy, and the second is a
+ * copy of a `(run, seq)` like any other line.
+ */
+function markProjections(raw: readonly Raw[], file: string, where: Where): readonly Raw[] {
+  const found = new Map<string, Transform>();
+  for (const r of raw) {
+    if (r.obj.event !== "history.transform" || found.has(r.run)) continue;
+    found.set(r.run, { file, where, name: text(r.obj.name), sha256: text(r.obj.sha256), seq: r.seq });
+  }
+  if (found.size === 0) return raw;
+  return raw.map((r) => {
+    const projection = found.get(r.run);
+    return projection === undefined ? r : { ...r, projection };
+  });
+}
+
+/** The run a receipt's file name names (§5: `<run>.jsonl`). A stream segment's name names a date, not a run. */
 function runOfFileName(file: string): string | null {
   const name = basename(file);
   return name.endsWith(".jsonl") ? name.slice(0, -".jsonl".length) || null : null;
@@ -252,6 +331,8 @@ interface Held {
   line: number;
   copies: number;
   fromSidecar: boolean;
+  /** The transforms whose copies this body came from; empty while a copy from an unprojected source is held. */
+  projectedBy: string[];
 }
 
 /**
@@ -259,10 +340,10 @@ interface Held {
  * contributes the fields it alone carries, and a disagreement on a shared field is a defect in the
  * writer rather than a second event.
  */
-function fold(held: Map<number, Held>, seq: number, obj: Record<string, unknown>, file: string, line: number, run: string, defects: Defect[], fromSidecar: boolean): void {
+function fold(held: Map<number, Held>, seq: number, obj: Record<string, unknown>, file: string, line: number, run: string, defects: Defect[], fromSidecar: boolean, projectedBy: readonly string[] = []): void {
   const seen = held.get(seq);
   if (!seen) {
-    held.set(seq, { base: { ...obj }, file, line, copies: 1, fromSidecar });
+    held.set(seq, { base: { ...obj }, file, line, copies: 1, fromSidecar, projectedBy: [...projectedBy] });
     return;
   }
   seen.copies += 1;
@@ -273,6 +354,25 @@ function fold(held: Map<number, Held>, seq: number, obj: Record<string, unknown>
       defects.push(defect("copies.disagree", "§1.3", file, line, `seq ${seq}: copies of one event disagree on ${key}`, { run }));
     }
   }
+}
+
+/**
+ * Two copies are the same record when they carry the same keys with the same values. Key order is
+ * not part of a record, and a projection is rebuilt key by key before the writer reattaches the
+ * envelope, so a difference in order must not be read as a difference in the record (§1.3).
+ */
+function same(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
+  const keys = Object.keys(a);
+  if (keys.length !== Object.keys(b).length) return false;
+  return keys.every((k) => k in b && stable(a[k]) === stable(b[k]));
+}
+
+/** JSON with every object's keys in order, so two values compare by what they hold. */
+function stable(v: unknown): string {
+  if (v === null || typeof v !== "object") return JSON.stringify(v) ?? "null";
+  if (Array.isArray(v)) return `[${v.map(stable).join(",")}]`;
+  const entries = Object.entries(v as Record<string, unknown>).sort(([x], [y]) => cmp(x, y));
+  return `{${entries.map(([k, x]) => `${JSON.stringify(k)}:${stable(x)}`).join(",")}}`;
 }
 
 function within(dir: string, path: string): string | null {
@@ -327,10 +427,81 @@ function resolveSidecar(seq: number, held: Held, read: boolean): { resolution: S
 
 const SIDECAR_SECTION = "§5";
 
+const ENVELOPE_KEYS: ReadonlySet<string> = new Set<string>(ENVELOPE);
+
+function envelopeDefect(key: string, r: Raw, run: string): Defect {
+  return defect("copies.disagree", "§1.3", r.file, r.line, `seq ${r.seq}: a projected copy disagrees with the record on ${key}, which a projection never changes`, { run });
+}
+
+/**
+ * Fold the projected copies over the records already held, and return one note per source (§8).
+ *
+ * The preference: where a copy from an unprojected source is already held, that body is the record
+ * and a projected copy that differs from it is **superseded** — recorded as the projection it is,
+ * by the transform that wrote it, rather than reported as a writer's disagreement under §1.3. A
+ * `seq` no unprojected copy carries is taken from the projected copies and marked as theirs, so a
+ * reader that can see only a projection still gets the record and is told what it is.
+ *
+ * Two projected copies of one `(run, seq)` are the edge the rule cannot settle: neither is the
+ * less projected one. They are folded under §1.3 as copies, in an order stated by the transform's
+ * name, its digest and the file — never the order the files were read in, which is the failure
+ * mode this rule exists to remove — and a disagreement between them on a body field is reported
+ * under its own code, because two views of one record were never required to agree.
+ *
+ * §8 lets a projection narrow the **body**. It never changes the envelope, so a projected copy
+ * that disagrees on `event`, `t` or `_schema` is §1.3's defect in whatever wrote it and is
+ * reported as one, whichever copy the preference returned.
+ */
+function foldProjections(run: string, raw: readonly Raw[], held: Map<number, Held>, defects: Defect[], sole: boolean): Note[] {
+  const projected = raw
+    .filter((r): r is Raw & { projection: Transform } => r.projection !== undefined)
+    .sort((a, b) =>
+      cmp(a.projection.name, b.projection.name) || cmp(a.projection.sha256, b.projection.sha256) ||
+      cmp(a.projection.file, b.projection.file) || a.line - b.line);
+  const notes = new Map<string, Note>();
+  for (const r of projected) {
+    let note = notes.get(r.projection.file);
+    if (note === undefined) {
+      note = { ...r.projection, superseded: [], withheld: [], sole };
+      notes.set(r.projection.file, note);
+    }
+    const seen = held.get(r.seq);
+    if (seen === undefined) {
+      held.set(r.seq, { base: { ...r.obj }, file: r.file, line: r.line, copies: 1, fromSidecar: false, projectedBy: [r.projection.name] });
+      continue;
+    }
+    seen.copies += 1;
+    if (seen.projectedBy.length === 0) {
+      for (const key of ENVELOPE) {
+        if (!(key in r.obj) || !(key in seen.base) || stable(seen.base[key]) === stable(r.obj[key])) continue;
+        defects.push(envelopeDefect(key, r, run));
+      }
+      if (!same(seen.base, r.obj) && !note.superseded.includes(r.seq)) note.superseded.push(r.seq);
+      continue;
+    }
+    if (!seen.projectedBy.includes(r.projection.name)) seen.projectedBy.push(r.projection.name);
+    for (const [key, value] of Object.entries(r.obj)) {
+      if (!(key in seen.base)) { seen.base[key] = value; continue; }
+      if (stable(seen.base[key]) === stable(value)) continue;
+      defects.push(ENVELOPE_KEYS.has(key)
+        ? envelopeDefect(key, r, run)
+        : defect("copies.projected_disagree", "§8", r.file, r.line, `seq ${r.seq}: two projections of one event disagree on ${key}, and neither copy is the less projected one, so neither is preferred`, { run }));
+    }
+  }
+  return [...notes.values()];
+}
+
 function buildBundle(run: string, raw: readonly Raw[], sources: readonly BundleSource[], quarantined: readonly Defect[], opts: Required<Pick<ReadOptions, "sidecars" | "validate">>): Bundle {
   const defects: Defect[] = [...quarantined];
   const held = new Map<number, Held>();
-  for (const r of raw) fold(held, r.seq, r.obj, r.file, r.line, run, defects, false);
+
+  // §8: the receipt copy is the record and a projection is a view of it. So the copies from the
+  // sources that say nothing about a transform are folded first and alone, under §1.3 as before,
+  // and a projected copy never contributes a field to them — a view of a record cannot add to it.
+  const whole = raw.filter((r) => r.projection === undefined);
+  for (const r of whole) fold(held, r.seq, r.obj, r.file, r.line, run, defects, false);
+
+  const notes = foldProjections(run, raw, held, defects, whole.length === 0);
 
   // Sidecars stand in a record's place: resolve them, then fold the record each one holds back in
   // at the `seq` it names, so a caller reading the records does not have to know where a record
@@ -345,7 +516,20 @@ function buildBundle(run: string, raw: readonly Raw[], sources: readonly BundleS
       defects.push(defect(`sidecar.${resolution.state}` as DefectCode, SIDECAR_SECTION, entry.file, entry.line, sidecarProblem(resolution), { run, source: resolution.source >= 0 ? resolution.source : undefined }));
       continue;
     }
-    if (stored) fold(held, resolution.source, stored, entry.file, entry.line, run, defects, true);
+    if (stored) fold(held, resolution.source, stored, entry.file, entry.line, run, defects, true, entry.projectedBy);
+  }
+
+  // Which `seq` values this run is known by at all, the projections' own opening lines aside: a
+  // line that reaches the stream alone is not one any other copy could be withholding (§8).
+  const known = [...held.entries()]
+    .filter(([, e]) => e.base.event !== "history.transform")
+    .map(([seq]) => seq);
+  for (const note of notes) {
+    const own = raw.filter((r) => r.projection?.file === note.file);
+    const carried = new Set(own.map((r) => r.seq));
+    const stored = new Set(own.filter((r) => r.obj.event === "sidecar" && Number.isInteger(r.obj.source)).map((r) => r.obj.source as number));
+    note.withheld = known.filter((seq) => !carried.has(seq) && !stored.has(seq)).sort((a, b) => a - b);
+    note.superseded.sort((a, b) => a - b);
   }
 
   const records: LoadedRecord[] = [...held.entries()]
@@ -362,6 +546,7 @@ function buildBundle(run: string, raw: readonly Raw[], sources: readonly BundleS
         event: typeof entry.base.event === "string" ? entry.base.event : null,
         t: Number.isInteger(entry.base.t) ? (entry.base.t as number) : null,
         file: entry.file, line: entry.line, copies: entry.copies, fromSidecar: entry.fromSidecar,
+        projected: entry.projectedBy.length > 0, projectedBy: [...entry.projectedBy],
         record: entry.base, validation,
       };
     });
@@ -384,7 +569,7 @@ function buildBundle(run: string, raw: readonly Raw[], sources: readonly BundleS
   const duplicates = raw.length + sidecars.filter((s) => s.state === "intact" && opts.sidecars).length - records.length;
 
   return {
-    run, sources, records, sidecars,
+    run, sources, records, sidecars, projections: notes,
     quarantined: defects.filter((d) => QUARANTINE_CODES.has(d.code)),
     defects,
     duplicates: duplicates < 0 ? 0 : duplicates,
@@ -418,19 +603,30 @@ export function readReceiptFile(file: string, opts: ReadOptions = {}): FileRead 
   const where = opts.where ?? "other";
   const path = resolve(file);
   const scanned = scan(path);
-  const fileRun = runOfFileName(path);
-  const runs = [...new Set(scanned.raw.map((r) => r.run))].sort();
+  const raw = markProjections(scanned.raw, path, where);
+  const fileRun = where === "history" ? null : runOfFileName(path);
+  const runs = [...new Set(raw.map((r) => r.run))].sort();
   const quarantined = attribute(scanned.quarantined, runs, fileRun);
   const bundles = runs.map((run) =>
     buildBundle(
       run,
-      scanned.raw.filter((r) => r.run === run),
+      raw.filter((r) => r.run === run),
       [{ where, receipt: path }],
       quarantined.filter((q) => q.run === run),
       settled,
     ),
   );
   return { file: path, where, run: fileRun, lines: scanned.lines, runs, quarantined, bundles };
+}
+
+/**
+ * Read one segment of the shared history stream (§8): a file holding whole runs from every tool
+ * that wrote to it, so it yields one bundle per run, and a copy in it may be a projection of the
+ * receipt copy. It is `readReceiptFile` under the `history` label, because a segment is the same
+ * bytes under the same reader rules; what differs is that its name names a date rather than a run.
+ */
+export function readHistorySegment(file: string, opts: ReadOptions = {}): FileRead {
+  return readReceiptFile(file, { ...opts, where: "history" });
 }
 
 /**
@@ -447,33 +643,46 @@ export function loadReceipts(opts: LoadOptions = {}): Load {
   const quarantined: Defect[] = [];
   const loose: Defect[] = [];
 
+  // One file that cannot be opened is reported, not thrown: a load over a repository's history
+  // should not lose the other bundles to it.
+  const take = (file: string, where: Where): void => {
+    const fileRun = where === "history" ? null : runOfFileName(file);
+    let scanned: Scan;
+    try { scanned = scan(file); } catch (e) {
+      const what = where === "history" ? "the history segment" : "the receipt";
+      const code: DefectCode = where === "history" ? "history.unreadable" : "receipt.unreadable";
+      const problem = `${what} could not be read: ${e instanceof Error ? e.message : String(e)}`;
+      loose.push(defect(code, where === "history" ? "§8" : "§5", file, 0, problem, { run: fileRun }));
+      files.push({ file, where, run: fileRun, lines: 0, runs: [], quarantined: [] });
+      return;
+    }
+    const raw = markProjections(scanned.raw, file, where);
+    const runs = [...new Set(raw.map((r) => r.run))].sort();
+    const attributed = attribute(scanned.quarantined, runs, fileRun);
+    files.push({ file, where, run: fileRun, lines: scanned.lines, runs, quarantined: attributed });
+    quarantined.push(...attributed);
+    for (const run of runs) {
+      push(rawByRun, run, raw.filter((r) => r.run === run));
+      push(sourcesByRun, run, [{ where, receipt: file }]);
+      push(quarantinedByRun, run, attributed.filter((q) => q.run === run));
+    }
+  };
+
   for (const location of locations) {
     if (!location.present) continue;
     for (const name of readdirSync(location.dir).sort()) {
       if (!name.endsWith(".jsonl")) continue;
       const file = join(location.dir, name);
       if (!isFile(file)) continue;
-      // One receipt that cannot be opened is reported, not thrown: a load over a repository's
-      // history should not lose the other bundles to it.
-      let scanned: Scan;
-      try { scanned = scan(file); } catch (e) {
-        const problem = `the receipt could not be read: ${e instanceof Error ? e.message : String(e)}`;
-        const reported = defect("receipt.unreadable", "§5", file, 0, problem, { run: runOfFileName(file) });
-        loose.push(reported);
-        files.push({ file, where: location.where, run: runOfFileName(file), lines: 0, runs: [], quarantined: [] });
-        continue;
-      }
-      const runs = [...new Set(scanned.raw.map((r) => r.run))].sort();
-      const attributed = attribute(scanned.quarantined, runs, runOfFileName(file));
-      files.push({ file, where: location.where, run: runOfFileName(file), lines: scanned.lines, runs, quarantined: attributed });
-      quarantined.push(...attributed);
-      for (const run of runs) {
-        push(rawByRun, run, scanned.raw.filter((r) => r.run === run));
-        push(sourcesByRun, run, [{ where: location.where, receipt: file }]);
-        push(quarantinedByRun, run, attributed.filter((q) => q.run === run));
-      }
+      take(file, location.where);
     }
   }
+
+  // The shared stream is opt-in and this reader never goes looking for it (§8): a caller that has
+  // a segment names it, and it is read after the receipts, so a projected copy is folded over the
+  // record rather than the other way round. Which copy wins does not depend on that order — the
+  // preference is by the transform line — but the order is stated rather than incidental.
+  for (const named of opts.history ?? []) take(resolve(named), "history");
 
   const bundles = [...rawByRun.keys()].sort().map((run) =>
     buildBundle(run, rawByRun.get(run)!, sourcesByRun.get(run)!, quarantinedByRun.get(run) ?? [], settled),

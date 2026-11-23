@@ -430,7 +430,7 @@ export async function queryReceipts(request: QueryRequest, opts: QueryOptions = 
       { view: query.view, window: query.window, budget: query.budget, budget_defaulted: query.budgetDefaulted },
     );
 
-    const load = loadReceipts({ cwd, env, ...(opts.home === undefined ? {} : { home: opts.home }), ...(opts.sidecars === undefined ? {} : { sidecars: opts.sidecars }), ...(opts.validate === undefined ? {} : { validate: opts.validate }) });
+    const load = loadReceipts({ cwd, env, ...(opts.home === undefined ? {} : { home: opts.home }), ...(opts.sidecars === undefined ? {} : { sidecars: opts.sidecars }), ...(opts.validate === undefined ? {} : { validate: opts.validate }), ...(opts.history === undefined ? {} : { history: opts.history }) });
     const all = load.bundles.flatMap((b) => b.records);
     const own = all.filter((r) => r.run === run.id);
     const others = all.filter((r) => r.run !== run.id);

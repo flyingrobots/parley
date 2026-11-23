@@ -49,6 +49,20 @@ A receipt file the loader cannot open at all is reported as a `receipt.unreadabl
 name, throws instead. Passing `sidecars: false` skips sidecar resolution and reports each sidecar
 `unchecked` — never `intact`, since nothing about its stored bytes was established.
 
+A segment of the shared history stream (§8) is read beside the receipts when a caller names one,
+and never looked for otherwise, because the stream is opt-in and the format never requires it:
+
+```ts
+const load = loadReceipts({ cwd: "/work/site", history: ["/var/lib/parley/history/2026-11-22.jsonl"] });
+```
+
+A copy of a run on that stream may be a **projection** of the receipt copy, so where two copies of
+one `(run, seq)` differ the loader returns the one from the source that carries no
+`parley.history.transform` line for that run and records the other as a projection — by name, by
+the digest of the transform's source text, and by which `seq` values it superseded or withheld.
+`readHistorySegment(path)` reads one segment on its own. The rule, and the two edges it has, are
+[the living reference](../../docs/topics/parley-read/README.md#the-least-projected-copy).
+
 ## A captured load
 
 Two runs of the writer's own `count` example in one directory, then one `loadReceipts` over it, on
@@ -105,6 +119,56 @@ The `result` at `seq: 3` is `count.result`, a type this reader ships no schema f
 validate against another (§4.6), so it is returned and reported as unvalidated — two of them
 across the two runs, which is where `counts.unvalidated` comes from. The four `parley.*` lines in
 each receipt were validated against the schema for their exact advertised pair.
+
+## A captured projection
+
+The same `count` example once more, on 2026-11-22, with a transform on its history sink that
+drops a step's `detail` and withholds the `result` altogether: the stream copy carries what ran,
+not what the run looked at. The segment it appended to is named for the UTC day, so the file is
+`2026-11-23.jsonl`. The receipt is untouched, and the stream copy opens by saying what it is:
+
+```jsonl
+{"event":"history.transform","t":1795392112424,"seq":1,"run":"01M82VB1S1W9PX56H9N0XZ4RTC","name":"what-ran","sha256":"1e40e80ba99445be0f933b8628c34eeef8883a28037a9998161af8b91dfcc00a","_schema":{"id":"parley.history.transform","version":"1.0.0"}}
+```
+
+That line's `seq: 1` is the stream's alone, which is why this run's receipt starts at `seq: 2`. The
+step at `seq: 4` is where the two copies part — the receipt's first, then the stream's:
+
+```jsonl
+{"event":"receipt.step","t":1795392112425,"seq":4,"run":"01M82VB1S1W9PX56H9N0XZ4RTC","decision":"counted 2 regular file(s)","because":"only regular files count","detail":{"names":["a.txt","b.txt"]},"_schema":{"id":"parley.receipt.step","version":"1.0.0"}}
+{"event":"receipt.step","t":1795392112425,"seq":4,"run":"01M82VB1S1W9PX56H9N0XZ4RTC","decision":"counted 2 regular file(s)","because":"only regular files count","_schema":{"id":"parley.receipt.step","version":"1.0.0"}}
+```
+
+One `loadReceipts` over the working directory, handed that segment, returns the receipt's bodies
+and one note. A `Projection` is a fragment of a JavaScript value and not a protocol message, so it
+carries no `_schema`:
+
+```json illustrative
+{
+  "file": "/var/folders/wt/s8clst9955x1l0qblsl4925w0000gn/T/parley-projection-3mcGOu/history/2026-11-23.jsonl",
+  "where": "history",
+  "name": "what-ran",
+  "sha256": "1e40e80ba99445be0f933b8628c34eeef8883a28037a9998161af8b91dfcc00a",
+  "seq": 1,
+  "superseded": [4],
+  "withheld": [5],
+  "sole": false
+}
+```
+
+The six records it came back with, projected to what this page is about:
+
+| `seq` | `event` | `copies` | `projected` | |
+| --- | --- | --- | --- | --- |
+| 1 | `history.transform` | 1 | yes | the stream's opening line, a record of its own, validated against `parley.history.transform` 1.0.0 |
+| 2 | `receipt.head` | 2 | no | identical in both copies |
+| 3 | `receipt.step` | 2 | no | the writer's own note that the stream copy is a projection, and which `seq` its opening line took |
+| 4 | `receipt.step` | 2 | no | **the receipt's body, with its `detail`.** The stream's narrowed copy is superseded |
+| 5 | `result` | 1 | no | withheld from the stream, so the receipt's copy is the only one there was |
+| 6 | `end` | 2 | no | identical in both copies |
+
+No defects. `superseded: [4]` and `withheld: [5]` say exactly what the projection did, and nothing
+in the answer is a narrowed body.
 
 ## Making a read
 
@@ -377,6 +441,7 @@ view, a window and at least one id, and then writes nothing.
 | `runOutcomes`, `onViewSurface`, `onFailureSurface`, `impliesChange`, `TIERS`, `OUTCOMES`, `CHANGE_VIEWS` | The parts of that order, each answerable on its own |
 | `VIEWS`, `DEFAULT_BUDGET`, `QUERY_SCHEMA`, `LENS_SCHEMA`, `NO_RETENTION` | The five view tokens, the one documented budget default, the two pairs a read emits, and the retention policy a read states |
 | `readReceiptFile(path, opts)` | One receipt file; a file holding more than one run yields one bundle per run |
+| `readHistorySegment(path, opts)` | One segment of the shared stream (§8), the same way; a copy in it may be a projection of the receipt copy |
 | `receiptLocations(opts)`, `repoReceiptDir`, `stateReceiptDir` | Where receipts are, present or absent; creates nothing |
 | `LineBuffer`, `splitLines`, `readFileLines` | Newline buffering: bytes in, complete lines out, the unterminated tail kept apart (§1.4, §5.4) |
 | `validator(schemas?)`, `schemaRef`, `envelopeGaps` | Exact-pair validation and the version-independent core (§4.5, §4.6) |
@@ -390,6 +455,7 @@ view, a window and at least one id, and then writes nothing.
 | Both locations, present or absent | §5: the writer falls back to the state directory, so a reader that looks in one place sees half the history |
 | Records in `seq` order, one per `(run, seq)` | §1.3: a run holds one counter, and copies of one event are one event |
 | A copy's extra fields folded in, a disagreement as a defect | §1.3: a copy may carry fields another omits, but copies must agree on every field they share |
+| The copy from the source with no transform line for the run, and the other as a `Projection` | §8: the receipt copy is the record and a projection is a view of it, so a reader prefers the least-projected copy it can see — and says what the other one was, and which `seq` it withheld |
 | A stray line quarantined, kept, attributed to the run | §1.4: kept and reported, and evidence of nothing but the fact that something wrote it |
 | An unterminated final line ignored, including a parseable `end` | §5.4: it is not a line, so it cannot establish termination |
 | `validated`, `invalid`, `partial`, `unvalidated` per record | §4.5: full validation is against the exact pair, and "the part I recognise passed" is never "the contract passed" |
@@ -408,6 +474,9 @@ secret, whether its `inv` matches — is the caller's to decide, and this reader
   names only what it kept, so the drill-down opens those; the excluded tail is a wider read, and "not within your
   budget, and here is the budget that would do it" is something `parley.lens` 1.0.0 cannot say
   (flyingrobots/parley#71).
+- Apply a transform at read time. It prefers the least-projected copy it can see and names the
+  projection it passed over; re-projecting a record for an asker is
+  flyingrobots/parley#59's.
 - Recompute `inv` or any semantic digest (§7.1). It checks a sidecar's stored bytes against the
   digest the receipt declared, and nothing else.
 - Judge conformance. The doctor under `scripts/` names violated rules; this is a loader, and a

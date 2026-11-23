@@ -17,7 +17,7 @@ suite and `bun run typecheck` checks it strictly, over `src`, `scripts` and `tes
 
 | Export | Job |
 | --- | --- |
-| `loadReceipts(opts)` | Every run in both receipt locations for a working directory, as bundles; `opts` takes `cwd`, `env`, `home`, `sidecars` and a `validate` validator |
+| `loadReceipts(opts)` | Every run in both receipt locations for a working directory, as bundles; `opts` takes `cwd`, `env`, `home`, `sidecars`, a `validate` validator and `history`, the stream segments to read beside the receipts |
 | `queryReceipts(request, opts)` | A read: refused without an asker, a view and a window, else recorded as a `parley.query` event through the writer and answered with a **digest** — the window's records ordered by the view, cut at the budget, and a `parley.lens` record saying what the cut left out; `opts` takes the loader's options plus `tool`, `stdout`, `stderr`, `session` and `now` |
 | `openRecords(request, opts)` | A drill-down: refused without an asker, a view, a window and at least one `(run, seq)`, else recorded as a `parley.query` event naming the ids and answered with **one outcome per id** — the record in full, a sidecar's contents included, and the bundle's replay ruling; `opts` as for `queryReceipts` |
 | `planOpen(request)`, `openOne(id, bundles)` | The drill-down's refusal rules as a pure function, and one id resolved against loaded bundles, reading nothing further |
@@ -30,6 +30,7 @@ suite and `bun run typecheck` checks it strictly, over `src`, `scripts` and `tes
 | `TIERS`, `OUTCOMES`, `CHANGE_VIEWS` | The three tiers best first, the three outcomes best-known-worst first, and the views that imply a change |
 | `VIEWS`, `DEFAULT_BUDGET`, `QUERY_SCHEMA`, `LENS_SCHEMA`, `NO_RETENTION` | The five view tokens, the one documented budget default (`{"records": 20}`), the two pairs a read emits, and the retention policy a read states |
 | `readReceiptFile(path, opts)` | One receipt file, as a `FileRead`: its line count, the runs it holds, its quarantined lines and one bundle per run |
+| `readHistorySegment(path, opts)` | One segment of the shared history stream (§8), the same way: a file of whole runs from every tool that wrote to it, one bundle per run |
 | `receiptLocations(opts)`, `repoReceiptDir(cwd)`, `stateReceiptDir(opts)` | Where receipts are for a working directory, each location reported present or absent |
 | `LineBuffer`, `splitLines`, `readFileLines`, `CHUNK_BYTES` | Newline buffering: bytes in, complete lines out, the unterminated tail kept apart |
 | `validator(schemas?)`, `schemaRef`, `envelopeGaps`, `ENVELOPE`, `PROTOCOL_PREFIX` | Exact-pair validation, and the version-independent core a partial check uses |
@@ -47,13 +48,14 @@ bundles to one unreadable file. `readReceiptFile`, which is given one path by na
 instead.
 
 A `Bundle` is one run: the `sources` it was read from, its `records` (one per `(run, seq)`,
-ascending), its resolved `sidecars`, its `quarantined` lines, every `defect` found, how many extra
-copies were folded in, whether it `terminated`, its `status`, whether it is `redacted`, and
-`replay`.
+ascending), its resolved `sidecars`, the `projections` among its copies, its `quarantined` lines,
+every `defect` found, how many extra copies were folded in, whether it `terminated`, its `status`,
+whether it is `redacted`, and `replay`.
 
 A `LoadedRecord` carries the `run` and `seq` that identify the event, its `event` and `t`, the
-`file` and `line` the first copy was read from, how many `copies` carried it, whether it came
-`fromSidecar`, the `record` itself, and a `validation`.
+`file` and `line` the preferred copy was read from, how many `copies` carried it, whether it came
+`fromSidecar`, whether the body is `projected` and `projectedBy` which transforms, the `record`
+itself, and a `validation`.
 
 A `validation` is one of four states, and the distinction is the point (§1.2a: a reader must not
 take one kind of evidence for another):
@@ -128,11 +130,87 @@ cannot close a run.
 one record: the first copy is the record, a later copy contributes the fields it alone carries
 (§1.3 lets the receipt copy be the fuller one), and a disagreement on a shared field is reported
 as a `copies.disagree` defect rather than becoming a second event. `copies` says how many lines
-carried the event, and `duplicates` counts the extras folded in.
+carried the event, and `duplicates` counts the extras folded in. Copies that differ because one of
+them is a **projection** of the other are not that case; they are the next section.
 
 Two consequences fall out of this. A file holding the lines of two runs — two runs interleaved on
 one stream — comes back as two bundles, each with its own records. And a bundle copied into both
 locations comes back as one bundle naming two sources, with its records not doubled.
+
+## The least-projected copy
+
+Spec §8 lets a copy of a run on the shared history stream be a **projection** of the receipt copy
+rather than the whole of it — a path, a hostname or a repository name that is fine in a local
+receipt can be wrong on a timeline other people and tools read — and asks a reader that finds the
+same record in more than one copy to prefer the least-projected one, "because the receipt copy is
+the record and a projection is a view of it".
+
+A copy says it is a projection by opening with a `parley.history.transform` line naming the
+transform that wrote it and the SHA-256 of that transform's source text. That line names **one
+run**, and the loader reads it out of the source's own content: one segment can hold a projected
+copy of one run beside a whole copy of another, and which copy is preferred never depends on which
+file was read first.
+
+The rule, per `(run, seq)`:
+
+| The copies read | What comes back |
+| --- | --- |
+| Only copies from sources carrying no transform line for the run | §1.3 as before: one record, a field one copy alone carries folded in, a disagreement a `copies.disagree` defect |
+| Such a copy and a projected copy identical to it | one record, `copies: 2`, like any pair of identical copies — and a note, because that one copy was a view of it is worth knowing either way |
+| Such a copy and a projected copy that differs | the unprojected copy's body, whole. The projected one is **superseded** and listed on its note; it contributes no field, because a view of a record cannot add to the record |
+| Only projected copies, all by one transform | that body, `projected: true`, with `projectedBy` naming the transform |
+| Only projected copies, by different transforms | §1.3's fold over them in a stated order — the transform's name, then its digest, then the file — with every transform named on the record and a disagreement reported as `copies.projected_disagree` |
+
+§8 lets a projection narrow the **body**; it never changes the envelope. A projected copy that
+disagrees with the record on `event`, `t` or `_schema` is therefore §1.3's defect in whatever wrote
+it — a `copies.disagree`, reported whichever copy the preference returned — and only a disagreement
+on a body field between two projections is `copies.projected_disagree`.
+
+A `seq` an unprojected copy carries and a projected copy does not is **withheld** by that
+transform. It is on the note by number, so it is not a gap of unknown cause, and a `seq` the
+projected copy accounted for with a `sidecar` event is carried rather than withheld (§5).
+
+A projection is **not a defect**: narrowing what reaches a shared timeline is what a transform is
+for, so `defects` stays what could not be read or could not be validated, and each projected copy
+is a note beside it, one per source.
+
+| `Projection` | Is |
+| --- | --- |
+| `file`, `where` | The source whose copy of this run is a projection |
+| `name`, `sha256` | The transform, as its opening line names it and digests its source text |
+| `seq` | The `seq` that opening line took. It reaches no other sink, so no other copy has a line there |
+| `superseded` | The `seq` values where this copy's body differed and the record was returned instead |
+| `withheld` | The `seq` values a copy of this run read elsewhere carries and this one does not |
+| `sole` | No unprojected copy of this run was read, so the records returned are this projection's |
+
+The opening line is a record in its own right, at the one `seq` only the stream carries. It is
+validated against `parley.history.transform` 1.0.0 like any other `parley.*` line, and it is
+marked `projected`, because no unprojected copy of it exists or could.
+
+### Handing the loader a segment
+
+§8's dependency runs one way and the stream is opt-in, so this reader never goes looking for a
+segment. A caller that has one names it:
+
+```ts
+const load = loadReceipts({ cwd: "/work/site", history: ["/var/lib/parley/history/2026-11-22.jsonl"] });
+for (const bundle of load.bundles) {
+  for (const p of bundle.projections) console.log(bundle.run, p.name, p.superseded, p.withheld);
+}
+```
+
+A read takes the same option — `queryReceipts(request, { cwd, history })` — and passes it to
+the loader, so a read sees exactly the copies a load would. Segments are read after both receipt
+locations, which changes nothing about the preference and makes the order stated rather than
+incidental. `readHistorySegment(path)` reads one on its own,
+under the same reader rules as a receipt: a segment holds whole runs from every tool that wrote to
+it, so it yields one bundle per run, and its file name names a date rather than a run, so a
+quarantined line in it is attributed only when the segment holds exactly one run. A segment named
+but unopenable is a `history.unreadable` defect in `load.defects` rather than a throw, for the
+same reason an unreadable receipt is.
+
+`BundleSource.receipt` names the file a copy was read from, so for a segment it is the segment;
+the field is older than the stream.
 
 ## Sidecars
 

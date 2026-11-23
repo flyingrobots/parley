@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 import { doctor } from "../../../scripts/doctor.ts";
-import { checkRecord, defineTool, main, schemaSubsetGap, SCHEMA_SOURCE, SCHEMAS, transformDigest, ulid, writeWholeLine, historyDays, HISTORY_DEFAULT_DAYS, HISTORY_MAX_DAYS, type HistoryTransform, type MainOptions, type Run, type Sink, type ToolSpec } from "../src/index.ts";
+import { checkRecord, defineTool, main, schemaSubsetGap, SCHEMA_SOURCE, SCHEMAS, transformDigest, ulid, writeWholeLine, historyDays, declaredProjection, findSuspectedSecret, isHistoryRefusal, refuse, refuseSuspectedSecrets, SECRET_PATTERNS, HISTORY_DEFAULT_DAYS, HISTORY_MAX_DAYS, type HistoryTransform, type MainOptions, type Run, type Sink, type ToolSpec } from "../src/index.ts";
 import { inspectSegment } from "../../../scripts/doctor.ts";
 
 const SCHEMAS_DIR = resolve(import.meta.dir, "../../../schemas");
@@ -1528,4 +1528,292 @@ describe("PE-23 the history sink's transform", () => {
     expect(plainVs.filter((v) => v.event === "doctor.gap")).toEqual([]);
     expect(plainVs.at(-1)).toMatchObject({ event: "doctor.segment", runs: 1, projected: 0, gaps: 0, passed: true });
   });
+});
+
+// ---- PE-25: refuseSuspectedSecrets (flyingrobots/parley#60) --------------------------------
+// Declared redaction cannot catch a secret nobody declared. The built-in withholds a line whose
+// body matches one of a documented list of token shapes and says so under its own code. It
+// refuses rather than rewrites, so a false positive costs one stream line and never a changed
+// receipt, and it never scans the envelope, which is the writer's.
+
+/**
+ * One positive and one negative sample per shipped pattern, assembled from fragments so no
+ * token-shaped literal is committed — which is also what a planted test token is. The negative
+ * is the same shape with one thing wrong, and must match no pattern at all.
+ */
+const SAMPLES: Record<string, { yes: string; no: string }> = {
+  "aws.access_key_id": { yes: "AKIA" + "IOSFODNN7EXAMPLE", no: "AKIA" + "iosfodnn7example" },
+  "github.token": { yes: "ghp_" + "0123456789abcdefghij0123456789abcdef", no: "ghp_" + "0123456789abcdef" },
+  "github.fine_grained_pat": { yes: "github_pat_" + "0123456789abcdefghijkl" + "_" + "0123456789012345678901234567890123456789012345678901234567A", no: "github_pat_" + "0123456789abcdefghijkl" },
+  "slack.token": { yes: "xoxb-" + "123456789012-1234567890123-abcdefghijklmnopqrstuvwx", no: "xoxb-" + "abc" },
+  "google.api_key": { yes: "AIza" + "0123456789012345678901234567890123A", no: "AIza" + "0123456789012345678" },
+  "pem.private_key": { yes: "-----BEGIN RSA PRIVATE KEY-----", no: "-----BEGIN CERTIFICATE-----" },
+  "jwt": { yes: "eyJ" + "hbGciOiJIUzI1NiJ9" + "." + "eyJzdWIiOiJ0ZXN0In0" + "." + "c2lnbmF0dXJlLXBsYWNlaG9sZGVy", no: "eyJ" + "hbGciOiJIUzI1NiJ9" + "." + "eyJzdWIiOiJ0ZXN0In0" },
+  "http.bearer_token": { yes: "Bearer " + "abcdefghijklmnopqrstuvwxyz0123", no: "Bearer " + "short" },
+  "npm.token": { yes: "npm_" + "0123456789abcdefghij0123456789abcdef", no: "npm_" + "token" },
+  "stripe.live_key": { yes: "sk_live_" + "0123456789abcdef", no: "sk_test_" + "0123456789abcdef" },
+};
+
+/** The planted token of the definition of done: GitHub-shaped, the right length, clearly fake. */
+const PLANTED = SAMPLES["github.token"]!.yes;
+
+const stepRecord = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+  event: "receipt.step", t: 1795390370294, seq: 5, run: "01M82SNWFCYTA4NZ7K43TESPAT",
+  decision: "counted the things", because: "only regular files count",
+  _schema: { id: "parley.receipt.step", version: "1.0.0" }, ...over,
+});
+
+describe("PE-25 refuseSuspectedSecrets", () => {
+  test("every shipped pattern has a positive and a negative sample, and each behaves", () => {
+    expect(Object.keys(SAMPLES).sort()).toEqual(SECRET_PATTERNS.map((p) => p.name).sort());
+    expect(SECRET_PATTERNS.length).toBe(Object.keys(SAMPLES).length);
+    for (const p of SECRET_PATTERNS) {
+      expect(p.why.length).toBeGreaterThan(0);
+      expect(() => new RegExp(p.regex)).not.toThrow();
+      const { yes, no } = SAMPLES[p.name]!;
+      const hit = findSuspectedSecret(stepRecord({ detail: { value: yes } }));
+      expect(hit).toEqual({ pattern: p.name, at: "/detail/value" });
+      // The negative is not merely unmatched by its own pattern: no pattern claims it.
+      expect(findSuspectedSecret(stepRecord({ detail: { value: no } }))).toBeNull();
+    }
+  });
+
+  test("a planted token is withheld from the stream, kept in the receipt and named by seq", async () => {
+    const r = await projected(refuseSuspectedSecrets(), (run) => {
+      run.step("read the credential", "the token is the thing under test", { token: PLANTED });
+      run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" });
+    });
+    expect(r.status).toBe(0);
+    expect(r.violations).toEqual([]);
+    const planted = r.receiptLines.find((o) => o.decision === "read the credential")!;
+    expect((planted.detail as Record<string, unknown>).token).toBe(PLANTED);
+    expect(r.objs.some((o) => o.seq === planted.seq)).toBe(false);
+    expect(r.text.includes(PLANTED)).toBe(false);
+    const warns = warningsOf(r, "history.suspected_secret");
+    expect(warns.length).toBe(1);
+    expect(String(warns[0]!.problem)).toContain(`seq ${String(planted.seq)}`);
+    expect(String(warns[0]!.problem)).toContain("github.token");
+    expect(r.receiptLines.some((o) => o.event === "warning" && o.code === "history.suspected_secret")).toBe(true);
+    // The warning is projected like any other line, so a refusal cannot hide its own warning.
+    expect(r.objs.some((o) => o.event === "warning" && o.code === "history.suspected_secret")).toBe(true);
+    // PE-25j: the warning names the shape and the pointer, never the matched text.
+    expect(r.stderr.text.includes(PLANTED)).toBe(false);
+    expect(String(warns[0]!.problem)).toContain("/detail/token");
+  });
+
+  test("it refuses and never rewrites: the receipt copy is the run that had no transform", async () => {
+    const body = (run: Run) => {
+      run.step("read the credential", "the token is the thing under test", { token: PLANTED });
+      run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" });
+    };
+    const r = await projected(refuseSuspectedSecrets(), body);
+    const bare = await projected((rec) => rec, body);
+    // The same receipt, line for line, but for the one warning the refusal adds: the projection
+    // narrows the stream and the receipt is whatever it would have been (§8, informative).
+    const shape = (lines: Record<string, unknown>[]) => lines
+      .filter((o) => !(o.event === "warning" && o.code === "history.suspected_secret"))
+      .filter((o) => !(o.event === "receipt.step" && String(o.decision).startsWith("the shared stream's copy")))
+      .map((o) => o.event);
+    expect(shape(r.receiptLines)).toEqual(shape(bare.receiptLines));
+    const bodyOf = (lines: Record<string, unknown>[]) => { const { t: _t, seq: _s, run: _r, ...rest } = lines.find((o) => o.decision === "read the credential")!; return rest; };
+    expect(bodyOf(r.receiptLines)).toEqual(bodyOf(bare.receiptLines));
+    expect(r.receipt.includes(PLANTED)).toBe(true);
+    expect(r.receipt.includes("[redacted]")).toBe(false);
+    // Nothing partial, truncated or masked reaches the stream either: the line is simply absent.
+    expect(r.text.includes(PLANTED.slice(0, 12))).toBe(false);
+  });
+
+  test("a token split across two keys passes, and so does one in an object key", () => {
+    const halves = stepRecord({ detail: { a: "ghp_" + "0123456789abcdefghij", b: "0123456789abcdef" } });
+    expect(findSuspectedSecret(halves)).toBeNull();
+    const asKey = stepRecord({ detail: { [PLANTED]: 1 } });
+    expect(findSuspectedSecret(asKey)).toBeNull();
+  });
+
+  test("a legitimate value that matches a pattern costs one withheld stream line", async () => {
+    // The documented cost of refusing rather than rewriting: this is a commit message quoting a
+    // key id, not a credential, and it is still kept off the shared timeline.
+    const r = await projected(refuseSuspectedSecrets(), (run) => {
+      run.step("quoted a key id in prose", `the rotation ticket names ${SAMPLES["aws.access_key_id"]!.yes}`, { quoted: SAMPLES["aws.access_key_id"]!.yes });
+      run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" });
+    });
+    expect(r.status).toBe(0);
+    expect(r.violations).toEqual([]);
+    expect(warningsOf(r, "history.suspected_secret").length).toBe(1);
+    expect(r.receiptLines.some((o) => o.decision === "quoted a key id in prose")).toBe(true);
+    expect(r.objs.some((o) => o.decision === "quoted a key id in prose")).toBe(false);
+  });
+
+  test("the envelope is never scanned", () => {
+    expect(findSuspectedSecret({ event: PLANTED, t: 1, seq: 2, run: PLANTED, _schema: { id: PLANTED, version: PLANTED } })).toBeNull();
+    const t = refuseSuspectedSecrets();
+    const rec = stepRecord({ run: PLANTED });
+    expect(t(rec)).toBe(rec);
+  });
+
+  test("a caller's pattern list replaces the default, and an empty one refuses nothing", () => {
+    const only = refuseSuspectedSecrets([{ name: "internal.ticket", regex: "\\bTICKET-[0-9]{6}\\b", why: "the internal tracker's ids are not for the shared timeline" }]);
+    const rec = stepRecord({ detail: { ticket: "TICKET-123456", token: PLANTED } });
+    const refusal = only(rec);
+    expect(isHistoryRefusal(refusal)).toBe(true);
+    expect((refusal as { code: string }).code).toBe("history.suspected_secret");
+    expect(String((refusal as { problem: string }).problem)).toContain("internal.ticket");
+    expect(refuseSuspectedSecrets([])(rec)).toBe(rec);
+    expect(findSuspectedSecret(rec, [])).toBeNull();
+  });
+
+  test("a transform refuses under its own code, and the writer still owns the namespace", async () => {
+    const own = await projected((rec) => (rec.event === "receipt.step" ? refuse("policy.off_timeline", `seq ${String(rec.seq)} is not for the shared timeline`, "widen the policy") : rec), (run) => {
+      run.step("counted the things", "the stream need not carry this");
+      run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" });
+    });
+    expect(own.status).toBe(0);
+    expect(own.violations).toEqual([]);
+    const w = warningsOf(own, "policy.off_timeline");
+    expect(w.length).toBeGreaterThanOrEqual(1);
+    expect(String(w[0]!.remedy)).toBe("widen the policy");
+    expect(own.objs.some((o) => o.event === "receipt.step" && o.decision === "counted the things")).toBe(false);
+
+    // A code the protocol would not accept cannot be smuggled through a refusal: the line is
+    // still withheld, and the writer reports it under its own code (spec §6).
+    const bad = await projected((rec) => (rec.decision === "counted the things" ? ({ [Symbol.for("parley.history.refusal")]: true, code: "Not A Code", problem: "no" } as unknown as Record<string, unknown>) : rec), (run) => {
+      run.step("counted the things", "the stream need not carry this");
+      run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" });
+    });
+    expect(bad.status).toBe(0);
+    expect(bad.violations).toEqual([]);
+    expect(warningsOf(bad, "history.transform_failed").length).toBe(1);
+    expect(bad.objs.some((o) => o.event === "receipt.step" && o.decision === "counted the things")).toBe(false);
+
+    // Nor can a non-string problem or remedy: a warning whose problem is a number does not
+    // validate, and stderr and the receipt have no re-validation behind them (§4.5).
+    const typed = await projected((rec) => (rec.decision === "counted the things" ? ({ [Symbol.for("parley.history.refusal")]: true, code: "policy.off_timeline", problem: 5, remedy: 7 } as unknown as Record<string, unknown>) : rec), (run) => {
+      run.step("counted the things", "the stream need not carry this");
+      run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" });
+    });
+    expect(typed.violations).toEqual([]);
+    expect(warningsOf(typed, "history.transform_failed").length).toBe(1);
+    expect(typed.stderr.objs.every((o) => o.event !== "warning" || typeof o.problem === "string")).toBe(true);
+
+    // And a refusal whose code carries a declared secret value is itself refused: a diagnostic's
+    // code is the one string the writer does not scrub (§5.3).
+    const { dir, env, hist } = historyScratch();
+    const leak = await runCount(dir, { ...env, PARLEY_HISTORY: hist }, ["count", "--token", "abcdef"], (run) => {
+      run.step("counted the things", "the stream need not carry this");
+    }, {}, [], { history: { transform: (rec) => (rec.event === "receipt.step" ? refuse("policy.abcdef", "a code that carries the token") : rec) } });
+    expect(leak.status).toBe(0);
+    expect(leak.violations).toEqual([]);
+    expect(leak.stderr.objs.filter((o) => o.event === "warning" && o.code === "history.transform_unredacted").length).toBeGreaterThanOrEqual(1);
+    expect(segmentText(hist).includes("abcdef")).toBe(false);
+    expect(leak.stderr.text.includes("policy.abcdef")).toBe(false);
+  });
+
+  test("the pointer a warning names cannot itself carry a suspected secret", async () => {
+    // A JSON Pointer is built from the record's own keys, and a key can be anything. A line
+    // withheld for one suspected secret must not put a different one on the stream through the
+    // warning that explains it.
+    const r = await projected(refuseSuspectedSecrets(), (run) => {
+      run.step("cached a response per token", "the token is the cache key, which is the mistake", { [PLANTED]: { key_id: SAMPLES["aws.access_key_id"]!.yes } });
+      run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" });
+    });
+    expect(r.status).toBe(0);
+    expect(r.violations).toEqual([]);
+    const warns = warningsOf(r, "history.suspected_secret");
+    expect(warns.length).toBe(1);
+    expect(String(warns[0]!.problem)).toContain("aws.access_key_id");
+    expect(String(warns[0]!.problem)).toContain("github.token");
+    expect(String(warns[0]!.problem)).not.toContain(PLANTED);
+    expect(r.stderr.text.includes(PLANTED)).toBe(false);
+    expect(r.receipt.includes(PLANTED)).toBe(true);
+    expect(r.text.includes(PLANTED)).toBe(false);
+  });
+
+  test("a pattern that will not compile fails at configuration, not once per line", () => {
+    expect(() => refuseSuspectedSecrets([{ name: "bad.shape", regex: "([", why: "a typo in a caller's own pattern" }])).toThrow();
+    // And every shipped pattern compiles, which is what makes the default safe to construct.
+    expect(() => refuseSuspectedSecrets()).not.toThrow();
+  });
+
+  test("an undeclared token on the command line withholds the head itself", async () => {
+    // The line that most often carries an undeclared token is the head: it echoes `argv` and
+    // `resolved` (§5). Nothing exempts it, so the whole head is withheld and the stream copy of
+    // the run has no head at all. The receipt is complete, the doctor reports the gap, and the
+    // status does not move — which is the trade this built-in makes, stated rather than hidden.
+    const { dir, env, hist } = historyScratch();
+    const r = await runCount(dir, { ...env, PARLEY_HISTORY: hist }, ["count", "--planted", PLANTED], (run) => {
+      run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" });
+    }, {}, [], { history: { transform: refuseSuspectedSecrets() } });
+    expect(r.status).toBe(0);
+    expect(r.violations).toEqual([]);
+    expect(r.receiptLines[0]!.event).toBe("receipt.head");
+    const objs = segmentObjs(hist);
+    expect(objs.some((o) => o.event === "receipt.head")).toBe(false);
+    expect(segmentText(hist).includes(PLANTED)).toBe(false);
+    expect(r.receipt.includes(PLANTED)).toBe(true);
+    const warns = warningsOf(r, "history.suspected_secret");
+    expect(warns.length).toBe(1);
+    expect(String(warns[0]!.problem)).toContain(`seq ${String(r.receiptLines[0]!.seq)}`);
+    const vs = inspectSegment(segmentText(hist)) as { event: string; seq?: number }[];
+    expect(vs.filter((v) => v.event === "doctor.gap").map((v) => v.seq)).toContain(r.receiptLines[0]!.seq);
+    expect(vs.at(-1)).toMatchObject({ event: "doctor.segment", runs: 1, projected: 1, torn: 0, passed: true });
+  });
+
+  test("declaredProjection then refuseSuspectedSecrets compose in a caller's own function", async () => {
+    // There is no composition helper; composing is the caller's function, and this is the whole
+    // of it. A refusal from the first is passed on untouched, a record goes on to the second.
+    const declared = declaredProjection(["db-prod-7"])!;
+    const suspect = refuseSuspectedSecrets();
+    const both: HistoryTransform = (rec) => {
+      const out = declared(rec);
+      return out && !isHistoryRefusal(out) ? suspect(out) : out;
+    };
+    const r = await projected(both, (run) => {
+      run.step("connected to db-prod-7", "the host is fine in a receipt", { host: "db-prod-7" });
+      run.step("read the credential", "the token is the thing under test", { token: PLANTED, host: "db-prod-7" });
+      run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" });
+    }, { name: "declared-then-suspect" });
+    expect(r.status).toBe(0);
+    expect(r.violations).toEqual([]);
+    const hostStep = r.objs.find((o) => o.event === "receipt.step" && String(o.decision).startsWith("connected to"))!;
+    expect(hostStep.decision).toBe("connected to [redacted]");
+    expect(r.objs.some((o) => o.decision === "read the credential" || String(o.decision).startsWith("read the"))).toBe(false);
+    expect(warningsOf(r, "history.suspected_secret").length).toBe(1);
+    expect(r.text.includes("db-prod-7")).toBe(false);
+    expect(r.text.includes(PLANTED)).toBe(false);
+    expect(r.receipt.includes("db-prod-7")).toBe(true);
+    expect(r.receipt.includes(PLANTED)).toBe(true);
+  });
+
+  test("ten thousand lines of one segment terminate inside the stated bound", async () => {
+    // Two bounds, both measured here. The scan is the built-in's own cost; the run is the whole
+    // of it, the receipt's ten thousand writes included, because a scan per line must not turn a
+    // segment into a stall. Locally the scan takes about 30 ms and the run about 0.8 s, so these
+    // are generous by more than an order of magnitude and still fail a quadratic walk outright.
+    const SCAN_BOUND_MS = 2_000;
+    const RUN_BOUND_MS = 10_000;
+    const LINES = 10_000;
+    const scan = refuseSuspectedSecrets();
+    const scanStarted = Date.now();
+    let refused = 0;
+    for (let i = 0; i < LINES; i++) {
+      const rec = stepRecord({ seq: i, decision: `line ${i}`, detail: { i, note: i % 100 === 0 ? PLANTED : "nothing to see", names: ["a.txt", "b.txt", "c.txt"] } });
+      if (scan(rec) !== rec) refused++;
+    }
+    expect(Date.now() - scanStarted).toBeLessThan(SCAN_BOUND_MS);
+    expect(refused).toBe(LINES / 100);
+
+    const started = Date.now();
+    const r = await projected(refuseSuspectedSecrets(), (run) => {
+      for (let i = 0; i < LINES; i++) {
+        const planted = i % 100 === 0;
+        run.step(`line ${i}`, "one of ten thousand", { i, note: planted ? PLANTED : "nothing to see" });
+      }
+    });
+    const elapsed = Date.now() - started;
+    expect(elapsed).toBeLessThan(RUN_BOUND_MS);
+    expect(r.status).toBe(0);
+    expect(warningsOf(r, "history.suspected_secret").length).toBe(LINES / 100);
+    expect(r.objs.filter((o) => o.event === "receipt.step" && typeof o.decision === "string" && (o.decision as string).startsWith("line ")).length).toBe(LINES - LINES / 100);
+    expect(r.text.includes(PLANTED)).toBe(false);
+  }, 60_000);
 });

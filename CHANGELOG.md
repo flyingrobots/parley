@@ -513,6 +513,20 @@ so a receipt
 
 ### Fixed
 
+- **Retention is per tool** (flyingrobots/parley#75). `parley-emit` counted every `.jsonl` in a
+  receipt directory, so a reader's receipts (one per read) took slots of a tool's count and the
+  tool's next run deleted that many of its own, the history the reader came to read. `retain` now
+  counts and expires only completed bundles whose head names this tool; another tool's receipts
+  are never counted and never deleted, and a file whose first line is not a readable head is not
+  this tool's and is left alone. The head is read first line only. The decision line now says "of
+  this tool's receipts". The decision, the owner's on the issue: per tool, rather than a separate
+  place for reads, so one loader call still finds everything. **Spec §5.1** gained a sentence
+  saying so: a program's policy bounds the receipts it wrote and **MUST NOT** count or delete
+  another program's. It reads as a clarification of what "a retention policy" meant, made inside
+  the unreleased `0.2.0` entry, so **the spec version does not move** (AGENTS.md: a normative
+  sentence changed before release is recorded in that entry, not versioned). Cost: one bounded
+  read of each receipt's first line per run, up to a 1 MiB head, past which a file is read as
+  unreadable and left alone.
 - `parley-read`: under `what-changed`, a warning from a run that went on no longer outranks every
   result. The change-view promotion now holds the failure surface **of the runs that failed**, so a
   `warning` is promoted only with its run's failure and is otherwise placed by the view's own

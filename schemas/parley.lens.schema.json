@@ -188,6 +188,10 @@
             },
             "description": "The run's receipt head's argv (spec §5), already redacted there (spec §5.3). Never cut part-way: when it does not fit the section's bound it is dropped whole and named in dropped."
           },
+          "resolved": {
+            "type": "object",
+            "description": "The run's receipt head's resolved (spec §5): its interpretation after defaults, environment and path resolution, copied whole and already redacted there (spec §5.3), so a reader can tell, say, which commits a run compared without opening the head (flyingrobots/parley#90). Its shape is the tool's; the reader chooses none of its keys. Never cut part-way: when it does not fit the section's bound it is dropped whole, first of all fields, and named in dropped. Absent when the window does not hold the head or the head's resolved is not an object."
+          },
           "inv": {
             "type": "string",
             "minLength": 1,
@@ -237,14 +241,15 @@
             "minItems": 1,
             "items": {
               "enum": [
+                "resolved",
                 "argv",
                 "inv",
                 "v",
                 "tool"
               ]
             },
-            "description": "The fields left out, whole, to bound the section's serialised JSON, in the order they were dropped, each at most once: argv, then inv, then v, then tool. The bound is the reader's to state (parley-read: 512 UTF-8 bytes); a string is never cut part-way.",
-            "maxItems": 4
+            "description": "The fields left out, whole, to bound the section's serialised JSON, in the order they were dropped, each at most once: resolved, then argv, then inv, then v, then tool. The bound is the reader's to state (parley-read: 512 UTF-8 bytes); a string or an object is never cut part-way.",
+            "maxItems": 5
           }
         },
         "if": {

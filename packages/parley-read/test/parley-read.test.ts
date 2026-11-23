@@ -1765,9 +1765,11 @@ describe("RD-22 a digest never reads as complete", () => {
     // 300 alike; the fourteenth entry, about 80 bytes, does not. The loss also says how much of
     // it a fold left out (flyingrobots/parley#79), `"folded":0` here because these heads carry no
     // `inv`: eleven bytes more on every line, and no fewer records. Measured, not claimed.
-    expect(named).toEqual([9, 13, 13]);
-    expect(excluded).toEqual([0, 77, 887]);
-    expect(sizes).toEqual([1433, 1981, 1982]);
+    // Each section also carries its head's `resolved` (flyingrobots/parley#90), here
+    // `{"command":"count"}`, 31 bytes a section, which costs the thirteenth entry.
+    expect(named).toEqual([9, 12, 12]);
+    expect(excluded).toEqual([0, 78, 888]);
+    expect(sizes).toEqual([1526, 1916, 1917]);
     // Every line is inside the stated byte bound: the line does not grow with history.
     expect(sizes.every((b) => b <= BYTES)).toBe(true);
   }, 120_000);

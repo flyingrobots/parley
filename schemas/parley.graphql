@@ -13,6 +13,8 @@
 # Conventions, which the derivation enforces:
 # - A field with `!` is required. A field without it is optional and carries @parley_optional:
 #   absent when unset, never null.
+#   The one exception is a `JSON` field (@parley_scalar(json: "any")): it renders no constraint at
+#   all, so an explicit null validates there, as it does in the hand-written schema.
 # - A string or integer constraint on a list field constrains its items; @parley_minItems and
 #   @parley_maxItems constrain the list.
 # - Every object type is @parley_open or @parley_closed. Only SchemaRef is closed (spec §4.5).

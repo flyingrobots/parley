@@ -21,6 +21,14 @@ the entry under it names each schema version it releases, and those are separate
 
 ### Changed
 
+- `scripts/sdl-to-json-schema.ts`, the transitional SDL derivation, now refuses SDL it cannot
+  represent instead of passing it: an unknown argument on a known directive, a duplicate field or
+  type definition, a nested list, a list-valued `@parley_message_ref` or list member of its type,
+  `@parley_exclusive` over other than two names, `forbidOtherwise` over other than one required
+  field, and a rule literal that violates its field's `minimum`, `maximum`, `minLength`, `pattern`
+  or `not`. A guarded `forbidOtherwise` rule on a nested path no longer rejects an object that omits
+  the path's parent. Two agreement tests no longer depend on current message wording. No emitted
+  line, schema byte or version changes (flyingrobots/parley#125).
 - Spec §4.5 now says what the first release did: a top-level schema file may hold a released
   version only with the snapshot's exact bytes, and the first change after a release moves it to a
   new draft version. This replaces the sentence that the change which snapshots a version bumps the

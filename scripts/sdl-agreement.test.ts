@@ -9,16 +9,20 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import Ajv2020 from "ajv/dist/2020.js";
 import { schemaFiles } from "./check-examples.ts";
 import {
+  DIRECTIVE_ARGS,
   INTERIM_DIRECTIVES,
   WESLEY_IR_VERSION,
   agreement,
   deriveSchemas,
+  assertUniqueTypes,
   findWesley,
   lowerSdl,
   wesleyGate,
   type IR,
+  type IRTypeRef,
 } from "./sdl-to-json-schema.ts";
 
 const SDL_PATH = "schemas/parley.graphql";
@@ -82,14 +86,105 @@ describe("SDL derivation refuses what it cannot translate faithfully (SDL-6)", (
     typeOf(ir, "Tiny").directives.parley_exclusive = { fields: ["note", "nope"] };
     expect(() => deriveSchemas(ir)).toThrow(/@parley_exclusive.*Tiny\.nope/);
   });
+
+  test("SDL-6e: an unknown argument on a known directive", () => {
+    const ir = tiny();
+    typeOf(ir, "Tiny").fields![1]!.directives.parley_minLength = { value: 2, maximum: 3 };
+    expect(() => deriveSchemas(ir)).toThrow(/Tiny\.note.*@parley_minLength.*maximum/);
+    typeOf(ir, "Tiny").fields![1]!.directives.parley_minLength = { value: 2 };
+    expect((deriveSchemas(ir).get("parley.tiny") as any).properties.note.minLength).toBe(2);
+  });
+
+  test("SDL-6f: a field declared twice", () => {
+    const ir = tiny();
+    const t = typeOf(ir, "Tiny");
+    t.fields!.unshift({ ...t.fields![1]!, directives: { parley_optional: true, parley_minLength: { value: 2 } } });
+    expect(() => deriveSchemas(ir)).toThrow(/Tiny\.note.*twice|duplicate.*Tiny\.note/i);
+  });
+
+  test("SDL-6g: a type defined twice is refused before Wesley merges the two", () => {
+    const sdl = "type A @parley_open {\n  a: String!\n}\n\ntype A {\n  a: String!\n}\n";
+    expect(() => assertUniqueTypes(sdl, "x.graphql")).toThrow(/type A.*twice|duplicate.*\bA\b/i);
+    expect(() => assertUniqueTypes("type A {\n  a: String!\n}\nextend type A {\n  b: String\n}\n", "x.graphql")).not.toThrow();
+    expect(() => assertUniqueTypes(readFileSync(SDL_PATH, "utf8"), SDL_PATH)).not.toThrow();
+  });
+
+  test("SDL-6h: a nested list type", () => {
+    const ir = tiny();
+    const note = typeOf(ir, "Tiny").fields![1]!;
+    note.type = { base: "String", nullable: false, isList: true, listItemNullable: false, listWrappers: [{ nullable: false }, { nullable: false }] } as IRTypeRef;
+    note.directives = {};
+    expect(() => deriveSchemas(ir)).toThrow(/Tiny\.note.*nested list/i);
+  });
+
+  test("SDL-6i: a list-valued @parley_message_ref", () => {
+    const ir = tiny();
+    typeOf(ir, "Tiny").fields![2]!.type = { base: "SchemaRef", nullable: false, isList: true, listItemNullable: false };
+    expect(() => deriveSchemas(ir)).toThrow(/Tiny\._schema.*@parley_message_ref.*list/);
+  });
+
+  test("SDL-6j: a list-typed member of the message reference type", () => {
+    const ir = tiny();
+    typeOf(ir, "SchemaRef").fields![0]!.type = { base: "String", nullable: false, isList: true, listItemNullable: false };
+    expect(() => deriveSchemas(ir)).toThrow(/SchemaRef\.id.*bare String!/);
+  });
+
+  test("SDL-6k: @parley_exclusive over three names, which `not` of all present would under-enforce", () => {
+    const ir = tiny();
+    const t = typeOf(ir, "Tiny");
+    for (const n of ["a", "b", "c"]) t.fields!.push({ name: n, type: { base: "String", nullable: true, isList: false }, directives: { parley_optional: true } });
+    t.directives.parley_exclusive = { fields: ["a", "b"] };
+    expect(() => deriveSchemas(ir)).not.toThrow();
+    t.directives.parley_exclusive = { fields: ["a", "b", "c"] };
+    expect(() => deriveSchemas(ir)).toThrow(/@parley_exclusive.*Tiny.*exactly two/);
+  });
+
+  // A message whose `detail` object is optional and whose rule is on detail.enabled.
+  const whenIr = (rule: Record<string, unknown>): IR => {
+    const ir = tiny();
+    ir.types.push({ name: "Detail", kind: "OBJECT", directives: { parley_open: true }, fields: [
+      { name: "enabled", type: { base: "Boolean", nullable: false, isList: false }, directives: {} },
+      { name: "reason", type: { base: "String", nullable: true, isList: false }, directives: { parley_optional: true } },
+      { name: "note2", type: { base: "String", nullable: true, isList: false }, directives: { parley_optional: true } },
+    ] });
+    const t = typeOf(ir, "Tiny");
+    t.fields!.push({ name: "detail", type: { base: "Detail", nullable: true, isList: false }, directives: { parley_optional: true } });
+    t.directives.parley_when = { path: ["detail", "enabled"], equals: true, guarded: true, forbidOtherwise: true, ...rule };
+    return ir;
+  };
+  const valid = (ir: IR, doc: unknown) => new Ajv2020({ strict: false }).compile(deriveSchemas(ir).get("parley.tiny")!)(doc);
+  const base = { event: "tiny", _schema: { id: "parley.tiny", version: "1.0.0" } };
+
+  test("SDL-6l: a guarded forbid rule does not reject an object that omits the rule's parent", () => {
+    const ir = whenIr({ require: ["reason"] });
+    expect(valid(ir, base)).toBe(true);
+    expect(valid(ir, { ...base, detail: { enabled: true, reason: "x" } })).toBe(true);
+    expect(valid(ir, { ...base, detail: { enabled: true } })).toBe(false);
+    expect(valid(ir, { ...base, detail: { enabled: false, reason: "x" } })).toBe(false);
+    expect(valid(ir, { ...base, detail: { enabled: false } })).toBe(true);
+  });
+
+  test("SDL-6m: forbidOtherwise with two required fields, which `not` of both would under-enforce", () => {
+    expect(() => deriveSchemas(whenIr({ require: ["reason", "note2"] }))).toThrow(/forbidOtherwise.*one/);
+  });
+
+  test("SDL-6n: a rule literal that violates the field's own constraints", () => {
+    const ir = whenIr({ guarded: true, forbidOtherwise: false, set: { n: -1 }, require: [] });
+    const detail = typeOf(ir, "Detail");
+    detail.fields!.push({ name: "n", type: { base: "Int", nullable: true, isList: false }, directives: { parley_optional: true, parley_minimum: { value: 0 } } });
+    expect(() => deriveSchemas(ir)).toThrow(/set n.*-1.*cannot hold/);
+    (typeOf(ir, "Tiny").directives.parley_when as any).set = { n: 0 };
+    expect(() => deriveSchemas(ir)).not.toThrow();
+  });
 });
 
 describe("the Wesley pin (SDL-4)", () => {
   test("SDL-4a: the pin is one exact version, and another version fails naming both", () => {
     expect(pin).toMatch(/^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$/);
-    const g = wesleyGate({ bin: "/x/wesley", version: "0.3.0-alpha.5" }, pin, false);
+    const other = pin === "9.9.9" ? "9.9.8" : "9.9.9"; // valid, and never the pin
+    const g = wesleyGate({ bin: "/x/wesley", version: other }, pin, false);
     expect(g.kind).toBe("fail");
-    if (g.kind === "fail") expect(g.reason).toContain(`0.3.0-alpha.5`), expect(g.reason).toContain(pin);
+    if (g.kind === "fail") expect(g.reason).toContain(other), expect(g.reason).toContain(pin);
     expect(wesleyGate({ bin: "/x/wesley", version: pin }, pin, true)).toEqual({ kind: "run", bin: "/x/wesley" });
   });
 
@@ -132,6 +227,11 @@ describe("interim directives are declared, known and documented (SDL-5)", () => 
     });
     expect([...declared.keys()].sort()).toEqual(Object.keys(INTERIM_DIRECTIVES).sort());
     for (const [name, issues] of declared) expect({ name, issues }).toEqual({ name, issues: [INTERIM_DIRECTIVES[name]!] });
+
+    // The arguments the derivation accepts are the ones the SDL declares.
+    const declaredArgs = Object.fromEntries([...sdl.matchAll(/^directive @(parley_\w+)(?:\(([^)]*)\))?/gm)]
+      .map((m) => [m[1]!, (m[2] ?? "").split(",").map((a) => a.split(":")[0]!.trim()).filter(Boolean)] as const));
+    expect(declaredArgs).toEqual(DIRECTIVE_ARGS);
 
     const doc = readFileSync("docs/topics/message-sdl/README.md", "utf8");
     const rows = new Map<string, string>();
@@ -187,11 +287,20 @@ if (gate.kind === "skip") {
       expect(diffs.some((d) => d.startsWith(`${id}: ${pointer}:`))).toBe(true);
     };
 
+    // Mutate a copy of the lowered IR by type and field name, so a routine edit to a message's
+    // wording or limits cannot break the fixture; the real-file agreement stays in SDL-2a.
+    const mutated = (f: (ir: IR) => void): IR => {
+      const copy = structuredClone(ir);
+      f(copy);
+      return copy;
+    };
+    const fieldOf = (ir: IR, type: string, field: string) => ir.types.find((t) => t.name === type)!.fields!.find((x) => x.name === field)!;
+
     test("SDL-3a: a minLength changed in the SDL only", () => {
-      failsWith(lowerEdited(
-        `"The execution this line belongs to (spec §2.1)."\n  run: String! @parley_minLength(value: 1)\n  "The exit status`,
-        `"The execution this line belongs to (spec §2.1)."\n  run: String! @parley_minLength(value: 2)\n  "The exit status`,
-      ), "parley.end", "/properties/run/minLength");
+      failsWith(mutated((m) => {
+        const d = fieldOf(m, "End", "run").directives;
+        d.parley_minLength = { value: (d.parley_minLength as { value: number }).value + 1 };
+      }), "parley.end", "/properties/run/minLength");
     });
 
     test("SDL-3b: a required field made optional in the SDL only", () => {
@@ -214,8 +323,16 @@ if (gate.kind === "skip") {
     });
 
     test("SDL-3f: a description edited in the SDL only", () => {
-      const from = `"What is wrong, in one sentence."\n  problem: String! @parley_minLength(value: 1)\n  "The value observed, when the failure is a threshold."\n  measured: JSON @parley_optional\n  "The threshold that was not met."\n  limit: JSON @parley_optional\n  "The lever to pull. Omit rather than invent one."\n  remedy: String @parley_optional\n  "What the remedy applies to."\n  remedy_target: String @parley_optional\n  retryable: Boolean @parley_optional`;
-      failsWith(lowerEdited(from, from.replace("in one sentence.", "in a sentence.")), "parley.error", "/properties/problem/description");
+      failsWith(mutated((m) => {
+        const f = fieldOf(m, "Error", "problem");
+        f.description = `${f.description} (edited)`;
+      }), "parley.error", "/properties/problem/description");
+    });
+
+    test("SDL-6g: lowering an SDL that defines a type twice is refused before Wesley merges it", () => {
+      const p = join(dir, "dup.graphql");
+      writeFileSync(p, `${sdl}\ntype End {\n  extra: String\n}\n`);
+      expect(() => lowerSdl(bin, p)).toThrow(/type End is defined twice/);
     });
 
     test("SDL-3g: the hand-written schema changed alone", () => {

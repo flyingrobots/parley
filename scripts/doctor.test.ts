@@ -91,6 +91,9 @@ describe("parley doctor", () => {
     ["end.redacted disagrees", (r) => edit(r, 6, (o) => ({ ...o, redacted: false })), ["R8.redacted_aggregate"]],
     ["a line from another run", (r) => edit(r, 3, (o) => ({ ...o, run: "01JD3KS9T4U8V1W5X2Y7Z3A6B9" })), ["R6.run"]],
   ];
+  test("a receipt alone that does not exist is a violation, not a pass", () => {
+    expect(rules(doctor({ receipt: undefined, receiptPresent: false }))).toEqual(["R5.receipt_missing"]);
+  });
   for (const [name, mutate, expected] of receiptAlone) {
     test(`detects in a receipt alone: ${name}`, () => {
       expect(rules(doctor({ receipt: mutate(read("conforming", "receipt")) }))).toEqual([...expected].sort());

@@ -88,6 +88,14 @@ export function doctor(input: { stdout?: string; stderr?: string; receipt?: stri
   // R4 bootstrap or startup failure
   const stdout = all.filter((l) => l.stream === "stdout"); const stderr = all.filter((l) => l.stream === "stderr"); const receipt = all.filter((l) => l.stream === "receipt");
   let run: string | null = null; let boot: Record<string, unknown> | null = null;
+  // A receipt read alone: the record of a run whose streams were prose under --human (§1.1), or one
+  // whose streams were not kept. The rules that need stdout are not applicable and are not run.
+  const receiptOnly = input.stdout === undefined && input.stderr === undefined && (input.receipt !== undefined || input.receiptPresent === false);
+  if (receiptOnly) {
+    if (input.receipt === undefined) V("R5.receipt_missing", "§3.1", "receipt", 0, "the receipt to check does not exist");
+    const alone = input.receipt === undefined ? { run: null, status: null } : receiptAlone(receipt, V);
+    return [...out, { event: "doctor.summary", passed: out.length === 0, violations: out.length, lines: counts, run: alone.run, status: alone.status, partial }];
+  }
   const startup = stderr.find((l) => l.obj!.event === "startup.failed");
   if (startup) {
     run = String(startup.obj!.run ?? "");
@@ -172,6 +180,44 @@ export function doctor(input: { stdout?: string; stderr?: string; receipt?: stri
 }
 
 /**
+ * R5 to R8 over a receipt with no streams beside it. The head is first; every line names its run;
+ * no `seq` appears twice; `end` is last and carries the final `seq`; its status agrees with the
+ * errors the receipt holds and its `redacted` with the head and the `redaction` events. R4 and R9
+ * need stdout and stderr and are not run, which is why a pass here says less than a full pass.
+ */
+function receiptAlone(receipt: Line[], V: (rule: string, section: string, stream: Source, line: number, problem: string) => void): { run: string | null; status: number | null } {
+  const head = receipt[0]?.obj;
+  if (!head || head.event !== "receipt.head") V("R5.head_first", "§5", "receipt", receipt[0]?.n ?? 0, "first receipt line is not receipt.head");
+  const first = receipt[0]?.obj?.run;
+  const run = typeof first === "string" ? first : null;
+  const seen = new Set<number>();
+  for (const l of receipt) {
+    const o = l.obj!;
+    if (run !== null && o.run !== run) V("R6.run", "§1.3", "receipt", l.n, `run ${String(o.run)} is not this run's ${run}`);
+    if (Number.isInteger(o.seq)) {
+      if (seen.has(o.seq as number)) V("R6.duplicate", "§1.3", "receipt", l.n, `seq ${String(o.seq)} appears twice on receipt`);
+      seen.add(o.seq as number);
+    }
+  }
+  const last = receipt[receipt.length - 1];
+  if (!last || last.obj!.event !== "end") V("R7.receipt_no_end", "§3.3", "receipt", last?.n ?? 0, "last receipt line is not end: incomplete lifecycle evidence, EOF is not success");
+  const end = receipt.find((l) => l.obj!.event === "end");
+  if (!end) return { run, status: null };
+  const e = end.obj!;
+  const status = Number.isInteger(e.status) ? (e.status as number) : null;
+  const maxSeq = Math.max(...receipt.map((l) => (Number.isInteger(l.obj!.seq) ? (l.obj!.seq as number) : -1)));
+  if (e.seq !== maxSeq) V("R7.end_not_final", "§3.3", "receipt", end.n, `end seq ${String(e.seq)} is not the run's final seq ${maxSeq}`);
+  for (const l of receipt) if (Number.isInteger(l.obj!.seq) && (l.obj!.seq as number) > (e.seq as number)) V("R7.after_end", "§3.3", "receipt", l.n, "event after end");
+  const errors = receipt.filter((l) => l.obj!.event === "error").length;
+  if (status === 2 && errors === 0) V("R7.status2_no_error", "§3.4", "receipt", end.n, "status 2 but no structured error was recorded");
+  if (status === 0 && errors > 0) V("R7.status0_with_error", "§3.4", "receipt", end.n, "status 0 but an error was recorded; a recovered condition is a warning");
+  const headRedacted = head?.event === "receipt.head" && head.redacted !== undefined;
+  const anyRedaction = receipt.some((l) => l.obj!.event === "redaction");
+  if (typeof e.redacted === "boolean" && e.redacted !== (headRedacted || anyRedaction)) V("R8.redacted_aggregate", "§3.3", "receipt", end.n, `end.redacted is ${String(e.redacted)} but the receipt says ${headRedacted || anyRedaction}`);
+  return { run, status };
+}
+
+/**
  * Read one segment of the shared history stream (spec §8, informative) rather than one run's
  * three streams. A segment interleaves whole runs from every tool on the machine, and a copy in
  * it may be a **projection** of the receipt copy written through a history transform, so the
@@ -242,7 +288,7 @@ if (import.meta.main) {
       for (const v of vs) process.stdout.write((prose ? human(v) : JSON.stringify(stamp(v))) + "\n");
       process.exit((vs[vs.length - 1] as SegmentSummary).passed ? 0 : 1);
     }
-    if (!so && !se) { write({ event: "error", code: "doctor.usage", problem: "usage: doctor --stdout FILE [--stderr FILE] [--receipt FILE] [--human], or doctor --history SEGMENT.jsonl [--human]", _schema: OUTPUT_SCHEMA }, process.stderr); process.exit(2); }
+    if (!so && !se && !rc) { write({ event: "error", code: "doctor.usage", problem: "usage: doctor --stdout FILE [--stderr FILE] [--receipt FILE] [--human], doctor --receipt FILE [--human], or doctor --history SEGMENT.jsonl [--human]", _schema: OUTPUT_SCHEMA }, process.stderr); process.exit(2); }
     const input = { stdout: so ? readFileSync(so, "utf8") : undefined, stderr: se ? readFileSync(se, "utf8") : undefined, receipt: rc && existsSync(rc) ? readFileSync(rc, "utf8") : undefined, receiptPresent: rc ? existsSync(rc) : undefined };
     const vs = doctor(input);
     for (const v of vs) process.stdout.write((prose ? human(v) : JSON.stringify(stamp(v))) + "\n");

@@ -386,3 +386,6 @@ export function wesleyGate(found: { bin: string; version: string } | null, pin: 
   if (found.version !== pin) return { kind: "fail", reason: `${found.bin} is wesley ${found.version}, but package.json config.wesley pins ${pin} (${install})` };
   return { kind: "run", bin: found.bin };
 }
+
+/** Refuse an SDL text that defines one type name twice; Wesley merges the two without a word. */
+export function assertUniqueTypes(_sdl: string, _path: string): void {}

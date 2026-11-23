@@ -9,16 +9,19 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import Ajv2020 from "ajv/dist/2020.js";
 import { schemaFiles } from "./check-examples.ts";
 import {
   INTERIM_DIRECTIVES,
   WESLEY_IR_VERSION,
   agreement,
   deriveSchemas,
+  assertUniqueTypes,
   findWesley,
   lowerSdl,
   wesleyGate,
   type IR,
+  type IRTypeRef,
 } from "./sdl-to-json-schema.ts";
 
 const SDL_PATH = "schemas/parley.graphql";
@@ -81,6 +84,96 @@ describe("SDL derivation refuses what it cannot translate faithfully (SDL-6)", (
     const ir = tiny();
     typeOf(ir, "Tiny").directives.parley_exclusive = { fields: ["note", "nope"] };
     expect(() => deriveSchemas(ir)).toThrow(/@parley_exclusive.*Tiny\.nope/);
+  });
+
+  test("SDL-6e: an unknown argument on a known directive", () => {
+    const ir = tiny();
+    typeOf(ir, "Tiny").fields![1]!.directives.parley_minLength = { value: 2, maximum: 3 };
+    expect(() => deriveSchemas(ir)).toThrow(/Tiny\.note.*@parley_minLength.*maximum/);
+    typeOf(ir, "Tiny").fields![1]!.directives.parley_minLength = { value: 2 };
+    expect((deriveSchemas(ir).get("parley.tiny") as any).properties.note.minLength).toBe(2);
+  });
+
+  test("SDL-6f: a field declared twice", () => {
+    const ir = tiny();
+    const t = typeOf(ir, "Tiny");
+    t.fields!.unshift({ ...t.fields![1]!, directives: { parley_optional: true, parley_minLength: { value: 2 } } });
+    expect(() => deriveSchemas(ir)).toThrow(/Tiny\.note.*twice|duplicate.*Tiny\.note/i);
+  });
+
+  test("SDL-6g: a type defined twice is refused before Wesley merges the two", () => {
+    const sdl = "type A @parley_open {\n  a: String!\n}\n\ntype A {\n  a: String!\n}\n";
+    expect(() => assertUniqueTypes(sdl, "x.graphql")).toThrow(/type A.*twice|duplicate.*\bA\b/i);
+    expect(() => assertUniqueTypes("type A {\n  a: String!\n}\nextend type A {\n  b: String\n}\n", "x.graphql")).not.toThrow();
+    expect(() => assertUniqueTypes(readFileSync(SDL_PATH, "utf8"), SDL_PATH)).not.toThrow();
+  });
+
+  test("SDL-6h: a nested list type", () => {
+    const ir = tiny();
+    const note = typeOf(ir, "Tiny").fields![1]!;
+    note.type = { base: "String", nullable: false, isList: true, listItemNullable: false, listWrappers: [{ nullable: false }, { nullable: false }] } as IRTypeRef;
+    note.directives = {};
+    expect(() => deriveSchemas(ir)).toThrow(/Tiny\.note.*nested list/i);
+  });
+
+  test("SDL-6i: a list-valued @parley_message_ref", () => {
+    const ir = tiny();
+    typeOf(ir, "Tiny").fields![2]!.type = { base: "SchemaRef", nullable: false, isList: true, listItemNullable: false };
+    expect(() => deriveSchemas(ir)).toThrow(/Tiny\._schema.*@parley_message_ref.*list/);
+  });
+
+  test("SDL-6j: a list-typed member of the message reference type", () => {
+    const ir = tiny();
+    typeOf(ir, "SchemaRef").fields![0]!.type = { base: "String", nullable: false, isList: true, listItemNullable: false };
+    expect(() => deriveSchemas(ir)).toThrow(/SchemaRef\.id.*bare String!/);
+  });
+
+  test("SDL-6k: @parley_exclusive over three names, which `not` of all present would under-enforce", () => {
+    const ir = tiny();
+    const t = typeOf(ir, "Tiny");
+    for (const n of ["a", "b", "c"]) t.fields!.push({ name: n, type: { base: "String", nullable: true, isList: false }, directives: { parley_optional: true } });
+    t.directives.parley_exclusive = { fields: ["a", "b"] };
+    expect(() => deriveSchemas(ir)).not.toThrow();
+    t.directives.parley_exclusive = { fields: ["a", "b", "c"] };
+    expect(() => deriveSchemas(ir)).toThrow(/@parley_exclusive.*Tiny.*exactly two/);
+  });
+
+  // A message whose `detail` object is optional and whose rule is on detail.enabled.
+  const whenIr = (rule: Record<string, unknown>): IR => {
+    const ir = tiny();
+    ir.types.push({ name: "Detail", kind: "OBJECT", directives: { parley_open: true }, fields: [
+      { name: "enabled", type: { base: "Boolean", nullable: false, isList: false }, directives: {} },
+      { name: "reason", type: { base: "String", nullable: true, isList: false }, directives: { parley_optional: true } },
+      { name: "note2", type: { base: "String", nullable: true, isList: false }, directives: { parley_optional: true } },
+    ] });
+    const t = typeOf(ir, "Tiny");
+    t.fields!.push({ name: "detail", type: { base: "Detail", nullable: true, isList: false }, directives: { parley_optional: true } });
+    t.directives.parley_when = { path: ["detail", "enabled"], equals: true, guarded: true, forbidOtherwise: true, ...rule };
+    return ir;
+  };
+  const valid = (ir: IR, doc: unknown) => new Ajv2020({ strict: false }).compile(deriveSchemas(ir).get("parley.tiny")!)(doc);
+  const base = { event: "tiny", _schema: { id: "parley.tiny", version: "1.0.0" } };
+
+  test("SDL-6l: a guarded forbid rule does not reject an object that omits the rule's parent", () => {
+    const ir = whenIr({ require: ["reason"] });
+    expect(valid(ir, base)).toBe(true);
+    expect(valid(ir, { ...base, detail: { enabled: true, reason: "x" } })).toBe(true);
+    expect(valid(ir, { ...base, detail: { enabled: true } })).toBe(false);
+    expect(valid(ir, { ...base, detail: { enabled: false, reason: "x" } })).toBe(false);
+    expect(valid(ir, { ...base, detail: { enabled: false } })).toBe(true);
+  });
+
+  test("SDL-6m: forbidOtherwise with two required fields, which `not` of both would under-enforce", () => {
+    expect(() => deriveSchemas(whenIr({ require: ["reason", "note2"] }))).toThrow(/forbidOtherwise.*one/);
+  });
+
+  test("SDL-6n: a rule literal that violates the field's own constraints", () => {
+    const ir = whenIr({ guarded: true, forbidOtherwise: false, set: { n: -1 }, require: [] });
+    const detail = typeOf(ir, "Detail");
+    detail.fields!.push({ name: "n", type: { base: "Int", nullable: true, isList: false }, directives: { parley_optional: true, parley_minimum: { value: 0 } } });
+    expect(() => deriveSchemas(ir)).toThrow(/set n.*-1.*cannot hold/);
+    (typeOf(ir, "Tiny").directives.parley_when as any).set = { n: 0 };
+    expect(() => deriveSchemas(ir)).not.toThrow();
   });
 });
 

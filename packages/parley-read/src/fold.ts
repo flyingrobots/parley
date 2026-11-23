@@ -23,6 +23,8 @@
 // - A redacted run: one whose head carries `redacted`, whose `end` says `redacted: true`, or that
 //   emitted a `redaction`. §2.3 says a redacted receipt shares its `inv` with every run that
 //   differed only in a secret, so equal `inv` does not make it the same invocation as anything.
+//   Nor a run the window cannot show is unredacted, because it holds neither its head nor an `end`
+//   saying `redacted: false`: a missing statement is not a negative one (§1.2a).
 // - Anything when the caller states no outcomes: "the same result" cannot be established.
 //
 // **The representative is the most recent run of its group**: the one whose latest dated record
@@ -77,6 +79,9 @@ function foldKey(own: readonly LoadedRecord[], outcome: Outcome | undefined): st
     || ends.some((r) => r.record.redacted === true)
     || own.some((r) => r.event === "redaction");
   if (redacted) return null;
+  // Not redacted only on evidence: the head says so by carrying no `redacted`, or an `end` says
+  // `redacted: false`. A window holding neither cannot tell (§1.2a), so the run does not fold.
+  if (head === undefined && !ends.some((r) => r.record.redacted === false)) return null;
   // The same rule the run section states its reason by: an undetermined run with an `end` has an
   // unusable status, one without has no end in the window.
   const reason = outcome !== "undetermined" ? null : ends.length > 0 ? "end_status_unusable" : "no_end_in_window";

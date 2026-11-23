@@ -15,8 +15,11 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { repoRoot, sha256, stateBase } from "@flyingrobots/parley-emit";
 
-/** Which of the spec's two locations a bundle came from; `other` is a path a caller named itself. */
-export type Where = "repo" | "state" | "other";
+/**
+ * Which of the spec's two locations a bundle came from; `history` is a segment of the shared
+ * stream (§8), and `other` is a path a caller named itself.
+ */
+export type Where = "repo" | "state" | "history" | "other";
 
 export interface ReceiptLocation {
   readonly where: "repo" | "state";

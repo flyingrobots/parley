@@ -10,6 +10,28 @@ its manifest so it cannot be published by accident.
 
 ### Added
 
+- **The least-projected copy of a record** (flyingrobots/parley#58, spec §8). The loader folds the
+  copies from the sources that carry no `parley.history.transform` line for a run first and alone,
+  so the receipt copy is the record and a projected copy never contributes a field to it. A
+  projected copy whose body differs is recorded as a `Projection` on the bundle — the source, the
+  transform's `name` and `sha256`, the `seq` its opening line took, the `seq` values it
+  `superseded` and the ones it `withheld`, and whether it is the `sole` copy read — rather than
+  reported as a `copies.disagree` defect, which it never was. A record whose only copy is a
+  projection's is returned with `projected: true` and `projectedBy` naming the transforms.
+  Identical copies dedupe exactly as before.
+- §8 lets a projection narrow the body and never the envelope, so a projected copy that disagrees
+  with the record on `event`, `t` or `_schema` is still §1.3's `copies.disagree` defect, reported
+  whichever copy the preference returned.
+- Two projected copies of one event, by different transforms, are the edge the rule cannot settle:
+  neither is the less projected one, so they are folded as §1.3 copies in an order stated by the
+  transform's name, its digest and the file — never the order the files were read in — and a
+  disagreement between them is the new `copies.projected_disagree` defect.
+- `loadReceipts({ history: [path] })` and `readHistorySegment(path)`: a segment of the shared
+  stream, by name. The stream is opt-in and this reader never looks for it; a segment named but
+  unopenable is a `history.unreadable` defect rather than a throw. `Where` gains `history`.
+  `queryReceipts` passes the same option to its load, so a read and its digest see the copies a
+  load would. Its options type already accepted `history`, and until now it dropped it.
+
 - `src/schemas.ts` re-synced from the repository drafts: the reader now ships seventeen, adding
   `parley.history.transform` 1.0.0 (flyingrobots/parley#57), so a projected copy's opening line on
   the shared stream validates against its exact pair rather than being reported as partial. No

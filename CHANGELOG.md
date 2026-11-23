@@ -138,13 +138,50 @@ rather than moving its version.
   reader finding the same record in more than one copy should prefer the least-projected one. The
   spec version does not move: §8 is informative, nothing in it is a conformance requirement in
   v0.2, and no normative section, message shape or exit status changed. The reader's copy
-  preference is flyingrobots/parley#58.
+  preference is flyingrobots/parley#58, implemented below.
 
   **Tooling.** `scripts/doctor.ts` grows `--history SEGMENT.jsonl`, which reads a segment of the
   shared stream rather than one run's three streams and reports each run's projection by name and
   digest, every `seq` a copy does not carry, and the lines that could not be parsed. Its output
   schema `parley.tooling.doctor` moves to **1.1.0** for the three new line types
   (`doctor.projection`, `doctor.gap`, `doctor.segment`) and the widened `stream` enum.
+
+- **A reader prefers the least-projected copy** (flyingrobots/parley#58). §8 says a reader that
+  finds the same record in more than one copy should prefer the least-projected one, because the
+  receipt copy is the record and a projection is a view of it. `parley-read`'s loader now does:
+  the copies from the sources that carry no `parley.history.transform` line for a run are folded
+  first and alone, so a projected copy never contributes a field to the record — a view of a
+  record cannot add to the record — and one whose body differs is recorded as a `Projection` note
+  naming the transform and the digest of its source text rather than reported as the writer's
+  `copies.disagree`. A `seq` the receipt carries and a projected copy does not is listed as
+  **withheld** by that transform rather than left as a gap of unknown cause, and a record whose
+  only copy is a projection's is returned and marked `projected`, naming the transforms it came
+  from.
+
+  **What makes a copy a projection is the source's own content, per run.** One segment can hold a
+  projected copy of one run beside a whole copy of another, and the preference therefore never
+  depends on which file was read first — the failure mode the issue names, held by a case that
+  puts the projected copy in the location read first and then the other way round.
+
+  **A projection narrows the body, never the envelope.** A projected copy that disagrees with the
+  record on `event`, `t` or `_schema` is still §1.3's `copies.disagree` defect, reported whichever
+  copy the preference returned: §8 permits a narrower body, not a different event.
+
+  **The edge §8 leaves open: two projected copies of one event, by different transforms.** Neither
+  is the less projected one, so the reader does not guess. They are folded as §1.3 copies in an
+  order stated by the transform's name, its digest and the file, and a disagreement between them
+  is `copies.projected_disagree` — its own code, because two views of one record were never
+  required to agree.
+
+  **A projection is a note, not a defect.** Narrowing what reaches a shared timeline is what a
+  transform is for, so `defects` stays what could not be read or could not be validated, and the
+  projection is reported beside it on the bundle. A segment reaches the loader by name —
+  `loadReceipts({ history: [path] })`, or `readHistorySegment(path)` for one file — because the
+  stream is opt-in and a reader that went looking for it would make the format depend on it.
+
+  No schema moved and **the spec version does not move**: §8's opening paragraph is corrected to
+  say the reader side now has an implementation, which is a documentation correction and not a
+  promotion to normative, and no normative sentence changed.
 
 - **A built-in history transform, `declaredProjection(values)`** (flyingrobots/parley#59): the
   common case for the transform above is a declared list the caller already knows is wrong on a
@@ -461,9 +498,8 @@ so a receipt
   (flyingrobots/parley#48, flyingrobots/parley#49). The three paragraphs are corrected to say so.
   Nothing else in either section changed: each still says it is informative and becomes normative
   only when an implementation and tests support its rules in full, which neither does yet —
-  preferring the least-projected copy (flyingrobots/parley#58), bounding an answer and its detail
-  (flyingrobots/parley#50, flyingrobots/parley#51) remain design, and the reader optic as a whole
-  (flyingrobots/parley#2) is still open. The root README's matching sentence is corrected the same
+  bounding an answer and its detail (flyingrobots/parley#50, flyingrobots/parley#51) remain
+  design, and the reader optic as a whole (flyingrobots/parley#2) is still open. The root README's matching sentence is corrected the same
   way. **Decided: no, nothing moves to normative.** This is a documentation correction, not a
   promotion — the gap between "has an implementation and tests" and "normative" is deliberate
   (§4.5), and moving either section is a separate decision for a separate issue, should one ever

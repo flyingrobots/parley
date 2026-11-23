@@ -796,8 +796,8 @@ This section is informative. It describes a layer that consumes the format above
 side — the shared stream, its segments and retention, and the transform that projects a copy of
 it — has an implementation and tests in `packages/parley-emit`
 ([flyingrobots/parley#3](https://github.com/flyingrobots/parley/issues/3),
-[flyingrobots/parley#57](https://github.com/flyingrobots/parley/issues/57)); preferring the
-least-projected copy, below, does not yet
+[flyingrobots/parley#57](https://github.com/flyingrobots/parley/issues/57)), and preferring the
+least-projected copy, below, has one in `packages/parley-read`
 ([flyingrobots/parley#58](https://github.com/flyingrobots/parley/issues/58)). Nothing in it is a
 conformance requirement in v0.2, and it becomes normative only when an implementation and tests
 support its rules.

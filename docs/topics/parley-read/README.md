@@ -314,7 +314,10 @@ Three consequences worth stating:
   next read sees them.
 - **A read never expires the history it reads.** §5.1 asks every tool for a retention policy, and
   the one a read states deletes nothing: expiring the receipts it was asked to read would destroy
-  the history in order to answer a question about it.
+  the history in order to answer a question about it. Retention is per tool (spec §5.1), so
+  the read's own receipts never cost another tool a slot of its count; the read states no
+  deletion because the only receipts it could expire are its own, and its policy is
+  unchanged.
 - **The read's own identity is the reading program's**, `parley-read` at the package version by
   default, or whatever a host program embedding the reader names itself in `opts.tool`. That is
   not the asker: the asker is who the read is *for*, and `run` on a `parley.query` line is the

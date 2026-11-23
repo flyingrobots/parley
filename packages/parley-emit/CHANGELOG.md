@@ -14,6 +14,14 @@ on its own; the spec and each message schema move separately (spec §4.4).
   field for a drill-down (flyingrobots/parley#51). The writer's behaviour is unchanged and no
   version moved; discovery serves the updated draft.
 
+### Fixed
+
+- Retention counts and expires only this tool's receipts (flyingrobots/parley#75): a bundle is
+  this tool's when its first line is a `receipt.head` naming it. Other tools' receipts, a
+  reader's included, are never counted or deleted, and an unreadable or headless file is left
+  alone. Behaviour change for a directory shared with a reader: the tool now keeps `count` of its
+  own receipts rather than `count` in all. The decision's text says "of this tool's receipts".
+
 ### Added
 
 - **A built-in that refuses a suspected secret** (flyingrobots/parley#60). `refuseSuspectedSecrets(patterns?)`

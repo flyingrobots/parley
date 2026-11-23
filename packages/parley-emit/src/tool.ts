@@ -302,10 +302,43 @@ function hasEnded(path: string): boolean {
   } catch { return false; } finally { if (fd !== null) closeSync(fd); }
 }
 
-/** §5.1: delete the oldest completed bundles beyond `count` in this location; never a receipt still in flight; never on a dry run; recorded as a decision. */
+/** The head's size past which a receipt's owner is not looked for: a head that large is read as "not readable", and the file is left alone. */
+const HEAD_READ_LIMIT = 1024 * 1024;
+
+/**
+ * The `tool` a receipt's head names, from the first line alone, or null when there is no such
+ * line: an empty file, a first line that is not JSON or not a `receipt.head`, a head with no
+ * string `tool`, or a first line longer than the limit. Null means "not ours" to a caller that
+ * deletes, so an unreadable file is never expired.
+ */
+function headTool(path: string): string | null {
+  let fd: number | null = null;
+  try {
+    fd = openSync(path, "r");
+    const chunk = Buffer.alloc(8192);
+    const parts: Buffer[] = [];
+    let total = 0;
+    for (;;) {
+      const n = readSync(fd, chunk, 0, chunk.length, total);
+      if (n <= 0) return null;
+      const nl = chunk.subarray(0, n).indexOf(10);
+      const take = nl === -1 ? n : nl;
+      parts.push(Buffer.from(chunk.subarray(0, take)));
+      total += take;
+      if (total > HEAD_READ_LIMIT) return null;
+      if (nl !== -1) break;
+    }
+    const obj = JSON.parse(Buffer.concat(parts).toString("utf8")) as { event?: unknown; tool?: unknown };
+    return obj.event === "receipt.head" && typeof obj.tool === "string" ? obj.tool : null;
+  } catch { return null; } finally { if (fd !== null) closeSync(fd); }
+}
+
+/** §5.1: delete the oldest completed bundles of this tool beyond `count` in this location (another tool's receipts are never counted or deleted); never a receipt still in flight; never on a dry run; recorded as a decision. */
 function retain(run: Run, receiptDir: string, count: number, dryRun: boolean, at: number): void {
   let files: { name: string; mtime: number }[];
-  try { files = readdirSync(receiptDir).filter((f) => f.endsWith(".jsonl")).map((name) => ({ name, mtime: statSync(join(receiptDir, name)).mtimeMs })); } catch { return; }
+  try {
+    files = readdirSync(receiptDir).filter((f) => f.endsWith(".jsonl") && headTool(join(receiptDir, f)) === run.tool).map((name) => ({ name, mtime: statSync(join(receiptDir, name)).mtimeMs }));
+  } catch { return; }
   const excess = files.length - count;
   if (excess <= 0) return;
   const candidates = files.filter((f) => f.name !== `${run.id}.jsonl`).sort((a, b) => a.mtime - b.mtime || a.name.localeCompare(b.name));
@@ -315,14 +348,14 @@ function retain(run: Run, receiptDir: string, count: number, dryRun: boolean, at
     const p = join(receiptDir, f.name);
     if (hasEnded(p) || at - f.mtime > INCOMPLETE_GRACE_MS) victims.push(f.name);
   }
-  if (!victims.length) { run.step("retention: nothing to delete", `${files.length} receipts exceed the retention count of ${count}, but every excess receipt is still in flight (no end line yet); only completed bundles, or incomplete ones older than a day, are deleted (§5.1)`); return; }
-  if (dryRun) { run.step(`retention: would delete ${victims.length} receipt bundle(s)`, `${files.length} receipts exceed the retention count of ${count}; a dry run performs no retention deletion (§4.3)`, { receipts: victims }); return; }
+  if (!victims.length) { run.step("retention: nothing to delete", `${files.length} of this tool's receipts exceed the retention count of ${count}, but every excess receipt is still in flight (no end line yet); only completed bundles, or incomplete ones older than a day, are deleted (§5.1)`); return; }
+  if (dryRun) { run.step(`retention: would delete ${victims.length} receipt bundle(s)`, `${files.length} of this tool's receipts exceed the retention count of ${count}; a dry run performs no retention deletion (§4.3)`, { receipts: victims }); return; }
   const deleted: string[] = [];
   for (const name of victims) {
     const base = name.slice(0, -".jsonl".length);
     try { rmSync(join(receiptDir, name), { force: true }); rmSync(join(receiptDir, base), { recursive: true, force: true }); deleted.push(name); } catch { /* a bundle another run is deleting */ }
   }
-  run.step(`retention: deleted ${deleted.length} receipt bundle(s)`, `${files.length} receipts exceeded the retention count of ${count}; the oldest completed bundles are deleted with their sidecars (§5.1)`, { receipts: deleted });
+  run.step(`retention: deleted ${deleted.length} receipt bundle(s)`, `${files.length} of this tool's receipts exceeded the retention count of ${count}; the oldest completed bundles are deleted with their sidecars (§5.1)`, { receipts: deleted });
 }
 
 /**

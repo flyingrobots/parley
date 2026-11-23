@@ -9,7 +9,7 @@
     "check": "bun run scripts/check-examples.ts",
     "test": "bun test",
     "doctor": "bun run scripts/doctor.ts",
-    "typecheck": "tsc -p packages/parley-emit/tsconfig.json && tsc -p packages/parley-read/tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json && tsc -p packages/parley-emit/tsconfig.json && tsc -p packages/parley-read/tsconfig.json"
   },
   "devDependencies": {
     "ajv": "^8.17.1",

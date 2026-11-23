@@ -18,6 +18,7 @@ it. This page is the reference for what the package does on `main`; the package
 | `chooseLocation`, `repoRoot`, `stateBase`, `bookkeepingFor` | Receipt placement and the bookkeeping a run declares |
 | `resolveHistory`, `openHistory`, `isHistoryFailure`, `writeWholeLine`, `retainHistory`, `historyBookkeeping`, `segmentName`, `historyDays` | The shared history stream of spec §8: where it is, opening a segment, the whole-line append, segment retention, and the bookkeeping a run with a stream declares |
 | `historyProjection`, `transformDigest`, `transformName`, `isHistorySink` | The projection a configured transform applies to the stream copy: its name, the digest of its source, and which form `MainOptions.history` was given |
+| `declaredProjection(values)` | A built-in transform: the writer's own §5.3 scrubber applied to the stream copy's body with a second declared set; `undefined` for an empty set, so no transform is configured at all |
 | `refuseSuspectedSecrets`, `findSuspectedSecret`, `SECRET_PATTERNS`, `refuse`, `isHistoryRefusal` | The built-in transform that withholds a line whose body matches one of ten documented token shapes, the shapes themselves as data, and the typed refusal a transform returns to withhold a line under a code of its own |
 | `checkRecord` | The bounded JSON Schema check the writer re-validates a projected line with, in a package with no runtime dependencies |
 | `classifySecrets`, `collectSecretValues`, `redactArgv`, `scrub` | Redaction |
@@ -152,6 +153,33 @@ The dependency runs one way. The stream consumes the format; the format never re
 stream. Querying it is flyingrobots/parley#2, the reader's preference for the least-projected
 copy is flyingrobots/parley#58, and syncing it between machines is nobody's yet.
 
+### A built-in: declaredProjection
+
+The transform above is user code; `declaredProjection(values)` (flyingrobots/parley#59) is the
+one built in, for the common case of a declared list the caller already knows is wrong on a
+shared timeline — a username in a path, a hostname, a private repository name:
+
+```ts
+import { declaredProjection } from "parley-emit";
+
+await main(tool, argv, handler, { history: { transform: declaredProjection(["db-prod-7"]) } });
+```
+
+It is the **same** scrubber `src/redact.ts` uses for a declared secret (§5.3), applied to the
+stream copy's body with `values` as a second declared set: longest value first, so one value that
+contains another is replaced whole, and a key that carries a declared value is renamed. It never
+touches the envelope the writer reattaches regardless, nor the writer's own identity scalars
+(`tool`, `v`, `inv`, `sha256`, `name`, `id`, `version`, `code` — `DIGEST_KEYS` in `src/run.ts`) on
+a writer-built record it might also be handed, since those carry no pattern a validator would
+reject a corrupted value by. `argv` is not one of them, and scrubs normally.
+
+An empty `values` returns `undefined`, not an identity function, so `MainOptions.history.transform`
+is itself `undefined`: the writer never builds a projection for it and the stream copy carries no
+`parley.history.transform` opening line at all. The function returned is declared with a literal
+name, so that line's `name` is always `declaredProjection` and its `sha256` — a digest of the
+function's *source text* — never discloses `values`, which only ever reaches it as a variable the
+function closes over.
+
 ### Refusing a suspected secret
 
 `refuseSuspectedSecrets(patterns?)` is a built-in transform (flyingrobots/parley#60). Declared
@@ -169,6 +197,8 @@ the withheld `seq`, the shape and a JSON Pointer — never the matched text.
 | Limits | An unlisted shape passes; a token split across two values passes; a token used as a key passes; a legitimate value that matches is withheld. Declaring the value as a secret (§5.3) remains the real protection, which the warning's `remedy` says |
 | The head | Not exempt, and the likeliest line to match, because it echoes `argv` and `resolved` (§5). An undeclared token on the command line withholds the whole head, so that stream copy has no head; the gap is reported and the receipt is complete |
 | The pointer | Built from the record's own keys, so when it matches a shape itself the warning names the shape instead of the pointer |
+| Identity keys | Scanned, unlike `declaredProjection`, which skips `DIGEST_KEYS` because it rewrites; a refusal changes nothing, so there is nothing to corrupt and skipping would only let a token through |
+| Composing | No helper ships; a caller composes `declaredProjection` and this in its own function, passing a refusal on untouched |
 | Status | Unchanged. A withheld line is a warning, and warnings never change the exit status (§6.1) |
 
 A transform of your own can withhold a line under its own code the same way, by returning

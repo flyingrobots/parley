@@ -26,7 +26,7 @@ const ENVELOPE_KEYS = ["t", "seq", "run", "_schema"] as const;
  * reach a writer-built record (`resolved`, input descriptors) are scrubbed in full before it is
  * built.
  */
-const DIGEST_KEYS = new Set(["sha256", "inv", "tool", "v", "name", "id", "version", "code"]);
+export const DIGEST_KEYS = new Set(["sha256", "inv", "tool", "v", "name", "id", "version", "code"]);
 
 export const SCHEMA_IDS = {
   bootstrap: { id: "parley.run.bootstrap", version: "1.1.1" },

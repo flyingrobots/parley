@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 import { doctor } from "../../../scripts/doctor.ts";
-import { checkRecord, defineTool, main, schemaSubsetGap, SCHEMA_SOURCE, SCHEMAS, transformDigest, ulid, writeWholeLine, historyDays, findSuspectedSecret, isHistoryRefusal, refuse, refuseSuspectedSecrets, SECRET_PATTERNS, HISTORY_DEFAULT_DAYS, HISTORY_MAX_DAYS, type HistoryTransform, type MainOptions, type Run, type Sink, type ToolSpec } from "../src/index.ts";
+import { checkRecord, defineTool, main, schemaSubsetGap, SCHEMA_SOURCE, SCHEMAS, transformDigest, ulid, writeWholeLine, historyDays, declaredProjection, findSuspectedSecret, isHistoryRefusal, refuse, refuseSuspectedSecrets, SECRET_PATTERNS, HISTORY_DEFAULT_DAYS, HISTORY_MAX_DAYS, type HistoryTransform, type MainOptions, type Run, type Sink, type ToolSpec } from "../src/index.ts";
 import { inspectSegment } from "../../../scripts/doctor.ts";
 
 const SCHEMAS_DIR = resolve(import.meta.dir, "../../../schemas");
@@ -1756,6 +1756,32 @@ describe("PE-25 refuseSuspectedSecrets", () => {
     const vs = inspectSegment(segmentText(hist)) as { event: string; seq?: number }[];
     expect(vs.filter((v) => v.event === "doctor.gap").map((v) => v.seq)).toContain(r.receiptLines[0]!.seq);
     expect(vs.at(-1)).toMatchObject({ event: "doctor.segment", runs: 1, projected: 1, torn: 0, passed: true });
+  });
+
+  test("declaredProjection then refuseSuspectedSecrets compose in a caller's own function", async () => {
+    // There is no composition helper; composing is the caller's function, and this is the whole
+    // of it. A refusal from the first is passed on untouched, a record goes on to the second.
+    const declared = declaredProjection(["db-prod-7"])!;
+    const suspect = refuseSuspectedSecrets();
+    const both: HistoryTransform = (rec) => {
+      const out = declared(rec);
+      return out && !isHistoryRefusal(out) ? suspect(out) : out;
+    };
+    const r = await projected(both, (run) => {
+      run.step("connected to db-prod-7", "the host is fine in a receipt", { host: "db-prod-7" });
+      run.step("read the credential", "the token is the thing under test", { token: PLANTED, host: "db-prod-7" });
+      run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" });
+    }, { name: "declared-then-suspect" });
+    expect(r.status).toBe(0);
+    expect(r.violations).toEqual([]);
+    const hostStep = r.objs.find((o) => o.event === "receipt.step" && String(o.decision).startsWith("connected to"))!;
+    expect(hostStep.decision).toBe("connected to [redacted]");
+    expect(r.objs.some((o) => o.decision === "read the credential" || String(o.decision).startsWith("read the"))).toBe(false);
+    expect(warningsOf(r, "history.suspected_secret").length).toBe(1);
+    expect(r.text.includes("db-prod-7")).toBe(false);
+    expect(r.text.includes(PLANTED)).toBe(false);
+    expect(r.receipt.includes("db-prod-7")).toBe(true);
+    expect(r.receipt.includes(PLANTED)).toBe(true);
   });
 
   test("ten thousand lines of one segment terminate inside the stated bound", async () => {

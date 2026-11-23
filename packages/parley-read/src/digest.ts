@@ -198,7 +198,7 @@ const sectionBytes = (section: RunSection) => Buffer.byteLength(JSON.stringify(s
 
 /**
  * What a lens says about one run, read off the window's records for it (`window` may hold other
- * runs' records too) and the window's outcomes. The key order is fixed, `run, tool, v, argv, inv,
+ * runs' records too; `digestFor` passes only the run's own) and the window's outcomes. The key order is fixed, `run, tool, v, argv, inv,
  * outcome, reason, head, dropped`, and the section is bounded by `RUN_SECTION_BYTES` by dropping
  * whole fields, never by cutting a string.
  */
@@ -229,7 +229,7 @@ export function runSection(run: string, window: readonly LoadedRecord[], outcome
       ...(outcome === undefined ? {} : { outcome }),
       ...(reason === undefined ? {} : { reason }),
       ...(head === undefined ? { head: "not_in_window" as const } : {}),
-      ...(dropped.length === 0 ? {} : { dropped }),
+      ...(dropped.length === 0 ? {} : { dropped: [...dropped] }),
     } as RunSection;
   };
   const dropped: Droppable[] = [];
@@ -292,10 +292,18 @@ export function digestFor(
 ): Digested {
   // Built once, so every candidate prefix the byte search measures is cut from the same entries.
   const entries = ranked.map((record) => lensEntry(record));
+  // One pass over the window groups each run's records, so a section never scans the whole
+  // window for its own (RD-80h).
+  const byRun = new Map<string, LoadedRecord[]>();
+  for (const record of ranked) {
+    const own = byRun.get(record.run);
+    if (own === undefined) byRun.set(record.run, [record]);
+    else own.push(record);
+  }
   const sections = new Map<string, RunSection>();
   const sectionOf = (run: string) => {
     let section = sections.get(run);
-    if (section === undefined) sections.set(run, section = runSection(run, ranked, outcomes));
+    if (section === undefined) sections.set(run, section = runSection(run, byRun.get(run) ?? [], outcomes));
     return section;
   };
   const build = (keep: number): Digest => {

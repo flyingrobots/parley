@@ -2505,7 +2505,8 @@ describe("RD-80 a lens states each run it names once", () => {
     const elapsed = Date.now() - started;
     expect(digested.digest.runs.length).toBe(10_000);
     // A section per run is found by an index over the window, not a scan of it per run. A scan
-    // per run took about 1.5 s here; the bound fails on that complexity, not on a noisy machine.
+    // per run took 1.1 to 1.6 s here, the index about 30 ms; the bound fails on that complexity,
+    // not on a noisy machine.
     expect(elapsed).toBeLessThan(500);
   }, 60_000);
 });

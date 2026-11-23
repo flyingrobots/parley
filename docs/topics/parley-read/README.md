@@ -24,11 +24,12 @@ suite and `bun run typecheck` checks it strictly, over `src`, `scripts` and `tes
 | `planQuery(request)` | The refusal rules and the budget default, as a pure function: it reads nothing, writes nothing and records nothing |
 | `queryRecord(query)` | The `parley.query` payload for an accepted read, without the envelope the writer owns |
 | `rankRecords(query, records)` | The ranking, as a pure function from an accepted query and records to the same records in one stated order |
-| `digestFor(query, answers, ranked, envelope, outcomes?)` | The bound, as a pure function from an accepted query and a ranking to the digest's `parley.lens` payload, the records it names, the count it excluded, the bytes its line will take and whether it `fits` a stated byte bound at all; `outcomes` is the ranking's per-run verdict, which each run section carries |
-| `sufficientBytes(query, answers, total, envelope)` | The smallest `budget.bytes` that holds a digest naming no records (and so no run sections) over a ranking of `total`, which is what a byte decline names |
+| `digestFor(query, answers, ranked, envelope, outcomes?)` | The bound, as a pure function from an accepted query and a ranking to the digest's `parley.lens` payload, the records it names, the count it excluded and how many of those it `folded`, the bytes its line will take and whether it `fits` a stated byte bound at all; `outcomes` is the ranking's per-run verdict, which each run section carries and without which nothing [folds](#runs-of-one-invocation-are-named-once) |
+| `sufficientBytes(query, answers, total, envelope, folded?)` | The smallest `budget.bytes` that holds a digest naming no records (and so no run sections) over a ranking of `total` of which the fold left `folded` out, which is what a byte decline names |
+| `foldRuns(ranked, outcomes?)` | The fold, as a pure function: the ranked records with every folded-away run's removed, each representative's `{runs, records}`, and the count left out — see [runs of one invocation](#runs-of-one-invocation-are-named-once) |
 | `Deadline`, `MONOTONIC`, `OVER_BUDGET`, `declineOnRun` | The deadline `budget.ms` is checked against, the default clock it is measured on, the one code a read declines with, and the step and error a decline reports on its run |
 | `lensEntry(record)` | The entry a digest names one record by: its `(run, seq)` and its summary |
-| `runSection(run, window, outcomes?)` | What a digest says once about one run it names, read off the window's records: see [what each run section says](#what-each-run-section-says) |
+| `runSection(run, window, outcomes?, fold?)` | What a digest says once about one run it names, read off the window's records: see [what each run section says](#what-each-run-section-says) |
 | `RUN_SECTION_BYTES`, `DROPPABLE`, `UNDETERMINED_REASONS` | The bound on one run section (512 bytes), the fields it drops to fit in the order it drops them, and the closed set of reasons an outcome is `undetermined` |
 | `digestLine(digest, envelope)`, `digestBytes(digest, envelope)` | The line the writer will write for a digest, and its length in UTF-8 bytes: how a byte budget is applied before the line exists rather than discovered after it |
 | `runOutcomes(records)`, `onViewSurface(view, record)`, `onFailureSurface(record)`, `impliesChange(view)` | The four questions the ranking asks, each answerable on its own |
@@ -362,7 +363,7 @@ exact pair. It carries:
 | `view` | §9's purpose: the shape of the answer, one of the five tokens |
 | `window` | The stretch of history the digest was drawn from, echoed verbatim |
 | `budget` | The budget **actually applied**, a default included: two digests under different budgets are not comparable |
-| `loss` | `bound` and `excluded`: what kind of statement the loss is, and how many records the bound left out |
+| `loss` | `bound`, `excluded` and `folded`: what kind of statement the loss is, how many records of the window the digest does not name, and how many of those a [fold](#runs-of-one-invocation-are-named-once) rather than the budget left out |
 | `runs` | One [section](#what-each-run-section-says) per run `records` names, in the order the entries first name it: which invocation the run was and what became of it, said once |
 | `records` | The records the digest names, in rank order, by `(run, seq)` — the way back a [drill-down](#opening-records-by-identity) takes — each with a [summary](#what-each-entry-says) of the record it names |
 
@@ -408,10 +409,11 @@ holds a captured one.
 | --- | --- | --- |
 | `run` | The run the section is about, one that `records` names | Never |
 | `tool`, `v`, `argv` | The run's `receipt.head` as the loader read it. `argv` is already redacted there (§5.3), so a declared secret is not repeated here | The window does not hold the head, or the head does not carry the field usably |
-| `inv` | The head's `inv`, or else that of the window's `receipt.inputs` for the run (§2.2): what [flyingrobots/parley#79](https://github.com/flyingrobots/parley/issues/79) can fold repeated runs by | Neither carries one. Never a placeholder (§2.2) |
+| `inv` | The head's `inv`, or else that of the window's `receipt.inputs` for the run (§2.2): what [a fold](#runs-of-one-invocation-are-named-once) groups repeated runs by | Neither carries one. Never a placeholder (§2.2) |
 | `outcome` | `failed`, `undetermined` or `succeeded`: what the window establishes about the run, exactly as [the ranking](#what-a-runs-outcome-is-established-from) established it | No ranking outcomes were given to `digestFor` |
 | `reason` | Why the outcome is `undetermined`: `no_end_in_window`, the window holds no `end` for the run, or `end_status_unusable`, it holds one whose `status` is not a number. Those are the only two ways the ranking reaches `undetermined`, and the schema refuses any other value | The outcome is not `undetermined`. The schema refuses a `reason` beside `failed` or `succeeded` and an `undetermined` without one |
 | `head` | `not_in_window`: the window does not hold the run's head, so `tool`, `v` and `argv` are unknown here rather than missing | The window holds the head |
+| `folded` | `{runs, records}`: this run stands for `runs` runs of one invocation with one result, itself included, and the fold left `records` records of the others out. See [runs of one invocation](#runs-of-one-invocation-are-named-once). Never dropped | The run stands only for itself |
 | `dropped` | The fields left out to fit the section's bound, in the order they were dropped | Nothing was dropped |
 
 A section is read off **the window's records**, the same ones the ranking was given, and from
@@ -424,7 +426,7 @@ ended, and it does not try.
 **Each section is bounded.** When a section's serialised JSON is more than `RUN_SECTION_BYTES`,
 512 UTF-8 bytes, whole fields are dropped — `argv` first, then `inv`, then `v`, then `tool` — until
 it fits, and `dropped` names them. A string is never cut part-way, because a cut argument reads as
-a different argument. `run`, `outcome`, `reason` and `head` are never dropped, because without them
+a different argument. `run`, `outcome`, `reason`, `head` and `folded` are never dropped, because without them
 the section does not say which run it is or what became of it; a run id long enough to break the
 bound on its own is left whole, and the line's `budget.bytes` still holds.
 
@@ -432,6 +434,52 @@ The entries and the sections cost bytes, and both are part of the line `budget.b
 Under `{records: 20, bytes: 2048}`, over runs of three records each, the digest names 13 records
 where a bare `(run, seq)` lens named 20 and an entry carrying its run's outcome named 16 (RD-22b).
 A run of more records costs its section once and so pays less per entry.
+
+### Runs of one invocation are named once
+
+A test suite runs its program many times in a burst with the same few argument vectors. In the
+[cold resume](../reader/cold-resume.md) those bursts filled every digest of 20 with the same
+runs, and a digest could not reach past the first burst. So before the bound is applied, a digest
+**folds** the runs that are one invocation with one result into the most recent of them
+([flyingrobots/parley#79](https://github.com/flyingrobots/parley/issues/79)):
+
+```json illustrative
+{"run":"01M82S0D86ZC0QZWGHDV2A5HZJ","tool":"footprint","v":"0.2.0","argv":["footprint","HEAD~1..HEAD","--human"],"inv":"70377768731b22e10242fac4cfac373e8edf08cfd2fc4ba3adc9a25ce2a5dca5","outcome":"succeeded","folded":{"runs":10,"records":117}}
+```
+
+That section is a fragment of a `what-ran` lens over footprint's own receipts, captured in the
+[cold resume](../reader/cold-resume.md#folding-repeated-runs): ten runs of one invocation, named
+by the last of them.
+
+| Rule | Because |
+| --- | --- |
+| Two runs fold when their `inv` is equal **and** their outcome, `reason`, `end` status and error, warning and startup-failure codes, in the order emitted, are all equal | `inv` is the run's identity (§2.2), not its result. "Same `inv`, different result" is a divergence (§2.3), exactly what a reader must see, so a flaky run that failed once and passed once is two sections, never one |
+| A run with no `inv` never folds | §2.2 omits `inv` when a program cannot make it safe, and a discovery run has none. Argument vectors are not identity |
+| A redacted run never folds: its head carries `redacted`, its `end` says `redacted: true`, or it emitted a `redaction` | A redacted receipt shares its `inv` with every run that differed only in a secret (§2.3) |
+| Nothing folds when `digestFor` is given no outcomes | "The same result" cannot be established without them |
+| The representative is the run whose latest dated record in the window is latest, ties to the greater run id | The most recent run is the one a resuming reader is likeliest to act on |
+
+The representative's [section](#what-each-run-section-says) says `folded: {runs, records}`. The
+other runs' records are not named, and every one of them is still counted in `loss.excluded`;
+`loss.folded` says how many of those the fold left out, so `excluded − folded` is what the budget
+cut. The fold depends on the window and its outcomes alone, never on the budget, so the same
+window folds the same way under any budget, and a digest that folded anything is `count-only`,
+never `none`. `loss.folded` also counts a group whose representative the budget then cut, so the
+sections' `folded.records` sum to at most `loss.folded`.
+
+The fold is part of how the digest is built, not a view and not a ranking: the ranking still
+orders every record of the window and drops none, the fold removes the folded-away runs' records
+from what the digest may name, keeping the ranking's order, and the bound cuts the tail of what
+is left. The answer's `records` and the ranking it carries hold what the digest names, and
+`counts.folded` is the fold's share of `counts.excluded`.
+
+The folded runs' ids are not listed, to keep the line small. A read over a narrower window that
+holds a folded run without its representative names it, and `loadReceipts` over the window holds
+them all.
+
+On footprint's own 50 receipts, under the default budget of 20 records, the fold raised the
+distinct invocations a digest names from 6 to 11 under `what-ran`, and from 2 to 4 under
+`everything`; the measurement is in the [cold resume](../reader/cold-resume.md#folding-repeated-runs).
 
 ### The bound, exactly
 
@@ -459,8 +507,8 @@ Two things the bound is **not**:
 
 What the bound cuts is the **tail of the ranking**, never a record chosen some other way. The
 order ranks every record in the window and removes none of it, so "the records the digest does not
-name" is exactly "the records the ranking placed beyond the bound", which is a number a count can
-state honestly.
+name" is exactly "the records the fold left out and the records the ranking placed beyond the
+bound", two numbers a count can state honestly, and `loss` states both.
 
 ### When a read declines
 
@@ -525,13 +573,16 @@ that put the end of the load 3 ms after the call.
 
 - `loss.excluded` is **always present**, zero included. An absent count and a count of zero are
   different claims, and §9 asks for the count precisely so a caller can widen deliberately.
+  `loss.folded` is always present too, and a lens written before it existed has none, which is
+  how a reader tells "folded nothing" from "did not fold".
 - `loss.bound` is `none` only beside an excluded count of 0, and the schema refuses the other
   pairing, so a digest that left something out says so **structurally** rather than in prose.
   `count-only` is the other value, and it says the count is all that is known: one withheld record
   can matter more than fifty, so a cardinality cannot bound what a view loses even in principle.
 - The answer's `records`, and the ranking it carries, **stop at the bound**. What was excluded is
   not returned by another route and is named nowhere, so a drill-down cannot open it either: a
-  caller reaches it by reading again under a wider budget, which the count tells them to do.
+  caller reaches it by reading again under a wider budget, which the count tells them to do, or,
+  for what a fold left out, over a narrower window.
 - `counts.inWindow`, and the ranking's per-run outcomes and tier census, still describe the
   **whole window** the digest was drawn from. That is the asymmetry on purpose: a caller can see
   the digest is not the whole without being handed what it excluded, and a run's outcome stays

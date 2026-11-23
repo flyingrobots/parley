@@ -405,21 +405,23 @@ Four things in that order are the whole feature:
 ## A captured digest
 
 Three runs of the same kind, made afresh, then one read with `budget: {"records": 4}` over the day's
-window on 2026-11-22.
-Eleven records are in the window and the digest names four of them, so it says `excluded: 7`.
+window on 2026-11-22. The first and third runs are the same invocation with the same result, so the
+digest names the third for both. Eleven records are in the window and the digest names four of
+them, so it says `excluded: 7`, and `folded: 4` of those are the first run's.
 These are the two lines that read's own receipt holds, byte for byte — `bun run check` validates
 both against the shipped schemas:
 
 ```jsonl
-{"event":"query","t":1795397112620,"seq":2,"run":"01M8303MRT8VTRCG7194488Y8S","asker":{"tool":"claude-code","cwd":"/var/folders/wt/s8clst9955x1l0qblsl4925w0000gn/T/parley-digest-readme.MwE2Ll/work","task":"flyingrobots/parley#83"},"view":"what-changed","budget":{"records":4},"window":{"from":1795310712598,"to":1795397112598},"note":"about to change the counter; what has it done here","_schema":{"id":"parley.query","version":"1.0.0"}}
-{"event":"lens","t":1795397112764,"seq":6,"run":"01M8303MRT8VTRCG7194488Y8S","query":{"run":"01M8303MRT8VTRCG7194488Y8S","seq":2},"asker":{"tool":"claude-code","cwd":"/var/folders/wt/s8clst9955x1l0qblsl4925w0000gn/T/parley-digest-readme.MwE2Ll/work","task":"flyingrobots/parley#83"},"view":"what-changed","budget":{"records":4},"window":{"from":1795310712598,"to":1795397112598},"loss":{"bound":"count-only","excluded":7},"runs":[{"run":"01M8303MJZHP2RYWG9D18FNK2V","tool":"count","v":"0.1.0","argv":["count","files"],"inv":"638c446f866624d00aed41b516d92549f87b0197871ae5db312b7edaa8051a16","outcome":"failed"},{"run":"01M8303MF2XQMZEZHVCEFHHFX2","tool":"count","v":"0.1.0","argv":["count","files"],"inv":"638c446f866624d00aed41b516d92549f87b0197871ae5db312b7edaa8051a16","outcome":"succeeded"},{"run":"01M8303MQZP1V63RCF82C1BJGP","tool":"count","v":"0.1.0","argv":["count","files"],"inv":"638c446f866624d00aed41b516d92549f87b0197871ae5db312b7edaa8051a16","outcome":"succeeded"}],"records":[{"run":"01M8303MJZHP2RYWG9D18FNK2V","seq":2,"event":"error","t":1795397112430,"code":"uncaught.exception"},{"run":"01M8303MJZHP2RYWG9D18FNK2V","seq":3,"event":"end","t":1795397112430},{"run":"01M8303MF2XQMZEZHVCEFHHFX2","seq":3,"event":"result","t":1795397112301},{"run":"01M8303MQZP1V63RCF82C1BJGP","seq":3,"event":"result","t":1795397112594}],"_schema":{"id":"parley.lens","version":"1.0.0"}}
+{"event":"query","t":1795398764223,"seq":2,"run":"01M831P1NQBDVDNP31CB8PR37B","asker":{"tool":"claude-code","cwd":"/var/folders/wt/s8clst9955x1l0qblsl4925w0000gn/T/parley-digest-readme.Ezf4n2/work","task":"flyingrobots/parley#79"},"view":"what-changed","budget":{"records":4},"window":{"from":1795312364213,"to":1795398764213},"note":"about to change the counter; what has it done here","_schema":{"id":"parley.query","version":"1.0.0"}}
+{"event":"lens","t":1795398764277,"seq":6,"run":"01M831P1NQBDVDNP31CB8PR37B","query":{"run":"01M831P1NQBDVDNP31CB8PR37B","seq":2},"asker":{"tool":"claude-code","cwd":"/var/folders/wt/s8clst9955x1l0qblsl4925w0000gn/T/parley-digest-readme.Ezf4n2/work","task":"flyingrobots/parley#79"},"view":"what-changed","budget":{"records":4},"window":{"from":1795312364213,"to":1795398764213},"loss":{"bound":"count-only","excluded":7,"folded":4},"runs":[{"run":"01M831P1J8ZQP5VR12ZTW1NV5W","tool":"count","v":"0.1.0","argv":["count","files"],"inv":"638c446f866624d00aed41b516d92549f87b0197871ae5db312b7edaa8051a16","outcome":"failed"},{"run":"01M831P1NAJAZ0C7BVVQT72MFN","tool":"count","v":"0.1.0","argv":["count","files"],"inv":"638c446f866624d00aed41b516d92549f87b0197871ae5db312b7edaa8051a16","outcome":"succeeded","folded":{"runs":2,"records":4}}],"records":[{"run":"01M831P1J8ZQP5VR12ZTW1NV5W","seq":2,"event":"error","t":1795398764112,"code":"uncaught.exception"},{"run":"01M831P1J8ZQP5VR12ZTW1NV5W","seq":3,"event":"end","t":1795398764112},{"run":"01M831P1NAJAZ0C7BVVQT72MFN","seq":3,"event":"result","t":1795398764211},{"run":"01M831P1J8ZQP5VR12ZTW1NV5W","seq":1,"event":"receipt.head","t":1795398764111}],"_schema":{"id":"parley.lens","version":"1.0.0"}}
 ```
 
-That line is 1,386 bytes. Six things in it are the whole feature:
+That line is 1,251 bytes. Seven things in it are the whole feature:
 
-- **It names the four best-ranked records of eleven**, and nothing else: the failing run's `error`
-  and status-2 `end` first, then the two successful runs' `count.result` records. The bound cut the
-  tail of the order flyingrobots/parley#49 produced, not a selection made some other way.
+- **It names the four best-ranked records of what it may name**, and nothing else: the failing
+  run's `error` and status-2 `end` first, then the successful run's `count.result`, then the
+  failing run's head. The bound cut the tail of the order flyingrobots/parley#49 produced, not a
+  selection made some other way.
 - **It says what that cost**, as a count: `excluded: 7`. The count is present at zero too, because
   an absent count and a count of zero are different claims.
 - **It cannot read as complete.** `loss.bound` is `count-only`; `none` is only valid beside a
@@ -428,12 +430,17 @@ That line is 1,386 bytes. Six things in it are the whole feature:
   rather than re-deriving them from a result — see [opening what a digest names](#opening-what-a-digest-names).
 - **Each name says what it is.** Beside its `(run, seq)`, every entry carries the record's
   `event` and its `t`, and an `error` its `code`, so a reader sees an `uncaught.exception`
-  error, an `end` and two `result`s without opening any of them (flyingrobots/parley#77). The
+  error, an `end`, a `result` and a head without opening any of them (flyingrobots/parley#77). The
   summary is read off the loaded record.
 - **Each run is said once.** `runs` holds one section per run the entries name: the head's
   `tool`, `v`, `argv` and `inv`, and the run's `outcome` over the whole window, so the first
-  run reads as `count files` that `failed` and the other two as the same invocation that
+  section reads as `count files` that `failed` and the second as the same invocation that
   `succeeded` (flyingrobots/parley#83). Like the summary, it counts against `budget.bytes`.
+- **A repeat is said once too.** The two runs that `succeeded` share an `inv` and a result, so the
+  second section stands for both: `folded: {"runs": 2, "records": 4}`, and `loss.folded` says 4 of
+  the 7 excluded were left out by that fold rather than by the budget (flyingrobots/parley#79). The
+  failed run shares the `inv` and not the result, so it is never folded into them. See
+  [runs of one invocation](../../docs/topics/parley-read/README.md#runs-of-one-invocation-are-named-once).
 
 ## Opening what a digest names
 

@@ -25,7 +25,7 @@ Released versions are snapshotted, immutable, under `released/<id>/<version>.sch
 | `parley.command` | 1.0.0 (draft) | A command's description, effects, secrets and emitted types | §4.1 to §4.3 |
 | `parley.schema` | 1.0.0 (draft) | One message schema, carried by discovery | §4.1, §4.2 |
 | `parley.query` | 1.0.0 (draft) | A read against the history, recorded as an event: asker, view, budget, window | §9 |
-| `parley.lens` | 1.0.0 (draft) | The lens a result carries: view, asker, budget, window, loss bound, records | §9 |
+| `parley.lens` | 1.0.0 (draft) | The lens a result carries: view, asker, budget, window, loss bound, the runs it names, records | §9 |
 | `parley.history.transform` | 1.0.0 (draft) | The opening line of a projected copy of a run on the shared stream: the projection's name and the digest of its source | §8 |
 
 Every message type the spec requires has a draft schema here and a validated example in the

@@ -24,8 +24,10 @@ suite and `bun run typecheck` checks it strictly, over `src`, `scripts` and `tes
 | `planQuery(request)` | The refusal rules and the budget default, as a pure function: it reads nothing, writes nothing and records nothing |
 | `queryRecord(query)` | The `parley.query` payload for an accepted read, without the envelope the writer owns |
 | `rankRecords(query, records)` | The ranking, as a pure function from an accepted query and records to the same records in one stated order |
-| `digestFor(query, answers, ranked, envelope, outcomes?)` | The bound, as a pure function from an accepted query and a ranking to the digest's `parley.lens` payload, the records it names, the count it excluded and the bytes its line will take; `outcomes` is the ranking's per-run verdict, which each entry carries |
-| `lensEntry(record, outcomes?)` | The entry a digest names one record by: its `(run, seq)` and its summary |
+| `digestFor(query, answers, ranked, envelope, outcomes?)` | The bound, as a pure function from an accepted query and a ranking to the digest's `parley.lens` payload, the records it names, the count it excluded and the bytes its line will take; `outcomes` is the ranking's per-run verdict, which each run section carries |
+| `lensEntry(record)` | The entry a digest names one record by: its `(run, seq)` and its summary |
+| `runSection(run, window, outcomes?)` | What a digest says once about one run it names, read off the window's records: see [what each run section says](#what-each-run-section-says) |
+| `RUN_SECTION_BYTES`, `DROPPABLE`, `UNDETERMINED_REASONS` | The bound on one run section (512 bytes), the fields it drops to fit in the order it drops them, and the closed set of reasons an outcome is `undetermined` |
 | `digestLine(digest, envelope)`, `digestBytes(digest, envelope)` | The line the writer will write for a digest, and its length in UTF-8 bytes: how a byte budget is applied before the line exists rather than discovered after it |
 | `runOutcomes(records)`, `onViewSurface(view, record)`, `onFailureSurface(record)`, `impliesChange(view)` | The four questions the ranking asks, each answerable on its own |
 | `TIERS`, `OUTCOMES`, `CHANGE_VIEWS` | The three tiers best first, the three outcomes best-known-worst first, and the views that imply a change |
@@ -355,6 +357,7 @@ exact pair. It carries:
 | `window` | The stretch of history the digest was drawn from, echoed verbatim |
 | `budget` | The budget **actually applied**, a default included: two digests under different budgets are not comparable |
 | `loss` | `bound` and `excluded`: what kind of statement the loss is, and how many records the bound left out |
+| `runs` | One [section](#what-each-run-section-says) per run `records` names, in the order the entries first name it: which invocation the run was and what became of it, said once |
 | `records` | The records the digest names, in rank order, by `(run, seq)` — the way back a [drill-down](#opening-records-by-identity) takes — each with a [summary](#what-each-entry-says) of the record it names |
 
 ### What each entry says
@@ -364,7 +367,7 @@ summary of the record it names
 ([flyingrobots/parley#77](https://github.com/flyingrobots/parley/issues/77)):
 
 ```json illustrative
-{"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8","seq":4,"event":"error","t":1795326412352,"outcome":"failed"}
+{"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8","seq":4,"event":"error","t":1795326412380,"code":"contrast.unsatisfiable"}
 ```
 
 That entry is a fragment of a lens, not a message of its own; the [package README](../../../packages/parley-read/README.md#a-captured-digest)
@@ -375,17 +378,54 @@ holds a captured one.
 | `run`, `seq` | The record's identity: the way back to it | Never |
 | `event` | The record's event token as the loader read it, a tool's own token such as `result` included verbatim | The record carries no event token |
 | `t` | The record's POSIX milliseconds as the loader read them | The record has no non-negative integer `t`. A made-up one would sort and read as real |
-| `outcome` | `failed`, `undetermined` or `succeeded`: what the window establishes about the record's run, exactly as [the ranking](#what-a-runs-outcome-is-established-from) established it | No ranking outcomes were given to `digestFor` |
+| `code` | An `error` or `warning` record's code (spec §6), so three failures of one case read as one case without opening them | The record is neither, or its `code` is not §6's shape: nothing not shaped like a code is echoed |
 
-The summary is read off the loaded record and the ranking when the digest is built, and from
-nowhere else, so it cannot drift from the record it names: RD-50b checks every entry of every view
-against the loader read again afterwards. The `outcome` is the **window's** verdict, not the
-digest's prefix's: a run whose `end` the bound cut still says `succeeded`, and a run whose `end`
-is outside the window says `undetermined` rather than a guess.
+The summary is read off the loaded record when the digest is built, and from nowhere else, so it
+cannot drift from the record it names: RD-50b checks every entry of every view against the loader
+read again afterwards. What is true of the whole run, its identity and its outcome, is not on the
+entry: it is said once, in the run's section.
 
-The summary costs bytes, about 65 an entry, and it is part of the line `budget.bytes` bounds. A
-byte budget therefore names fewer records than it did when an entry was only `(run, seq)`: under
-`{records: 20, bytes: 2048}` the digest names 16 records where it named 20 (RD-22b).
+### What each run section says
+
+Which invocation a run was is the same for every record of it, so a digest says it once per run,
+in `runs`, rather than on each entry
+([flyingrobots/parley#83](https://github.com/flyingrobots/parley/issues/83)):
+
+```json illustrative
+{"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8","tool":"theme-book","v":"0.2.1","argv":["theme-book","count","--format","css","--token","[redacted]"],"outcome":"undetermined","reason":"no_end_in_window"}
+```
+
+That section is a fragment of a lens, not a message of its own; the [package README](../../../packages/parley-read/README.md#a-captured-digest)
+holds a captured one.
+
+| Field | Is | Absent when |
+| --- | --- | --- |
+| `run` | The run the section is about, one that `records` names | Never |
+| `tool`, `v`, `argv` | The run's `receipt.head` as the loader read it. `argv` is already redacted there (§5.3), so a declared secret is not repeated here | The window does not hold the head, or the head does not carry the field usably |
+| `inv` | The head's `inv`, or else that of the window's `receipt.inputs` for the run (§2.2): what [flyingrobots/parley#79](https://github.com/flyingrobots/parley/issues/79) can fold repeated runs by | Neither carries one. Never a placeholder (§2.2) |
+| `outcome` | `failed`, `undetermined` or `succeeded`: what the window establishes about the run, exactly as [the ranking](#what-a-runs-outcome-is-established-from) established it | No ranking outcomes were given to `digestFor` |
+| `reason` | Why the outcome is `undetermined`: `no_end_in_window`, the window holds no `end` for the run, or `end_status_unusable`, it holds one whose `status` is not a number. Those are the only two ways the ranking reaches `undetermined`, and the schema refuses any other value | The outcome is not `undetermined`. The schema refuses a `reason` beside `failed` or `succeeded` and an `undetermined` without one |
+| `head` | `not_in_window`: the window does not hold the run's head, so `tool`, `v` and `argv` are unknown here rather than missing | The window holds the head |
+| `dropped` | The fields left out to fit the section's bound, in the order they were dropped | Nothing was dropped |
+
+A section is read off **the window's records**, the same ones the ranking was given, and from
+nowhere else, so it cannot drift from the head it summarises (RD-80b), and a head the byte bound cut
+from the entries still identifies its run. The `outcome` is the **window's** verdict, not the
+digest's prefix's: a run whose `end` the bound cut still says `succeeded`. `no_end_in_window` says
+only what the window holds: it cannot tell a run that ended after the window from one that never
+ended, and it does not try.
+
+**Each section is bounded.** When a section's serialised JSON is more than `RUN_SECTION_BYTES`,
+512 UTF-8 bytes, whole fields are dropped — `argv` first, then `inv`, then `v`, then `tool` — until
+it fits, and `dropped` names them. A string is never cut part-way, because a cut argument reads as
+a different argument. `run`, `outcome`, `reason` and `head` are never dropped, because without them
+the section does not say which run it is or what became of it; a run id long enough to break the
+bound on its own is left whole, and the line's `budget.bytes` still holds.
+
+The entries and the sections cost bytes, and both are part of the line `budget.bytes` bounds.
+Under `{records: 20, bytes: 2048}`, over runs of three records each, the digest names 13 records
+where a bare `(run, seq)` lens named 20 and an entry carrying its run's outcome named 16 (RD-22b).
+A run of more records costs its section once and so pays less per entry.
 
 ### The bound, exactly
 
@@ -398,7 +438,7 @@ byte budget therefore names fewer records than it did when an entry was only `(r
 A `bytes` budget too small even for a digest naming no records leaves it naming none: the envelope
 and the lens's own fields are not negotiable, because a lens that dropped them would no longer say
 what it is. The bound is applied **before** the line is written — `digestLine` reconstructs the
-line the writer will write, every entry's summary included, which a case pins against the line the writer really wrote — and it is
+line the writer will write, every entry's summary and every run section included, which a case pins against the line the writer really wrote — and it is
 measured against a seq one digit longer than the one the digest will carry, one byte of headroom,
 so that a `warning` the writer raises in between cannot push the line over a stated bound.
 

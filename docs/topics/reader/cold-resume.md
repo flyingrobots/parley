@@ -191,7 +191,9 @@ What the summary did not settle, by the second reader's account:
 - **Why an outcome is `undetermined`.** The digest does not say that the run has no `end`; the
   drill-down's replay ruling does. The reader called this the place where "the most interesting
   failure", the hung runs, was hidden. This and the item above are
-  [flyingrobots/parley#83](https://github.com/flyingrobots/parley/issues/83).
+  [flyingrobots/parley#83](https://github.com/flyingrobots/parley/issues/83). Fixed since: a third
+  reader opened 4 heads, none of them to learn a run's arguments
+  ([the re-run below](#re-run-against-the-run-sections)).
 - **A drill-down with no byte bound** overflowed once, to 57.7 KB, and was asked again with fewer
   ids. That is the [flyingrobots/parley#78](https://github.com/flyingrobots/parley/issues/78)
   failure, and the code under test did not yet have the fix.
@@ -202,6 +204,87 @@ made one query of 40 records and one drill-down of 12 ids. Six of those ids were
 learn what `undetermined` meant. The comparison above is from the second attempt, which said each
 command could be run as often as the reader liked. That attempt used a fresh copy of the same
 receipts, so neither attempt read the other's receipts.
+
+## Re-run against the run sections
+
+After [flyingrobots/parley#83](https://github.com/flyingrobots/parley/issues/83) gave every lens a
+`runs` section, the exercise was run a third time on 2026-11-22. The question was whether a reader
+still had to open heads to learn which invocation a run was.
+
+| | |
+| --- | --- |
+| History | The same 50 footprint receipts, copied byte for byte into a fresh directory. Their SHA-256 digests match the second re-run's copy, file for file. No earlier reader's receipts were copied |
+| Window | The same seven days, `1794790009000` to `1795394809000`. The reader was told the time |
+| Code | `lens-run-identity` at `55f6d22`, with flyingrobots/parley#76, flyingrobots/parley#77 and flyingrobots/parley#78 merged. Each lens names each run once, in `runs`, with the head's `tool`, `v`, `argv` and `inv`, the run's outcome, and a `reason` when the outcome is `undetermined`. An `error` or `warning` entry carries its `code` |
+| The reader | A fresh agent, under the same rules and the same two instruments, with the asker's task set to `flyingrobots/parley#83`. Each command could be run as often as it liked, and no pipe, chain or file read was allowed |
+
+The first command, captured:
+
+```text
+$ cold query --view everything --from 1794790009000 --to 1795394809000
+```
+
+The digest line it printed, captured. The receipt of the read holds the same line, byte for byte:
+
+```json
+{"event":"lens","t":1795397099155,"seq":6,"run":"01M83037E5Z1VN2P40S43T6N79","query":{"run":"01M83037E5Z1VN2P40S43T6N79","seq":2},"asker":{"tool":"claude-code","cwd":"/private/tmp/claude-501/-Users-james-git-parley/006f3cdc-373a-4f61-828f-0e1658b9fb66/scratchpad/cold-resume-83/footprint","task":"flyingrobots/parley#83"},"view":"everything","budget":{"records":20},"window":{"from":1794790009000,"to":1795394809000},"loss":{"bound":"count-only","excluded":488},"runs":[{"run":"01M82PGK63JH6SSJXGTQ03C7V3","tool":"footprint","v":"0.2.0","argv":["footprint","HEAD~2..HEAD~1"],"inv":"03803fef496f7a07616dc14a5172130f24a87d41b6bd91fb9165af141686834c","outcome":"undetermined","reason":"no_end_in_window"},{"run":"01M82PGM6W7EDYPGHW0P8DGTMS","tool":"footprint","v":"0.2.0","argv":["footprint","HEAD~1..HEAD"],"inv":"9f9072bbabf407d294f37d63be06466fd464f2f6ebc428078cb0c704f7e87831","outcome":"undetermined","reason":"no_end_in_window"},{"run":"01M82PGMA3W1CEAJ77XXH02NKV","tool":"footprint","v":"0.2.0","argv":["footprint","HEAD~1..HEAD","--human"],"inv":"9f9072bbabf407d294f37d63be06466fd464f2f6ebc428078cb0c704f7e87831","outcome":"undetermined","reason":"no_end_in_window"},{"run":"01M82PHCBKKHDV83Q12ZCRAWGP","tool":"footprint","v":"0.2.0","argv":["footprint","HEAD~1..HEAD"],"inv":"9f9072bbabf407d294f37d63be06466fd464f2f6ebc428078cb0c704f7e87831","outcome":"undetermined","reason":"no_end_in_window"},{"run":"01M82PHMSSX7B4SPRRN8Z10R2Y","tool":"footprint","v":"0.2.0","argv":["footprint","HEAD~2..HEAD~1"],"inv":"03803fef496f7a07616dc14a5172130f24a87d41b6bd91fb9165af141686834c","outcome":"undetermined","reason":"no_end_in_window"}],"records":[{"run":"01M82PGK63JH6SSJXGTQ03C7V3","seq":1,"event":"receipt.head","t":1795387051226},{"run":"01M82PGK63JH6SSJXGTQ03C7V3","seq":2,"event":"receipt.step","t":1795387051227},{"run":"01M82PGK63JH6SSJXGTQ03C7V3","seq":3,"event":"receipt.step","t":1795387051227},{"run":"01M82PGK63JH6SSJXGTQ03C7V3","seq":4,"event":"receipt.step","t":1795387051237},{"run":"01M82PGM6W7EDYPGHW0P8DGTMS","seq":1,"event":"receipt.head","t":1795387052271},{"run":"01M82PGM6W7EDYPGHW0P8DGTMS","seq":2,"event":"receipt.step","t":1795387052272},{"run":"01M82PGM6W7EDYPGHW0P8DGTMS","seq":3,"event":"receipt.step","t":1795387052272},{"run":"01M82PGM6W7EDYPGHW0P8DGTMS","seq":4,"event":"receipt.step","t":1795387052282},{"run":"01M82PGMA3W1CEAJ77XXH02NKV","seq":1,"event":"receipt.head","t":1795387052377},{"run":"01M82PGMA3W1CEAJ77XXH02NKV","seq":2,"event":"receipt.step","t":1795387052379},{"run":"01M82PGMA3W1CEAJ77XXH02NKV","seq":3,"event":"receipt.step","t":1795387052379},{"run":"01M82PGMA3W1CEAJ77XXH02NKV","seq":4,"event":"receipt.step","t":1795387052393},{"run":"01M82PHCBKKHDV83Q12ZCRAWGP","seq":1,"event":"receipt.head","t":1795387077000},{"run":"01M82PHCBKKHDV83Q12ZCRAWGP","seq":2,"event":"receipt.step","t":1795387077001},{"run":"01M82PHCBKKHDV83Q12ZCRAWGP","seq":3,"event":"receipt.step","t":1795387077001},{"run":"01M82PHCBKKHDV83Q12ZCRAWGP","seq":4,"event":"receipt.step","t":1795387077011},{"run":"01M82PHMSSX7B4SPRRN8Z10R2Y","seq":1,"event":"receipt.head","t":1795387085651},{"run":"01M82PHMSSX7B4SPRRN8Z10R2Y","seq":2,"event":"receipt.step","t":1795387085652},{"run":"01M82PHMSSX7B4SPRRN8Z10R2Y","seq":3,"event":"receipt.step","t":1795387085652},{"run":"01M82PHMSSX7B4SPRRN8Z10R2Y","seq":4,"event":"receipt.step","t":1795387085664}],"_schema":{"id":"parley.lens","version":"1.0.0"}}
+```
+
+It names the same twenty records as both earlier digests. The `runs` section says, before
+anything is opened, that the first five runs were `footprint` 0.2.0 on `HEAD~2..HEAD~1`,
+`HEAD~1..HEAD` and `HEAD~1..HEAD --human`, and that each is `undetermined` because the window
+holds no `end` for it. The line is 3,417 bytes with its newline. The second reader's line, naming
+the same records, was 2,744.
+
+| | First reader | Second reader | Third reader |
+| --- | --- | --- | --- |
+| Queries | 6 | 5 | 14 |
+| Drill-downs | 8 | 7 | 4 |
+| Ids opened | 53 | 49 | 9, all `opened` |
+| Heads (`seq` 1) opened | not counted | 26 | 4 |
+| Heads opened to learn a run's arguments | not counted | most of the 26, by its account | none, by its account |
+
+Every count in the third column was checked against the reader's captures: 14 query captures,
+4 drill-down captures, and 9 ids, each `opened`.
+
+The four heads it opened, and why, in its own words:
+
+| Id | Why |
+| --- | --- |
+| `01M82PGK63JH6SSJXGTQ03C7V3:1` | "the resolved commits of an undetermined run" |
+| `01M82Q0081H27GGYZ5M0FYMPP3:1` | "the commits for burst A's successful runs" |
+| `01M82S0CJBHWR1Z2BVXVRCWBH8:1` | "the commits for burst B" |
+| `01M82TFS7AW9F97CFK53PK1K38:1` | "the commits for burst C" |
+
+Each was opened for `resolved.base_commit` and `resolved.head_commit`. They are in the head's
+`resolved`, which the run section does not carry. The other five ids were a stalled run's last
+step, the text behind `git.diff_failed`, one `result` for what changed, and the two warnings
+behind `graft.review_failed`. None of them was opened to learn what an entry or a run was.
+
+It said the digest alone gave it "every run's id, tool, version, arguments, inv hash and outcome
+(succeeded, failed, or undetermined with `no_end_in_window`)", and the error and warning codes.
+It also noticed that the same arguments carried different `inv` hashes in different bursts, and
+read that as `HEAD` having moved between them.
+
+It reconstructed the same three bursts as the earlier readers, with the commits each compared. It
+found the 14:37 runs that never ended, the deliberate `no-such-ref-9f8e7d..HEAD` failure in each
+burst, and `node` missing from `PATH` at 15:21. It also gave a commit pair the earlier readers did
+not: burst B compared `fb09508..7e9959d`. That was checked afterwards: `git log` names `fb09508`
+`Merge pull request #15 from flyingrobots/pr-overlap` and `7e9959d`
+`Merge pull request #20 from flyingrobots/unanalysed-languages`. As before, it could not say why
+the early runs never ended or who started each burst.
+
+What the run sections did not settle, by the third reader's account:
+
+- **Which commits a run compared.** `argv` says `HEAD~1..HEAD`, and only the head's `resolved`
+  turns that into two commits. The decision for flyingrobots/parley#83 was to carry `argv` rather
+  than `resolved`, because `resolved` is larger and shaped by the tool. Those four heads are what
+  that decision cost, filed as
+  [flyingrobots/parley#90](https://github.com/flyingrobots/parley/issues/90).
+- **Paging.** A query of 400 records under `what-ran` printed more than the reader's harness would
+  show inline, and it narrowed the window instead. Most of its 14 queries were that narrowing: the
+  cost the earlier readers paid in drill-downs, moved into queries. Folding repeated runs,
+  [flyingrobots/parley#79](https://github.com/flyingrobots/parley/issues/79), is aimed at it.
 
 ## How the exercise departed from its rules
 

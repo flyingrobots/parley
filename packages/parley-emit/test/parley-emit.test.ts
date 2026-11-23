@@ -334,6 +334,33 @@ describe("PE-7 redaction", () => {
     expect("redacted" in r.receiptLines[0]!).toBe(false);
     expect((r.stdout.objs.at(-1) as { redacted: boolean }).redacted).toBe(false);
   });
+
+  test("scrub widely, resolve narrowly: another command's variable is scrubbed and listed, its source is never resolved", async () => {
+    // flyingrobots/parley#93, spec §5.3.
+    const { dir, env } = scratch();
+    const OTHER = "b-token-value-q7";
+    const called: string[] = [];
+    const two = defineTool({
+      name: "t", version: "0.0.1",
+      commands: {
+        a: { intent: "The command that runs", effects: { reads: [], writes: [], network: false, idempotent: true }, secrets: ["--token", "A_TOKEN", "alpha"], emits: [{ id: "t.count", version: "1.0.0", schema: RESULT }] },
+        b: { intent: "A command that does not run", effects: { reads: [], writes: [], network: false, idempotent: true }, secrets: ["B_TOKEN", "beta"], emits: [{ id: "t.count", version: "1.0.0", schema: RESULT }] },
+      },
+      retention: { count: 100 },
+      sources: { alpha: () => { called.push("alpha"); return true; }, beta: () => { called.push("beta"); return true; } },
+    });
+    const s = streams();
+    const status = await main(two, ["t", "a", "--note=" + OTHER], (run) => { run.step("noted", "the argument is echoed", { note: OTHER }); }, { cwd: dir, env: { ...env, B_TOKEN: OTHER }, ...s });
+    expect(status).toBe(0);
+    const c = check(dir, s);
+    const head = c.receiptLines[0] as { argv: string[]; redacted: { env?: string[]; sources?: string[]; argv?: number[] } };
+    expect(head.argv).toEqual(["t", "a", "--note=[redacted]"]);
+    expect(head.redacted.env).toEqual(["B_TOKEN"]);
+    expect(head.redacted.sources).toEqual(["alpha"]);
+    expect(called).toEqual(["alpha"]);
+    expect((s.stdout.text + s.stderr.text + c.receipt).includes(OTHER)).toBe(false);
+    expect(c.violations).toEqual([]);
+  });
 });
 
 describe("PE-8 locations and startup failure", () => {
@@ -414,7 +441,20 @@ describe("PE-10 discovery", () => {
     const out = s.stdout.objs;
     expect(out.filter((o) => o.event === "command").length).toBe(1);
     const ids = out.filter((o) => o.event === "schema").map((o) => `${o.id}@${o.version}`);
-    expect(ids).toEqual(["t.count@1.0.0", "parley.error@2.0.0"]);
+    expect(ids).toEqual(["t.count@1.0.0", "parley.error@2.0.0", "parley.startup.failed@1.0.0"]);
+    expect(check(dir, s).violations).toEqual([]);
+  });
+
+  test("--help lists parley.startup.failed beside parley.error when the command declares no errors", async () => {
+    // flyingrobots/parley#92: every command can produce a startup failure, so §4.2's "every error
+    // type it can produce" includes it, in the command line's emits and as a schema line.
+    const { dir, env } = scratch();
+    const s = streams();
+    expect(await main(tool(), ["t", "count", "--help"], async () => {}, { cwd: dir, env, ...s })).toBe(0);
+    const command = s.stdout.objs.find((o) => o.event === "command") as { emits: { id: string; version: string }[] };
+    expect(command.emits).toEqual([{ id: "t.count", version: "1.0.0" }, { id: "parley.error", version: "2.0.0" }, { id: "parley.startup.failed", version: "1.0.0" }]);
+    const ids = s.stdout.objs.filter((o) => o.event === "schema").map((o) => `${o.id}@${o.version}`);
+    expect(ids).toEqual(["t.count@1.0.0", "parley.error@2.0.0", "parley.startup.failed@1.0.0"]);
     expect(check(dir, s).violations).toEqual([]);
   });
 });
@@ -594,6 +634,20 @@ describe("PE-15 throws outside the handler (F-4)", () => {
     expect(s.stderr.objs).toEqual([expect.objectContaining({ event: "startup.failed", seq: 0, code: "startup.arguments_invalid" })]);
     expect(s.stderr.objs[0]!.problem).toContain("bad flag");
     expect(readdirSync(join(dir, ".parley", "receipts")).length).toBe(0);
+  });
+
+  test("the example checks its arguments before the bootstrap line, so a usage error is a startup failure", () => {
+    // flyingrobots/parley#91: the bootstrap line is the boundary; examples/count.ts checks in
+    // `resolved`, before it, so a mistaken call is exit 3 with no receipt.
+    const { dir, env } = scratch();
+    const p = Bun.spawnSync(["bun", resolve(import.meta.dir, "../examples/count.ts"), "files", "extra"], { cwd: dir, env: { ...process.env, ...env } });
+    const stdout = p.stdout.toString(), stderr = p.stderr.toString();
+    expect(p.exitCode).toBe(3);
+    expect(stdout).toBe("");
+    const lines = stderr.trimEnd().split("\n").map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(lines).toEqual([expect.objectContaining({ event: "startup.failed", seq: 0, code: "startup.arguments_invalid" })]);
+    expect(readdirSync(join(dir, ".parley", "receipts")).length).toBe(0);
+    expect(doctor({ stdout, stderr }, SCHEMAS_DIR).filter((v) => v.event === "doctor.violation")).toEqual([]);
   });
 
   test("a throwing human renderer falls back to the default rendering and the run completes", async () => {

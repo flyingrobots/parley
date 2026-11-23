@@ -20,7 +20,11 @@ export interface CommandSpec {
   readonly secrets?: readonly string[];
   /** The result types the command can emit; a tool-owned type carries its JSON Schema for discovery. */
   readonly emits: readonly EmittedType[];
-  /** The error types the command can produce; defaults to `parley.error`. */
+  /**
+   * The error types the command can produce. Defaults to `parley.error` and
+   * `parley.startup.failed`, since every command can produce a startup failure (§3.2, §4.2,
+   * flyingrobots/parley#92); a list given here replaces the default, so name both in it.
+   */
   readonly errors?: readonly EmittedType[];
 }
 export interface ToolSpec {
@@ -90,6 +94,8 @@ export function fdSink(fd: number): Sink {
 }
 const OWN_FLAGS = new Set(["--human", "--humanize", "--dry-run", "--schema", "--help", "-h"]);
 const WRITER_SCHEMAS: SchemaRef[] = Object.values(SCHEMA_IDS);
+/** A command's error types when it declares none: what the writer itself can put on stderr for it (§4.2). */
+const DEFAULT_ERRORS: readonly EmittedType[] = [SCHEMA_IDS.error, SCHEMA_IDS.startupFailed];
 /** Incomplete receipts (no end line) older than this are deletable by retention; younger ones may still be in flight. */
 const INCOMPLETE_GRACE_MS = 24 * 60 * 60 * 1000;
 
@@ -267,11 +273,11 @@ function discover(run: Run, spec: ToolSpec, discovery: "schema" | "help", comman
     const which = discovery === "help" && commandName ? [commandName] : names;
     for (const name of which) {
       const c = spec.commands[name]!;
-      run.describe({ event: "command", name, intent: c.intent, effects: { ...c.effects, bookkeeping }, secrets: [...(c.secrets ?? [])], emits: [...c.emits, ...(c.errors ?? [SCHEMA_IDS.error])].map(({ id, version }) => ({ id, version })) }, SCHEMA_IDS.command);
+      run.describe({ event: "command", name, intent: c.intent, effects: { ...c.effects, bookkeeping }, secrets: [...(c.secrets ?? [])], emits: [...c.emits, ...(c.errors ?? DEFAULT_ERRORS)].map(({ id, version }) => ({ id, version })) }, SCHEMA_IDS.command);
     }
     const types = new Map<string, EmittedType>();
     const add = (t: EmittedType) => { const k = `${t.id}@${t.version}`; if (!types.has(k)) types.set(k, t); };
-    for (const name of which) { const c = spec.commands[name]!; c.emits.forEach(add); (c.errors ?? [SCHEMA_IDS.error]).forEach(add); }
+    for (const name of which) { const c = spec.commands[name]!; c.emits.forEach(add); (c.errors ?? DEFAULT_ERRORS).forEach(add); }
     if (discovery === "schema") WRITER_SCHEMAS.forEach(add);
     for (const t of types.values()) {
       const doc = t.schema ?? SCHEMAS.find((s) => s.id === t.id && s.version === t.version)?.schema;

@@ -7,6 +7,20 @@ on its own; the spec and each message schema move separately (spec §4.4).
 
 ### Changed
 
+- **BREAKING for a consumer that pins its discovery output: `<command> --help` now lists
+  `parley.startup.failed@1.0.0` beside `parley.error@2.0.0`** (flyingrobots/parley#92, spec §4.2).
+  A command that declares no `errors` now has the default `[parley.error, parley.startup.failed]`,
+  so its `command` line's `emits` and its `schema` lines gain one entry each, after
+  `parley.error`. Every command can produce a startup failure, and §4.2 asks `--help` for every
+  error type a call can produce. The Python writer already did this. `--schema` already listed the
+  type and is unchanged. A command that declares `errors` still replaces the default, so name both
+  types in that list. No line shape and no schema version moved, but a test that pins the exact
+  list of `--help` schemas, as `flyingrobots/footprint`'s OUT-10b does, fails on upgrade until its
+  expectation gains the new entry.
+- `examples/count.ts` checks its arguments in `resolved`, before the bootstrap line, so an argument
+  it does not take is `startup.arguments_invalid`, exit 3, with no receipt. This is the spec's
+  preferred side of the boundary decided on flyingrobots/parley#91 (§3.2), and it is what
+  `count.py` does. A call with no arguments resolves exactly as before, so its `inv` is unchanged.
 - `src/schemas.ts` re-synced for a change to the draft `parley.lens` 1.0.0: an optional `runs`
   section, and `code` in place of `outcome` on each named record (flyingrobots/parley#83). The
   writer's behaviour is unchanged and no version moved; discovery serves the updated draft.

@@ -179,6 +179,30 @@ class TestSequence(unittest.TestCase):
         self.assertEqual(values, list(range(10_000)))
 
 
+    def test_threads_emitting_at_once_share_one_counter(self):
+        import threading
+        d, _, env = scratch()
+
+        def body(run):
+            def work(k):
+                for i in range(300):
+                    run.result({"event": "result", "value": i}, T_COUNT)
+                    if i % 50 == 0:
+                        print(f"thread {k} at {i}")
+            threads = [threading.Thread(target=work, args=(k,)) for k in range(8)]
+            for th in threads:
+                th.start()
+            for th in threads:
+                th.join()
+
+        o = run_count(d, env, ["count"], body)
+        self.assertEqual(o.status, 0)
+        seqs = [x["seq"] for x in o.receipt_lines]
+        self.assertEqual(seqs, list(range(1, o.stdout.objs[-1]["seq"] + 1)), "the receipt holds every seq after the bootstrap line, once, in order")
+        self.assertEqual(len([x for x in o.stdout.objs if x["event"] == "result"]), 2400)
+        self.assertEqual(len([x for x in o.receipt_lines if x.get("decision") == "captured stray output"]), 48)
+
+
 class TestInv(unittest.TestCase):
     def body(self, run):
         run.result({"event": "result", "value": 1}, T_COUNT)
@@ -530,6 +554,15 @@ class TestCapture(unittest.TestCase):
             self.assertIn(text, o.receipt)
         assert_valid(self, o)
 
+    def test_a_library_asking_for_the_descriptor_is_refused(self):
+        import faulthandler
+        d, _, env = scratch()
+        o = run_count(d, env, ["count"], lambda r: faulthandler.enable())
+        self.assertEqual(o.status, 2)
+        self.assertEqual([x["code"] for x in o.stderr.objs], ["uncaught.exception"])
+        self.assertIn("UnsupportedOperation", o.stderr.objs[0]["problem"])
+        self.assertFalse(faulthandler.is_enabled())
+
     def test_output_before_the_receipt_exists_is_held(self):
         d, _, env = scratch()
 
@@ -582,6 +615,48 @@ class TestTopLevelHandler(unittest.TestCase):
         self.assertEqual(o.stdout.objs[-1]["status"], 2)
         assert_valid(self, o)
         assert_lifecycle(self, o)
+
+    def test_a_failure_inside_the_writer_itself(self):
+        d, _, env = scratch()
+        saved = (pe._retain, pe._choose_location)
+        before = (sys.stdout, sys.stderr)
+
+        def broken(*a, **k):
+            raise RuntimeError("the writer broke")
+
+        try:
+            pe._retain = broken  # after the bootstrap line: an error line and end
+            after = run_count(d, env, ["count"], lambda r: None)
+            pe._retain = saved[0]
+            pe._choose_location = broken  # before it: one startup line
+            before_boot = run_count(d, env, ["count"], lambda r: None)
+        finally:
+            pe._retain, pe._choose_location = saved
+        self.assertEqual(after.status, 2)
+        self.assertEqual([x["code"] for x in after.stderr.objs], ["uncaught.writer_failure"])
+        assert_lifecycle(self, after)
+        assert_valid(self, after)
+        self.assertEqual(before_boot.status, 3)
+        self.assertEqual(before_boot.stdout.lines, [])
+        self.assertEqual([x["code"] for x in before_boot.stderr.objs], ["startup.writer_failed"])
+        self.assertTrue(pe.validate_line(before_boot.stderr.objs[0]).ok)
+        self.assertEqual((sys.stdout, sys.stderr), before)
+
+    def test_a_writer_failure_after_the_reservation_leaves_no_receipt(self):
+        d, _, env = scratch()
+        saved = pe.Run
+
+        def broken(*a, **k):
+            raise RuntimeError("the writer broke between the reservation and the bootstrap line")
+
+        try:
+            pe.Run = broken
+            o = run_count(d, env, ["count"], lambda r: None)
+        finally:
+            pe.Run = saved
+        self.assertEqual(o.status, 3)
+        self.assertEqual([x["code"] for x in o.stderr.objs], ["startup.writer_failed"])
+        self.assertEqual(os.listdir(os.path.join(d, ".parley", "receipts")), [], "a startup failure leaves no receipt (spec section 3.2)")
 
     def test_system_exit_and_keyboard_interrupt(self):
         d, _, env = scratch()

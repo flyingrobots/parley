@@ -328,6 +328,48 @@ describe("parley-emit-py: identity and vendoring", () => {
     });
   }, SLOW);
 
+  test("PY-22f both writers end their flags at the first --", () => {
+    // flyingrobots/parley#103: one two-command tool written against each writer, run as real processes on the same argv.
+    const dir = mkdtempSync(join(tmpdir(), "parley-py-dash-"));
+    const decl = "{'intent': 'x', 'effects': {'reads': [], 'writes': [], 'network': False, 'idempotent': True}, 'secrets': [], 'emits': [{'id': 'sel.args', 'version': '1.0.0'}]}";
+    writeFileSync(join(dir, "sel.py"), [
+      "import sys",
+      `sys.path.insert(0, ${JSON.stringify(PKG)})`,
+      "import parley_emit as pe",
+      `tool = pe.define_tool(name='sel', version='0.0.1', commands={'plan': ${decl}, 'edit': ${decl}}, retention={'count': 50})`,
+      "sys.exit(pe.main(tool, ['sel', *sys.argv[1:]], lambda run, args: run.result({'event': 'result', 'args': args}, ('sel.args', '1.0.0')), resolved=lambda args, c: {'command': c, 'args': args}))",
+      "",
+    ].join("\n"));
+    const tsDecl = "{ intent: 'x', effects: { reads: [], writes: [], network: false, idempotent: true }, secrets: [], emits: [{ id: 'sel.args', version: '1.0.0' }] }";
+    writeFileSync(join(dir, "sel.ts"), [
+      `import { defineTool, main } from ${JSON.stringify(join(ROOT, "packages", "parley-emit", "src", "index.ts"))};`,
+      `const tool = defineTool({ name: 'sel', version: '0.0.1', commands: { plan: ${tsDecl}, edit: ${tsDecl} }, retention: { count: 50 } });`,
+      "process.exitCode = await main(tool, ['sel', ...process.argv.slice(2)], (run, args) => { run.result({ event: 'result', args }, { id: 'sel.args', version: '1.0.0' }); }, { resolved: (args, command) => ({ command, args }) });",
+      "",
+    ].join("\n"));
+    const seen = (p: ReturnType<typeof spawnSync>) => {
+      const out = objs(String(p.stdout));
+      const boot = out[0] as { paths?: { receipt?: string } } | undefined;
+      const head = boot?.paths?.receipt ? objs(readFileSync(boot.paths.receipt, "utf8"))[0] : undefined;
+      return { status: p.status, described: out.filter((o) => o.event === "command").map((o) => o.name), resolved: head?.resolved, results: out.filter((o) => o.event === "result").map((o) => o.args) };
+    };
+    const cases = [["edit", "--note", "-h"], ["edit", "--", "--note", "-h"], ["edit", "--"], ["edit", "--", "a", "--", "b"]];
+    const expected = [
+      { status: 0, described: ["edit"], resolved: { discovery: "help", command: "edit" }, results: [] },
+      { status: 0, described: [], resolved: { command: "edit", args: ["--note", "-h"] }, results: [["--note", "-h"]] },
+      { status: 0, described: [], resolved: { command: "edit", args: [] }, results: [[]] },
+      { status: 0, described: [], resolved: { command: "edit", args: ["a", "--", "b"] }, results: [["a", "--", "b"]] },
+    ];
+    cases.forEach((argv, i) => {
+      const at = scratch([]);
+      const env = { ...process.env, ...at.env };
+      const p = seen(spawnSync(PY, [join(dir, "sel.py"), ...argv], { cwd: at.dir, env, encoding: "utf8" }));
+      const t = seen(spawnSync("bun", [join(dir, "sel.ts"), ...argv], { cwd: at.dir, env, encoding: "utf8" }));
+      expect(p, JSON.stringify(argv)).toEqual(expected[i]!);
+      expect(t, JSON.stringify(argv)).toEqual(p);
+    });
+  }, SLOW);
+
   test("PY-19b a vendored copy alone in a directory runs a tool the doctor passes", () => {
     const at = scratch();
     const vendor = mkdtempSync(join(tmpdir(), "parley-py-vendor-"));

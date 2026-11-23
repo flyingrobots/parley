@@ -158,3 +158,18 @@ its manifest so it cannot be published by accident.
   and with `sidecars: false` a sidecar is reported `unchecked` rather than `intact`, since nothing
   about its stored bytes was established (§1.2a), which also rules replay out.
 - The sixteen draft schemas at the pinned commit, with a test that they match the repository.
+
+### Fixed
+
+- **Under `what-changed`, a warning no longer outranks every result** (flyingrobots/parley#76).
+  The change-view promotion put the whole failure surface in the `failure` tier, warnings included,
+  so a history of runs that warned and went on filled a digest with warnings and named none of the
+  view's own surface: on 50 real footprint receipts, every one of the 20 records a default
+  `what-changed` read named was an error, a non-zero `end` or a warning, and no result was among
+  them. The tier now holds **the failure surface of the runs that failed**. A `warning` from a run
+  the ranked records do not establish as failed, whether it succeeded or its outcome is
+  `undetermined`, is placed by the view's own surface rule (§6.1, §1.2a), and its `why` says so.
+  Errors, startup failures and non-zero ends still rank first, a failed run's warning ranks with
+  them, and `what-failed` keeps every warning on its surface. `onFailureSurface` is unchanged. No
+  schema moved and `spec/` is untouched. RD-18e's oracle changed with the rule; RD-40a to RD-40d
+  are new.

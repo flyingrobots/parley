@@ -415,7 +415,7 @@ in hand, so the same records under the same view come back in the same order eve
 
 | | Key | Smaller ranks first | Why |
 | --- | --- | --- | --- |
-| 1 | **tier** | `failure`, `surface`, `other` | A record on the failure surface is in the `failure` tier **only when the view implies a change**; otherwise it is placed by the view's own surface like any other record |
+| 1 | **tier** | `failure`, `surface`, `other` | A record on the failure surface is in the `failure` tier **only when the view implies a change and its run failed**; otherwise it is placed by the view's own surface like any other record. An `error`, a `startup.failed` and a non-zero `end` always make their run a failed one, so the condition on the run binds only a `warning` |
 | 2 | **outcome** | `failed`, `undetermined`, `succeeded` | What the ranked records establish about the record's run, and **only when the view implies a change**. Otherwise every record carries the same outcome key and the tier falls straight through to time |
 | 3 | **`t`**, then **`run`**, then **`seq`** | ascending | The order a read answered in before there was a ranking, so a view whose surface no record touches leaves the answer exactly as it was. A record with no usable `t` sorts last within its tier |
 
@@ -472,6 +472,22 @@ reader not to take one kind of evidence for another, and "no `end` in this windo
 ended well". A `warning` is on the failure surface, because that is what `what-failed` is an answer
 about, and it does not make its run a failed one — §6.1 makes it a warning precisely because the
 run went on.
+
+### Where a warning ranks under a change view
+
+A view that implies a change promotes **the failure surface of the runs that failed**, not the
+failure surface as a whole. A `warning` goes into the `failure` tier only when the records being
+ranked establish that its run failed; a warning from a run that succeeded, or whose outcome is
+`undetermined`, is placed by the view's own surface rule like any other record. `what-changed`'s
+surface does not hold a `warning`, so there it falls to the `other` tier, below the view's own
+results, and its `why` says it is a warning whose run is not established as failed.
+
+That is what keeps a history of runs that warned and went on from crowding the view's surface out
+of a digest ([flyingrobots/parley#76](https://github.com/flyingrobots/parley/issues/76)): 25 runs
+that each warn and emit one result, read under `what-changed` with a budget of 20, name 20 results
+and count the 25 warnings among the excluded. An `undetermined` run's warning is not promoted
+either, because a missing `end` is not evidence that the run failed (§1.2a); within its tier it
+still ranks above a succeeded run's. `what-failed` is unaffected: every warning is on its surface.
 
 ### What the ranking is not
 

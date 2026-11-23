@@ -1961,6 +1961,23 @@ describe("RD-23 the least-projected copy", () => {
     expect(bundle.projections[0]!.superseded).toEqual([3]);
   });
 
+  test("a read over a projected copy answers with the receipt's bodies and names the projection", async () => {
+    const { dir, env } = scratch();
+    const { segment } = projectedRun(dir);
+    const answer = answered(await queryReceipts(
+      { asker: { tool: "t" }, view: "everything", window: WIDE, budget: { records: 100 } },
+      { cwd: dir, env, history: [segment] },
+    ));
+    const mine = answer.records.filter((r) => r.run === RUN_A);
+    expect(mine.map((r) => r.seq)).toEqual([1, 2, 3, 4, 5]);
+    expect(detailOf(mine.find((r) => r.seq === 3)!)).toEqual(NAMES);
+    expect(mine.find((r) => r.seq === 3)!.projected).toBe(false);
+    const opening = mine.find((r) => r.seq === 1)!;
+    expect(opening.projected).toBe(true);
+    expect(opening.projectedBy).toEqual(["narrow-names"]);
+    expect(answer.load.bundles.find((b) => b.run === RUN_A)!.projections.map((p) => p.name)).toEqual(["narrow-names"]);
+  });
+
   test("a history segment that cannot be read is reported, not thrown", () => {
     const { dir, env } = scratch();
     plainReceipt(repoReceipts(dir), RUN_A);

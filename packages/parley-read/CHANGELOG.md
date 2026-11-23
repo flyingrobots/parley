@@ -29,6 +29,8 @@ its manifest so it cannot be published by accident.
 - `loadReceipts({ history: [path] })` and `readHistorySegment(path)`: a segment of the shared
   stream, by name. The stream is opt-in and this reader never looks for it; a segment named but
   unopenable is a `history.unreadable` defect rather than a throw. `Where` gains `history`.
+  `queryReceipts` passes the same option to its load, so a read and its digest see the copies a
+  load would. Its options type already accepted `history`, and until now it dropped it.
 
 - `src/schemas.ts` re-synced from the repository drafts: the reader now ships seventeen, adding
   `parley.history.transform` 1.0.0 (flyingrobots/parley#57), so a projected copy's opening line on

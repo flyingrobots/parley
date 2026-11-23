@@ -197,8 +197,10 @@ for (const bundle of load.bundles) {
 }
 ```
 
-Segments are read after both receipt locations, which changes nothing about the preference and
-makes the order stated rather than incidental. `readHistorySegment(path)` reads one on its own,
+A read takes the same option — `queryReceipts(request, { cwd, history })` — and passes it to
+the loader, so a read sees exactly the copies a load would. Segments are read after both receipt
+locations, which changes nothing about the preference and makes the order stated rather than
+incidental. `readHistorySegment(path)` reads one on its own,
 under the same reader rules as a receipt: a segment holds whole runs from every tool that wrote to
 it, so it yields one bundle per run, and its file name names a date rather than a run, so a
 quarantined line in it is attributed only when the segment holds exactly one run. A segment named

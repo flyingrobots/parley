@@ -11,6 +11,12 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+      # packages/parley-emit-py promises Python 3.9 or later, so the gate runs it on the oldest
+      # version it promises; bun test shells out to python3 for its suite and its oracles.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+      - run: python3 --version
       - run: bun install --frozen-lockfile
       - run: bun test
       - run: bun run check

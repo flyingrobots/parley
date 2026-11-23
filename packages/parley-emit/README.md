@@ -403,7 +403,7 @@ receipt carries the line, value and all, because the receipt is the record and n
 declared:
 
 ```jsonl
-{"event":"receipt.step","t":1795391867203,"seq":4,"run":"01M82V3J9S5CBN324YFMY9PTC8","decision":"read the release token from the environment","because":"the token is not in the command's secrets list, which is the hole this refuses to widen","detail":{"token":"ghp_0123456789abcdefghij0123456789abcdef","repo":"flyingrobots/parley"},"_schema":{"id":"parley.receipt.step","version":"1.0.0"}}
+{"event":"receipt.step","t":1795392220912,"seq":4,"run":"01M82VEBQ5BGHTP5KTFMPKN8MQ","decision":"read the release token from the environment","because":"the token is not in the command's secrets list, which is the hole this refuses to widen","detail":{"token":"ghp_0123456789abcdefghij0123456789abcdef","repo":"flyingrobots/parley"},"_schema":{"id":"parley.receipt.step","version":"1.0.0"}}
 ```
 
 The stream does not. stderr and the receipt carry one warning instead, naming the withheld `seq`,
@@ -411,15 +411,15 @@ the shape and the JSON Pointer — and never the matched text, which would put t
 and back on the stream through the warning's own copy:
 
 ```jsonl
-{"event":"warning","t":1795391867203,"seq":5,"run":"01M82V3J9S5CBN324YFMY9PTC8","code":"history.suspected_secret","problem":"the body of seq 4 matches the github.token shape at /detail/token, so that line is not on the shared stream; the receipt is unaffected and still carries the value","remedy":"declare the value as a secret in the command's secrets list (spec §5.3) so it is replaced in the receipt too, or keep it out of the record; an unlisted shape passes, and a legitimate value that matches costs this one stream line","_schema":{"id":"parley.warning","version":"1.0.0"}}
+{"event":"warning","t":1795392220912,"seq":5,"run":"01M82VEBQ5BGHTP5KTFMPKN8MQ","code":"history.suspected_secret","problem":"the body of seq 4 matches the github.token shape at /detail/token, so that line is not on the shared stream; the receipt is unaffected and still carries the value","remedy":"declare the value as a secret in the command's secrets list (spec §5.3) so it is replaced in the receipt too, or keep it out of the record; an unlisted shape passes, and a legitimate value that matches costs this one stream line","_schema":{"id":"parley.warning","version":"1.0.0"}}
 ```
 
 The run's exit status is 0: a withheld line is a warning and warnings never change it (§6.1). The
 doctor reads the gap off the segment, from the same run:
 
 ```text
-PROJECTION  01M82V3J9S5CBN324YFMY9PTC8  refuseSuspectedSecrets  94fe07733c98…  (history:1)
-GAP         01M82V3J9S5CBN324YFMY9PTC8  seq 4 is not in this copy
+PROJECTION  01M82VEBQ5BGHTP5KTFMPKN8MQ  refuseSuspectedSecrets  262e75ca7d76…  (history:1)
+GAP         01M82VEBQ5BGHTP5KTFMPKN8MQ  seq 4 is not in this copy
 SEGMENT     6 line(s); 1 run(s), 1 projected, 1 gap(s), 0 without end, 0 unparseable
 ```
 
@@ -435,6 +435,17 @@ floor:
   test key with a live prefix: each costs one stream line. The receipt still has it.
 - **The envelope is never scanned**, because `event`, `t`, `seq`, `run` and `_schema` are the
   writer's and one unlucky run id would otherwise withhold every line of a run.
+- **The head is not exempt, and it is the likeliest line to match.** It echoes `argv` and
+  `resolved` (§5), so an undeclared token on the command line withholds the whole head and the
+  stream copy of that run then has no head at all: no `tool`, no `v`, no `effects` for a reader of
+  the segment. The gap is reported like any other, the receipt is complete, and the status does not
+  move — but the honest reading of that copy is "a run happened and the stream cannot say what it
+  was".
+
+The warning names a JSON Pointer, which is built from the record's own keys, and a key can be a
+token too. When the pointer itself matches a shape the warning names the shape and not the
+pointer: a line withheld for one suspected secret must not put a different one on the stream
+through the warning that explains it.
 
 Declaring the value as a secret (§5.3) is the real protection, and the warning's `remedy` says so.
 This is the net under it.

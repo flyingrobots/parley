@@ -25,7 +25,11 @@ on its own; the spec and each message schema move separately (spec §4.4).
   entry without samples fails. String values are scanned recursively; the five envelope fields are
   not, and neither are object keys. The limits are stated in the README: an unlisted shape passes,
   a token split across two values passes, a token used as a key passes, and a legitimate value that
-  matches is withheld. The exit status never moves (§6.1).
+  matches is withheld. The head is not exempt and is the likeliest line to match, because it echoes
+  `argv` and `resolved` (§5): an undeclared token on the command line withholds the whole head, so
+  that stream copy has no head and the gap is reported like any other. The warning names a JSON
+  Pointer only when the pointer does not itself match a shape, since a pointer is built from the
+  record's keys and a key can be a token too. The exit status never moves (§6.1).
 
   New exports: `refuseSuspectedSecrets`, `findSuspectedSecret`, `SUSPECTED_SECRET_CODE`,
   `SECRET_PATTERNS`, the types `SecretPattern` and `SuspectedSecret`.

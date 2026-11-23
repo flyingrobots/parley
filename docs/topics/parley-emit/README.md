@@ -167,6 +167,8 @@ the withheld `seq`, the shape and a JSON Pointer — never the matched text.
 | It refuses | It never rewrites: a heuristic must not claim the certainty rewriting implies, so a false positive costs one withheld stream line and never a changed value in the receipt |
 | Scanned | String values, recursively, through objects and arrays. Not the five envelope fields, which are the writer's (§1.3), and not object keys |
 | Limits | An unlisted shape passes; a token split across two values passes; a token used as a key passes; a legitimate value that matches is withheld. Declaring the value as a secret (§5.3) remains the real protection, which the warning's `remedy` says |
+| The head | Not exempt, and the likeliest line to match, because it echoes `argv` and `resolved` (§5). An undeclared token on the command line withholds the whole head, so that stream copy has no head; the gap is reported and the receipt is complete |
+| The pointer | Built from the record's own keys, so when it matches a shape itself the warning names the shape instead of the pointer |
 | Status | Unchanged. A withheld line is a warning, and warnings never change the exit status (§6.1) |
 
 A transform of your own can withhold a line under its own code the same way, by returning

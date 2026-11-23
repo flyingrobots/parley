@@ -1698,6 +1698,56 @@ describe("PE-25 refuseSuspectedSecrets", () => {
     expect(leak.stderr.text.includes("policy.abcdef")).toBe(false);
   });
 
+  test("the pointer a warning names cannot itself carry a suspected secret", async () => {
+    // A JSON Pointer is built from the record's own keys, and a key can be anything. A line
+    // withheld for one suspected secret must not put a different one on the stream through the
+    // warning that explains it.
+    const r = await projected(refuseSuspectedSecrets(), (run) => {
+      run.step("cached a response per token", "the token is the cache key, which is the mistake", { [PLANTED]: { key_id: SAMPLES["aws.access_key_id"]!.yes } });
+      run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" });
+    });
+    expect(r.status).toBe(0);
+    expect(r.violations).toEqual([]);
+    const warns = warningsOf(r, "history.suspected_secret");
+    expect(warns.length).toBe(1);
+    expect(String(warns[0]!.problem)).toContain("aws.access_key_id");
+    expect(String(warns[0]!.problem)).toContain("github.token");
+    expect(String(warns[0]!.problem)).not.toContain(PLANTED);
+    expect(r.stderr.text.includes(PLANTED)).toBe(false);
+    expect(r.receipt.includes(PLANTED)).toBe(true);
+    expect(r.text.includes(PLANTED)).toBe(false);
+  });
+
+  test("a pattern that will not compile fails at configuration, not once per line", () => {
+    expect(() => refuseSuspectedSecrets([{ name: "bad.shape", regex: "([", why: "a typo in a caller's own pattern" }])).toThrow();
+    // And every shipped pattern compiles, which is what makes the default safe to construct.
+    expect(() => refuseSuspectedSecrets()).not.toThrow();
+  });
+
+  test("an undeclared token on the command line withholds the head itself", async () => {
+    // The line that most often carries an undeclared token is the head: it echoes `argv` and
+    // `resolved` (§5). Nothing exempts it, so the whole head is withheld and the stream copy of
+    // the run has no head at all. The receipt is complete, the doctor reports the gap, and the
+    // status does not move — which is the trade this built-in makes, stated rather than hidden.
+    const { dir, env, hist } = historyScratch();
+    const r = await runCount(dir, { ...env, PARLEY_HISTORY: hist }, ["count", "--planted", PLANTED], (run) => {
+      run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" });
+    }, {}, [], { history: { transform: refuseSuspectedSecrets() } });
+    expect(r.status).toBe(0);
+    expect(r.violations).toEqual([]);
+    expect(r.receiptLines[0]!.event).toBe("receipt.head");
+    const objs = segmentObjs(hist);
+    expect(objs.some((o) => o.event === "receipt.head")).toBe(false);
+    expect(segmentText(hist).includes(PLANTED)).toBe(false);
+    expect(r.receipt.includes(PLANTED)).toBe(true);
+    const warns = warningsOf(r, "history.suspected_secret");
+    expect(warns.length).toBe(1);
+    expect(String(warns[0]!.problem)).toContain(`seq ${String(r.receiptLines[0]!.seq)}`);
+    const vs = inspectSegment(segmentText(hist)) as { event: string; seq?: number }[];
+    expect(vs.filter((v) => v.event === "doctor.gap").map((v) => v.seq)).toContain(r.receiptLines[0]!.seq);
+    expect(vs.at(-1)).toMatchObject({ event: "doctor.segment", runs: 1, projected: 1, torn: 0, passed: true });
+  });
+
   test("ten thousand lines of one segment terminate inside the stated bound", async () => {
     // Two bounds, both measured here. The scan is the built-in's own cost; the run is the whole
     // of it, the receipt's ten thousand writes included, because a scan per line must not turn a

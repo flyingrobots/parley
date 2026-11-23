@@ -64,10 +64,16 @@ function compile(patterns: readonly SecretPattern[]): readonly Compiled[] {
 /** RFC 6901: `~` is `~0` and `/` is `~1`, so a pointer is unambiguous about which key it names. */
 const token = (key: string) => key.replace(/~/g, "~0").replace(/\//g, "~1");
 
+/** The first shape a string matches, or `null`. */
+function matchOf(value: string, patterns: readonly Compiled[]): string | null {
+  for (const p of patterns) if (p.re.test(value)) return p.name;
+  return null;
+}
+
 function scan(value: unknown, at: string, patterns: readonly Compiled[]): SuspectedSecret | null {
   if (typeof value === "string") {
-    for (const p of patterns) if (p.re.test(value)) return { pattern: p.name, at };
-    return null;
+    const hit = matchOf(value, patterns);
+    return hit === null ? null : { pattern: hit, at };
   }
   if (Array.isArray(value)) {
     for (let i = 0; i < value.length; i++) {
@@ -91,6 +97,10 @@ function scan(value: unknown, at: string, patterns: readonly Compiled[]): Suspec
  * through objects and arrays; the five envelope fields are skipped at the top level, and object
  * keys are not scanned. The first match wins: the result says *that* the body looks like it
  * carries a credential, which is all a refusal needs, so there is no reason to keep looking.
+ *
+ * `at` is built from the record's own keys, so it can itself carry a token-shaped key. It is safe
+ * to inspect in the process and is **not** safe to emit as it is; `refuseSuspectedSecrets` checks
+ * it before naming it in a warning.
  */
 export function findSuspectedSecret(record: Record<string, unknown>, patterns: readonly SecretPattern[] = SECRET_PATTERNS): SuspectedSecret | null {
   const compiled = compile(patterns);
@@ -120,13 +130,23 @@ export function findSuspectedSecret(record: Record<string, unknown>, patterns: r
  * does not change when the list it closes over does.
  */
 export function refuseSuspectedSecrets(patterns: readonly SecretPattern[] = SECRET_PATTERNS): (record: Record<string, unknown>) => Record<string, unknown> | HistoryRefusal {
+  // Compiled here rather than on the first record, so a pattern that will not compile is a throw
+  // where the list was configured instead of one withheld line per line of the run.
+  const compiled = compile(patterns);
   return function refuseSuspectedSecrets(record: Record<string, unknown>) {
     const hit = findSuspectedSecret(record, patterns);
     if (hit === null) return record;
     const seq = typeof record.seq === "number" ? String(record.seq) : "?";
+    // The pointer is made of the record's keys, and a key can be a token too. Naming it would put
+    // a *different* suspected secret on stderr, in the receipt and on the stream through this
+    // warning's own copy — which is the one thing this transform exists to prevent.
+    const inKey = matchOf(hit.at, compiled);
+    const where = inKey === null
+      ? `at ${hit.at}`
+      : `under a key this warning will not repeat, because the key itself matches the ${inKey} shape`;
     return refuse(
       SUSPECTED_SECRET_CODE,
-      `the body of seq ${seq} matches the ${hit.pattern} shape at ${hit.at}, so that line is not on the shared stream; the receipt is unaffected and still carries the value`,
+      `the body of seq ${seq} matches the ${hit.pattern} shape ${where}, so that line is not on the shared stream; the receipt is unaffected and still carries the value`,
       `declare the value as a secret in the command's secrets list (spec §5.3) so it is replaced in the receipt too, or keep it out of the record; an unlisted shape passes, and a legitimate value that matches costs this one stream line`,
     );
   };

@@ -8,7 +8,9 @@ unvalidated because its type is not ours to validate.
 A read over those records states who it is for, what shape of answer it wants and how big an
 answer it will accept, is refused when it cannot, and is itself recorded as a run with a receipt
 (§9) — so the next read can see what was asked. The shape it asks for **orders** the answer: §9's
-purpose is the ranking function, and it never removes a record.
+purpose is the ranking function, and it never removes a record. The size it will accept **bounds**
+the answer, and the read answers with a digest that says what the bound left out, so a later
+reader cannot mistake a digest for the whole.
 
 The rules it keeps are the ones the specification binds a *reader* to — §1.4 buffering and
 quarantine, §5.4's unterminated tail, §1.3's `(run, seq)`, §4.5 and §4.6 on exact-pair resolution,
@@ -121,7 +123,7 @@ const outcome = await queryReceipts({
 }, { cwd: "/work/site" });
 
 if (outcome.refused) for (const r of outcome.refusals) console.error(r.code, r.problem, r.remedy);
-else console.log(outcome.query, outcome.window, outcome.records.length);
+else console.log(outcome.records.length, "of", outcome.counts.inWindow, "—", outcome.digest.loss);
 ```
 
 `asker.cwd` is inferred from the directory the read was made against when the caller states none,
@@ -153,13 +155,32 @@ itself a parley tool can hand one straight to `run.error`:
 | --- | --- | --- |
 | `asker` | Verbatim, `tool` required | Nothing branches on it: two askers asking the same thing get the same answer |
 | `view` | Verbatim, one of five tokens | **The order.** It ranks the answer and filters none of it (below) |
-| `budget` | Verbatim, defaulted to `{"records": 20}` and the answer says it defaulted | **Not yet.** Nothing is truncated and no excluded count is claimed; bounding an answer is [flyingrobots/parley#50](https://github.com/flyingrobots/parley/issues/50) |
+| `budget` | Verbatim, defaulted to `{"records": 20}` and the answer says it defaulted | **The bound.** `records` bounds how many records the answer names; `bytes` bounds the digest's line; `ms` bounds nothing (below) |
 | `window` | Verbatim, two timestamps inclusive at both ends | Yes: the answer is the records inside it, ordered by the view, with `(t, run, seq)` ascending as the last part of the key |
 | `note` | Verbatim | Never parsed |
 
-No `parley.lens` is emitted. A lens states a loss bound and the records a result was built from;
-a read that returns the records themselves has no loss to state, and the lens belongs to the
-digest (#50).
+### The digest, and what it left out
+
+The first response is a **`parley.lens` 1.0.0 record** — the message decided in
+[flyingrobots/parley#46](https://github.com/flyingrobots/parley/issues/46), not a new one. It goes
+through the writer onto the read's stream and into the read's receipt, so the digest is evidence
+and the loader reads it back `validated` against that exact pair. It names the query it answers by
+`(run, seq)`, the asker, the view, the window, the budget **actually applied**, the records it
+holds by `(run, seq)` — the way back a drill-down needs — and the loss:
+
+| Budget field | What it bounds |
+| --- | --- |
+| `records` (required) | **The count.** At most this many records are named, and `answer.records` holds exactly those |
+| `bytes` (optional) | **The line.** The lens line as written, serialised JSON plus its newline in UTF-8, is at most this many bytes; records are dropped from the tail of the ranking until it fits |
+| `ms` (optional) | **Nothing.** A read that has loaded the history has already spent its time (flyingrobots/parley#71) |
+
+`loss.excluded` is always there, zero included — an absent count and a count of zero are different
+claims — and `loss.bound` is `none` only beside a count of 0, which the schema refuses to pair any
+other way. So a digest that left something out says so structurally rather than in prose. What it
+excluded is not returned by another route; fetching it is
+[flyingrobots/parley#51](https://github.com/flyingrobots/parley/issues/51). `counts.inWindow` and
+the ranking's tier census still describe the whole window the digest was drawn from, so the caller
+can see it is not the whole without being handed what it cut.
 
 ### The view orders the answer, and filters none of it
 
@@ -178,8 +199,10 @@ and those above a run known to have succeeded — within a tier, never across on
 `rankRecords(query, records)` is that order on its own: a pure function from an accepted query and
 records to the same records, reordered. It reads nothing, writes nothing and records nothing, and
 it **returns every record it was given** — over-filtering is the failure mode §9 warns about, so
-nothing is dropped at any tier. `answer.ranking` carries each record's `rank`, `tier`, `outcome`
-and the `why` behind them, the per-run outcomes and the tier counts.
+nothing is dropped at any tier. The digest's bound is applied one step later, above the full
+order, which is the only place a cut can state its own loss honestly. `answer.ranking` carries
+each named record's `rank`, `tier`, `outcome` and the `why` behind them, and its per-run outcomes
+and tier counts are over the whole window the digest was drawn from.
 
 Which token implies a change is derived from the vocabulary rather than read from a field —
 `parley.query` has none — and the surface each token names, the outcome rules and the whole
@@ -282,20 +305,47 @@ Four things in that order are the whole feature:
 - **Within a tier, a failed run still comes first.** Rank 5 is the failing run's head, at
   `t: …386227`, above rank 6 at `t: …386196`, which is 31 ms earlier. Inside a tier the outcome key
   outranks the clock — and only under a view that implies a change.
-- **Nothing is missing.** Eleven records in the window, eleven in the answer. The same read with
-  `view: "everything"` returns the same eleven in `(t, run, seq)` order: the view changed the order
-  and nothing else.
+- **Nothing is hidden by the order.** Eleven records in the window, eleven ranked. Under
+  `view: "everything"` the same eleven come back in `(t, run, seq)` order: the view changed the
+  order and nothing else. What a *budget* cuts from that order is the digest's, below, and it says
+  so.
+
+## A captured digest
+
+The same three runs, read again with `budget: {"records": 4}` over the day's window on 2026-11-22.
+Eleven records are in the window and the digest names four of them, so it says `excluded: 7`.
+These are the two lines that read's own receipt holds, byte for byte — `bun run check` validates
+both against the shipped schemas:
+
+```jsonl
+{"event":"query","t":1795391920147,"seq":2,"run":"01M82V560AR9BD2BEZSAKRR7MJ","asker":{"tool":"claude-code","cwd":"/var/folders/wt/s8clst9955x1l0qblsl4925w0000gn/T/parley-digest-readme.QpEuMA/work","task":"flyingrobots/parley#50"},"view":"what-changed","budget":{"records":4},"window":{"from":1795305520135,"to":1795391920135},"note":"about to change the counter; what has it done here","_schema":{"id":"parley.query","version":"1.0.0"}}
+{"event":"lens","t":1795391920234,"seq":6,"run":"01M82V560AR9BD2BEZSAKRR7MJ","query":{"run":"01M82V560AR9BD2BEZSAKRR7MJ","seq":2},"asker":{"tool":"claude-code","cwd":"/var/folders/wt/s8clst9955x1l0qblsl4925w0000gn/T/parley-digest-readme.QpEuMA/work","task":"flyingrobots/parley#50"},"view":"what-changed","budget":{"records":4},"window":{"from":1795305520135,"to":1795391920135},"loss":{"bound":"count-only","excluded":7},"records":[{"run":"01M82V55XKZSRC6ERNSAG0QJMH","seq":2},{"run":"01M82V55XKZSRC6ERNSAG0QJMH","seq":3},{"run":"01M82V55V1679ZY07B6X3HEVND","seq":3},{"run":"01M82V55ZV6JPSEQ6Q947C9QW0","seq":3}],"_schema":{"id":"parley.lens","version":"1.0.0"}}
+```
+
+That line is 664 bytes. Four things in it are the whole feature:
+
+- **It names the four best-ranked records of eleven**, and nothing else: the failing run's `error`
+  and status-2 `end` first, then the two successful runs' `count.result` records. The bound cut the
+  tail of the order flyingrobots/parley#49 produced, not a selection made some other way.
+- **It says what that cost**, as a count: `excluded: 7`. The count is present at zero too, because
+  an absent count and a count of zero are different claims.
+- **It cannot read as complete.** `loss.bound` is `count-only`; `none` is only valid beside a
+  count of 0, and the schema refuses the other pairing.
+- **It is the way back.** Each named record is a `(run, seq)` pair, so a drill-down fetches records
+  rather than re-deriving them from a result (flyingrobots/parley#51).
 
 ## Surface
 
 | Export | Job |
 | --- | --- |
 | `loadReceipts(opts)` | Every run in both receipt locations for a working directory, as bundles |
-| `queryReceipts(request, opts)` | A read: refused without an asker, a view and a window, else recorded as a `parley.query` event and answered with the window's records ordered by the view |
+| `queryReceipts(request, opts)` | A read: refused without an asker, a view and a window, else recorded as a `parley.query` event and answered with a `parley.lens` digest — the window's records ordered by the view, cut at the budget, and the count the cut left out |
 | `planQuery(request)`, `queryRecord(query)` | The refusal rules and the recorded payload, without any reading or writing |
 | `rankRecords(query, records)` | The view's order over records, pure: the same records reordered, never a subset |
+| `digestFor(query, answers, ranked, envelope)` | The bound over that order, pure: the digest's payload, the records it names, the count it excluded and the bytes its line takes |
+| `digestLine`, `digestBytes` | The line the writer will write for a digest, and its length in UTF-8 bytes |
 | `runOutcomes`, `onViewSurface`, `onFailureSurface`, `impliesChange`, `TIERS`, `OUTCOMES`, `CHANGE_VIEWS` | The parts of that order, each answerable on its own |
-| `VIEWS`, `DEFAULT_BUDGET`, `QUERY_SCHEMA`, `NO_RETENTION` | The five view tokens, the one documented budget default, the pair a read emits, and the retention policy a read states |
+| `VIEWS`, `DEFAULT_BUDGET`, `QUERY_SCHEMA`, `LENS_SCHEMA`, `NO_RETENTION` | The five view tokens, the one documented budget default, the two pairs a read emits, and the retention policy a read states |
 | `readReceiptFile(path, opts)` | One receipt file; a file holding more than one run yields one bundle per run |
 | `receiptLocations(opts)`, `repoReceiptDir`, `stateReceiptDir` | Where receipts are, present or absent; creates nothing |
 | `LineBuffer`, `splitLines`, `readFileLines` | Newline buffering: bytes in, complete lines out, the unterminated tail kept apart (§1.4, §5.4) |
@@ -322,8 +372,12 @@ secret, whether its `inv` matches — is the caller's to decide, and this reader
 
 ## What it does not do
 
-- Project or truncate. A read ranks its window by the view and returns all of it; the budget is
-  recorded and bounds nothing yet, and no excluded count is claimed (flyingrobots/parley#50).
+- Project. The records a digest names come back whole; no view reduces one to fewer fields
+  (flyingrobots/parley#59).
+- Hand back what the bound excluded, or decline on budget grounds. The digest states the count and
+  stores the way back; fetching those records is flyingrobots/parley#51, and "not within your
+  budget, and here is the budget that would do it" is something `parley.lens` 1.0.0 cannot say
+  (flyingrobots/parley#71).
 - Recompute `inv` or any semantic digest (§7.1). It checks a sidecar's stored bytes against the
   digest the receipt declared, and nothing else.
 - Judge conformance. The doctor under `scripts/` names violated rules; this is a loader, and a

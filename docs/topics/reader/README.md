@@ -169,7 +169,8 @@ The lens of the result that answers it, naming the failed run of this specificat
 A drill-down is the same `parley.query` message with `records` naming what it opens, by the
 `(run, seq)` pairs a lens carries, in the order asked. The view and window are the purpose and the
 stretch of history the records were named from, and select nothing; `budget.records` is the number
-of ids asked. Opening the two records the lens above names:
+of ids asked, and `budget.bytes`, when stated, bounds the records that open: the rest come back
+`over_budget` with their size and no contents ([the rules](../parley-read/README.md#a-byte-bound)). Opening the two records the lens above names:
 
 ```json
 {"event":"query","t":1795326530000,"seq":1,"run":"01JD5MP2W8C4E6G8J0K2M4P6R8",

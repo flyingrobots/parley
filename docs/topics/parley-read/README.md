@@ -426,8 +426,8 @@ later reader sees which records were opened as well as which questions were aske
 
 A refused drill-down writes nothing, like a refused read. The **view and window select nothing**:
 an id is opened by identity whatever its `t`, and the view is recorded as the purpose the records
-were opened for. `budget` is not taken from the caller; the recorded budget is `{"records": n}` for
-`n` ids asked, which is the bound the ids already are. A drill-down emits no `parley.lens`: it
+were opened for. The recorded budget is `{"records": n}` for `n` ids asked, which is the bound the ids already
+are, plus `bytes` when the caller states [a byte bound](#a-byte-bound). A drill-down emits no `parley.lens`: it
 answers with records, not a digest, and has no loss to state.
 
 ### One outcome per id
@@ -438,9 +438,33 @@ twice. Nothing about one id can lose the others, and nothing throws:
 | Outcome | Means | Carries |
 | --- | --- | --- |
 | `opened` | The record is there | `record` in full; `sidecar` when the record was restored from one; `held`, the stored record in full, when the id names the `sidecar` event itself |
+| `over_budget` | The record is there but opening it would pass the caller's `budget.bytes` | `bytes`, the size it would have occupied, `problem`, `remedy` and the bundle's ruling. **No record and no part of one** |
 | `sidecar_unavailable` | The id is a `sidecar` event or the record one holds, and the stored bytes could not be established: `missing`, `digest_mismatch`, `bytes_mismatch`, `escapes_bundle`, `unparseable`, `unreadable`, or `unchecked` when resolution was off | `record` is the pointer and only the pointer, `sidecar` with the declared and actual digests, `problem` and `remedy`. The contents are never claimed |
 | `run_not_found` | No receipt in either location holds that run | `problem` and `remedy` |
 | `seq_not_found` | The run is there and holds no record at that `seq` | `problem`, `remedy` and the bundle's ruling |
+
+### A byte bound
+
+A drill-down may state `budget.bytes` (a positive integer; anything else is refused
+`query.budget_invalid` and writes nothing). A record is **whole or absent**: there is no truncated
+record, because a partial record read as whole is the §1.2a mistake. The rules:
+
+- **Size** is the UTF-8 bytes of the record's JSON exactly as the drill-down returns it
+  (`recordBytes`: `JSON.stringify` of the loaded record, envelope fields included). A record stored
+  in a sidecar is sized by its contents, since the loader has restored them into it; opening the
+  `sidecar` event itself returns the pointer and `held`, and both count, so the pointer is no way
+  past the bound.
+- **Order and remainder.** Each id is judged in the order asked against what remains: it opens if
+  the running total plus its size is within the bound (the bound is inclusive), else it is
+  `over_budget`. An over-budget id spends nothing, so a small record asked after it may still
+  open. The answer keeps one outcome per id, in order, and nothing is skipped silently.
+- **What costs nothing.** Only `opened` outcomes spend budget. `run_not_found`, `seq_not_found` and
+  `sidecar_unavailable` return no contents (a broken sidecar returns the pointer, which is
+  diagnosis, not contents) and keep their own outcome under any bound.
+- **Recorded.** The `parley.query` carries `{"records": n, "bytes": b}`, the budget actually
+  applied, the answer states it as `budget`, `counts.overBudget` counts the refused ids and the
+  `receipt.step` carries `over_budget`. A caller who gets `over_budget` asks for that id again
+  alone or under a larger bound.
 
 The sidecar's stored bytes are checked by the loader against the `bytes` and `sha256` the receipt
 declared before the record is restored (§5); the drill-down reports that resolution rather than

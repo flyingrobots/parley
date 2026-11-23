@@ -1748,13 +1748,15 @@ describe("RD-22 a digest never reads as complete", () => {
       const held = lensRecord(dir, env, answer.run);
       expect(Buffer.byteLength(JSON.stringify(held.record) + "\n", "utf8")).toBe(answer.digestBytes);
     }
-    // A hundredfold more history, and the bytes now cut before the record count does: each entry
-    // carries its summary (flyingrobots/parley#77), about 65 bytes, so 20 of them no longer fit in
-    // 2048. At 30 receipts 16 entries fit, at 2047 bytes; at 300 the excluded count gains a digit,
-    // the sixteenth entry no longer fits beside it, and 15 are named. Measured, not claimed.
-    expect(named).toEqual([9, 16, 15]);
-    expect(excluded).toEqual([0, 74, 885]);
-    expect(sizes).toEqual([1302, 2047, 1940]);
+    // A hundredfold more history, and the bytes cut before the record count does: each entry
+    // carries its summary (flyingrobots/parley#77), and each run it names has a section stating
+    // its identity and outcome once (flyingrobots/parley#83), about 100 bytes for each of these
+    // three-record runs, while the entries lost the outcome they each repeated. 13 entries, the
+    // whole of four runs and the head of a fifth, with five sections, fit at 30 receipts and at
+    // 300 alike; the fourteenth entry, about 80 bytes, does not. Measured, not claimed.
+    expect(named).toEqual([9, 13, 13]);
+    expect(excluded).toEqual([0, 77, 887]);
+    expect(sizes).toEqual([1422, 1970, 1971]);
     // Every line is inside the stated byte bound: the line does not grow with history.
     expect(sizes.every((b) => b <= BYTES)).toBe(true);
   }, 120_000);
@@ -1779,7 +1781,7 @@ describe("RD-22 a digest never reads as complete", () => {
     expect(answer.digest.loss).toEqual({ bound: "count-only", excluded: 9 });
     // The failing run's error is what a change purpose puts first, and the digest keeps it.
     expect(answer.digest.records[0]).toEqual({
-      run: broke.run, seq: answer.records[0]!.seq, event: "error", t: answer.records[0]!.t!, code: answer.records[0]!.record.code,
+      run: broke.run, seq: answer.records[0]!.seq, event: "error", t: answer.records[0]!.t!, code: answer.records[0]!.record.code as string,
     });
     expect(answer.records[0]!.run).toBe(broke.run);
 

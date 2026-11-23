@@ -1,0 +1,18 @@
+{
+  "name": "@flyingrobots/parley-emit-py",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A writer for the Parley output protocol in one vendorable Python file, standard library only. This manifest exists for the repository's scripts; the package is the file parley_emit.py.",
+  "license": "Apache-2.0",
+  "scripts": {
+    "test": "python3 -m unittest discover -s tests",
+    "sync-schemas": "python3 scripts/sync_schemas.py",
+    "vendor-info": "python3 parley_emit.py --vendor-info"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/flyingrobots/parley.git",
+    "directory": "packages/parley-emit-py"
+  },
+  "author": "James Ross"
+}

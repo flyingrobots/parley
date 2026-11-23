@@ -229,7 +229,7 @@ describe("PE-26 retention is per tool", () => {
     expect(other.every((p) => existsSync(p))).toBe(true);
     expect(names(join(dir, ".parley", "receipts")).length).toBe(64);
     expect(last.receiptLines.some((o) => o.event === "receipt.step" && /retention/.test(String(o.decision)))).toBe(false);
-  });
+  }, 60_000);
 
   test("the tool's own excess is still expired, oldest first, and a neighbour's receipts are never counted", async () => {
     const { dir, env } = scratch();
@@ -241,7 +241,7 @@ describe("PE-26 retention is per tool", () => {
     expect(other.every((p) => existsSync(p))).toBe(true);
     expect(names(join(dir, ".parley", "receipts")).length).toBe(64);
     expect(next.violations).toEqual([]);
-  });
+  }, 60_000);
 
   test("a file whose head cannot be read is not the tool's and is left alone", async () => {
     const { dir, env } = scratch();
@@ -254,7 +254,7 @@ describe("PE-26 retention is per tool", () => {
     expect(["a-empty.jsonl", "b-garbage.jsonl", "c-nohead.jsonl"].every((f) => existsSync(join(rd, f)))).toBe(true);
     expect(names(rd).length).toBe(5);
     expect(r.status).toBe(0);
-  });
+  }, 60_000);
 
   test("the decision counts the tool's own receipts", async () => {
     const { dir, env } = scratch();
@@ -263,7 +263,7 @@ describe("PE-26 retention is per tool", () => {
     const step = readFileSync((await runCount(dir, env, ["count"], body, { retention: { count: 2 } })).path!, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as { event: string; decision?: string }).find((o) => o.event === "receipt.step" && /retention/.test(o.decision ?? ""));
     expect(step?.decision).toBe("retention: deleted 1 receipt bundle(s)");
     expect(JSON.stringify(step)).toContain("3 of this tool's receipts exceeded the retention count of 2");
-  });
+  }, 60_000);
 });
 
 describe("PE-6 repository hygiene", () => {

@@ -899,8 +899,8 @@ describe("PE-16 retention and in-flight runs (F-5)", () => {
   }
   // A whole second survives utimes exactly on every filesystem, so the 24-hour boundary is exact.
   const wholeSecond = (ms: number) => Math.floor(ms / 1000) * 1000;
-  function retentionStep(lines: { event: string; decision?: string }[]) {
-    return lines.find((o) => o.event === "receipt.step" && /^retention:/.test(o.decision ?? ""));
+  function retentionStep(lines: Record<string, unknown>[]) {
+    return lines.find((o) => o.event === "receipt.step" && /^retention:/.test(String(o.decision ?? ""))) as { decision?: string } | undefined;
   }
 
   test("retention spares an incomplete receipt written within the grace period", async () => {

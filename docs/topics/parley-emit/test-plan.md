@@ -21,7 +21,7 @@ repository's schemas; cases about a single field or a refusal assert that field.
 | PE-13 | The shipped schemas are byte-identical to the repository's top-level schemas and pinned by commit | §4.5 |
 | PE-14 | A declared secret value reaches no stream, receipt or `inv` on any path: no command selected, discovery, a secret inside the working-directory path, a secret colliding with an envelope word, a secret in an input path | §5.3, §2.2, §3.2 |
 | PE-15 | A throw from a tool callback before the bootstrap line is a startup failure; a throwing renderer falls back | §3.2, §6 |
-| PE-16 | Retention never deletes a receipt still in flight and deletes a bundle's sidecars with it | §5.1 |
+| PE-16 | Retention never deletes a receipt still in flight (no `end`, modified within 24 hours) and deletes a bundle's sidecars with it | §5.1 |
 | PE-17 | The head is the receipt's first line whatever its size or the state of stdout; a sidecar failure and envelope keys from the tool are handled | §5, §5.4, §1.3 |
 | PE-18 | Every `console` function is captured, from before the resolvers run and in a real process; overlapping runs restore the console; a failing renderer is reported once; a throw during discovery is an error line | §1.2, §6 |
 | PE-19 | Tree inputs skip `.parley`, honour `exclude` and follow content; stdin and absolute inputs are digested; `receiptExtra` is scrubbed | §2.2, §5.3 |

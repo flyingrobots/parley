@@ -25,7 +25,7 @@ are quoted.
 | PY-10 | Stray output: anything written through `sys.stdout`, `sys.stderr`, `print`, `logging` or `warnings` while the writer runs is captured into the receipt; the streams carry protocol lines only | §1.2 |
 | PY-11 | The top-level handler converts every exception before `end` into a conforming line with the right exit status, wherever it is raised | §6, §3.2 |
 | PY-12 | Repository hygiene: `.parley/.gitignore` created whole if absent, never overwritten; a user's file sends the receipt to the state directory with a warning | §5.2 |
-| PY-13 | Retention is per tool: only completed bundles whose head names this tool are counted and deleted, oldest first, with their sidecars; never one in flight; never on a dry run; recorded as a step | §5.1, §4.3 |
+| PY-13 | Retention is per tool: only completed bundles whose head names this tool are counted and deleted, oldest first, with their sidecars; never one in flight (no `end`, modified within 24 hours); never on a dry run; recorded as a step | §5.1, §4.3 |
 | PY-14 | A receipt record over 65,536 bytes is stored as a sidecar described by its stored bytes; a sidecar that cannot be written keeps the record inline and exits 4 | §5 |
 | PY-15 | `inv` is over input bytes: stable across reruns, changed by an edit, unchanged by a declared secret, carried by `receipt.inputs` when inputs are declared, omitted when an input is unreadable | §2.2 |
 | PY-16 | The embedded schemas are the repository's top-level schemas, byte for byte, pinned by commit and digest; a stale copy fails the gate | §4.5 |

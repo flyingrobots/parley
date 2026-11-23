@@ -203,10 +203,11 @@ export interface QueryOptions extends LoadOptions {
   readonly now?: () => number;
 }
 
-const READER = { name: "parley-read", version: "0.1.0" } as const;
+/** The reading program's default identity; the drill-down (`open.ts`) records under the same one. */
+export const READER = { name: "parley-read", version: "0.1.0" } as const;
 
 /** Collects the read's own lines and forwards them to a caller's sink when there is one. */
-class Tee implements Sink {
+export class Tee implements Sink {
   readonly lines: string[] = [];
   constructor(private readonly to?: Sink) {}
   write(line: string): void {

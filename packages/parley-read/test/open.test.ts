@@ -152,6 +152,20 @@ describe("RD-30 a drill-down opens records by identity, in full", () => {
     });
   });
 
+  test("a drill-down sees the history segments a load would", async () => {
+    const { dir, env } = scratch();
+    // A run present only on the shared stream (§8): one plain segment, no receipt in either location.
+    const segmentDir = mkdtempSync(join(tmpdir(), "parley-open-history-"));
+    const segment = fiveSteps(segmentDir, RUN_B);
+    const ids = [{ run: RUN_B, seq: 3 }];
+    const without = opened(await openRecords({ asker: ASKER, view: "everything", window: WIDE, records: ids }, { cwd: dir, env }));
+    expect(kinds(without)).toEqual(["run_not_found"]);
+    const withSegment = opened(await openRecords({ asker: ASKER, view: "everything", window: WIDE, records: ids }, { cwd: dir, env, history: [segment] }));
+    expect(kinds(withSegment)).toEqual(["opened"]);
+    const loaded = loadReceipts({ cwd: dir, env, history: [segment] }).bundles.find((b) => b.run === RUN_B)!.records.find((r) => r.seq === 3)!;
+    expect(recordOf(withSegment.opened[0]!).record).toEqual(loaded.record);
+  });
+
   test("an id asked twice is answered twice", async () => {
     const { dir, env } = scratch();
     fiveSteps(repoReceipts(dir));

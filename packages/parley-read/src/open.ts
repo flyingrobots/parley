@@ -25,12 +25,12 @@
 // compared with the stored bytes before the record is restored (§5), and this module reports the
 // loader's resolution rather than reading the file a second time.
 import { resolve } from "node:path";
-import { defineTool, main, type Sink } from "@flyingrobots/parley-emit";
+import { defineTool, main } from "@flyingrobots/parley-emit";
 import type { RecordRef } from "./digest.ts";
-import { loadReceipts, type Bundle, type Load, type LoadOptions, type LoadedRecord, type Replay, type SidecarResolution } from "./load.ts";
+import { loadReceipts, type Bundle, type Load, type LoadedRecord, type Replay, type SidecarResolution } from "./load.ts";
 import { repoReceiptDir, stateReceiptDir } from "./locate.ts";
 import {
-  NO_RETENTION, QUERY_SCHEMA, planQuery, queryRecord,
+  NO_RETENTION, QUERY_SCHEMA, READER, Tee, planQuery, queryRecord,
   type AcceptedQuery, type Asker, type QueryOptions, type QueryRefusal, type QueryRequest, type QueryWindow, type View,
 } from "./query.ts";
 
@@ -119,18 +119,9 @@ export interface OpenAnswer {
 
 export type OpenOutcome = OpenAnswer | OpenRefused;
 
-export type OpenOptions = QueryOptions & LoadOptions;
+/** The same options a read takes: the loader's, plus the reading program's identity and its sinks. */
+export type OpenOptions = QueryOptions;
 
-const READER = { name: "parley-read", version: "0.1.0" } as const;
-
-class Tee implements Sink {
-  readonly lines: string[] = [];
-  constructor(private readonly to?: Sink) {}
-  write(line: string): void {
-    this.lines.push(line);
-    this.to?.write(line);
-  }
-}
 
 const isRef = (r: { readonly run?: unknown; readonly seq?: unknown }): boolean =>
   r !== null && typeof r === "object" && typeof r.run === "string" && r.run.length > 0
@@ -271,7 +262,7 @@ export async function openRecords(request: OpenRequest, opts: OpenOptions = {}):
       { view: query.view, window: query.window, asked: ids.length },
     );
 
-    const load = loadReceipts({ cwd, env, ...(opts.home === undefined ? {} : { home: opts.home }), ...(opts.sidecars === undefined ? {} : { sidecars: opts.sidecars }), ...(opts.validate === undefined ? {} : { validate: opts.validate }) });
+    const load = loadReceipts({ cwd, env, ...(opts.home === undefined ? {} : { home: opts.home }), ...(opts.sidecars === undefined ? {} : { sidecars: opts.sidecars }), ...(opts.validate === undefined ? {} : { validate: opts.validate }), ...(opts.history === undefined ? {} : { history: opts.history }) });
     // A read does not answer itself: its own bundle is not among those an id can resolve to.
     const bundles = new Map(load.bundles.filter((b) => b.run !== run.id).map((b) => [b.run, b]));
     const opened = ids.map((id) => openOne(id, bundles));

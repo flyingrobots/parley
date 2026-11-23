@@ -57,6 +57,20 @@ jobs:
             console.log('package.json fields present');
           "
 
+      # The suite's SDL agreement test fails under CI when the pinned Wesley is missing, so the
+      # release gate installs it exactly as checks.yml does (cached by exact version).
+      - name: Read the Wesley pin
+        id: wesley
+        run: echo "version=$(bun -e "console.log(JSON.parse(await Bun.file('package.json').text()).config.wesley)")" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        id: wesley-cache
+        with:
+          path: ~/.wesley
+          key: wesley-${{ steps.wesley.outputs.version }}-${{ runner.os }}-${{ runner.arch }}
+      - if: steps.wesley-cache.outputs.cache-hit != 'true'
+        run: cargo install wesley-cli --version "=${{ steps.wesley.outputs.version }}" --locked --root "$HOME/.wesley"
+      - run: echo "$HOME/.wesley/bin" >> "$GITHUB_PATH"
+      - run: test "$(wesley --version)" = "${{ steps.wesley.outputs.version }}"
       - run: bun install --frozen-lockfile
       - run: bun test
       - run: bun run check

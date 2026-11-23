@@ -19,7 +19,7 @@ digest names ([#51](https://github.com/flyingrobots/parley/issues/51)).
 > **Status: implemented, first release.** The [specification](spec/) is at `0.2.0`, and its
 > seventeen message schemas are released and immutable ([CHANGELOG.md](CHANGELOG.md),
 > [schemas/](schemas/README.md)). Two writers implement it: the TypeScript library
-> [`@flyingrobots/parley-emit`](packages/parley-emit/README.md) 0.2.3, which
+> [`@flyingrobots/parley-emit`](packages/parley-emit/README.md) 0.2.4, which
 > also appends to the shared history stream when one is configured, and
 > [`parley_emit.py`](packages/parley-emit-py/README.md) 0.1.2, one vendorable Python file pinned
 > by its SHA-256. The reader library, [`@flyingrobots/parley-read`](packages/parley-read/README.md)

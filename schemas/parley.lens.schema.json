@@ -170,10 +170,28 @@
             "type": "integer",
             "minimum": 0,
             "description": "0 for a bootstrap or startup-failure line (spec §1.3)."
+          },
+          "event": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The named record's event token as the loader read it, a tool's own token included verbatim (flyingrobots/parley#77). Absent when the record carries none; never filled in."
+          },
+          "t": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The named record's POSIX time in milliseconds (spec §1.3) as the loader read it. Absent when the record has no usable t; never a made-up one."
+          },
+          "outcome": {
+            "enum": [
+              "failed",
+              "undetermined",
+              "succeeded"
+            ],
+            "description": "What the records in the window establish about the named record's run, as the ranking established it: failed for an error, a startup failure or a non-zero end; succeeded for an end of 0 and nothing against it; undetermined otherwise, including a run whose end the window does not hold (spec §1.2a). It is the window's verdict, not the digest's: a run whose end the bound cut is still succeeded. Absent when the reader established none."
           }
         }
       },
-      "description": "The records this result was built from, by (run, seq), never more than budget.records of them. Stored rather than recomputed: projecting down to a result is cheap and expanding back up may be impossible within a budget, so the way back has to be written here. A result is built from records, never from another result."
+      "description": "The records this result was built from, by (run, seq), never more than budget.records of them. Stored rather than recomputed: projecting down to a result is cheap and expanding back up may be impossible within a budget, so the way back has to be written here. A result is built from records, never from another result. Each entry may also carry a fixed summary of the record it names — event, t and its run's outcome — so a reader can choose what to open without opening it (flyingrobots/parley#77). The summary is read off the record when the lens is built and is part of the line budget.bytes bounds."
     },
     "_schema": {
       "type": "object",

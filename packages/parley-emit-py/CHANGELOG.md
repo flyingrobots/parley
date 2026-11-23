@@ -4,10 +4,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). This fi
 its own (`__version__` in `parley_emit.py`); the spec and each message schema move separately
 (spec §4.4).
 
-Nothing is released yet: no version heading below names a release, and nothing is published to a
-package registry. A copy is pinned by the SHA-256 `--vendor-info` prints.
+This file is released as a vendorable copy and is not published to a package registry: a tool
+copies `parley_emit.py` into its own tree and pins it by the SHA-256 `--vendor-info` prints. Each
+release's digest is recorded on its GitHub release (tag `parley-emit-py-vX.Y.Z`).
 
 ## [Unreleased]
+
+## [0.1.0] — 2026-11-22
+
+The first released, vendorable version. The schemas it embeds are the released versions of the
+repository's first schema release, spec `0.2.0` in the root `CHANGELOG.md`, byte for byte.
 
 ### Added
 

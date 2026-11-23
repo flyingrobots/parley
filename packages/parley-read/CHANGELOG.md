@@ -3,10 +3,14 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). This package is versioned
 on its own; the spec and each message schema move separately (spec §4.4).
 
-Nothing is released yet: no version heading below names a release, and the package is private in
-its manifest so it cannot be published by accident.
-
 ## [Unreleased]
+
+## [0.1.0] — 2026-11-22
+
+The first public version. It depends on `@flyingrobots/parley-emit` `^0.2.0`, so parley-emit 0.2.0
+is published first. The schemas it ships are the released versions of the repository's first
+schema release, spec `0.2.0` in the root `CHANGELOG.md`, byte for byte (`src/schemas.ts` records the
+commit and each digest); no schema version is released by this package release (spec §4.5).
 
 ### Added
 

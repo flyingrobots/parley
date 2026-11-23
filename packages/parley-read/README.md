@@ -20,11 +20,14 @@ and §5 on sidecars — because the cases §6 calls unconstrainable will happen,
 aborts on the first stray byte is broken by exactly the case the spec admits.
 
 Spec version `0.2.0`. The package version moves with this code; each message schema moves on its
-own (spec §4.4). The schemas it ships are the repository drafts at the commit recorded in
-`src/schemas.ts`, byte-identical by test (spec §4.5).
+own (spec §4.4). The schemas it ships are the versions released with spec `0.2.0`, copied from
+`schemas/` at the commit recorded in `src/schemas.ts`, byte-identical by test (spec §4.5).
 
-This is a library with no command. It is not published yet; inside this repository it is the
-workspace package `@flyingrobots/parley-read`.
+This is a library with no command, for Bun 1.2 or later. Version 0.1.0 is released (tag
+`parley-read-v0.1.0`); its first publish to npm is made by hand by the owner
+([docs/workflows/release-parley-read](../../docs/workflows/release-parley-read/README.md)), after
+which `bun add @flyingrobots/parley-read` installs it with `@flyingrobots/parley-emit` `^0.2.0`.
+Inside this repository it is the workspace package `@flyingrobots/parley-read`.
 
 ## Loading a directory's receipts
 
@@ -506,7 +509,7 @@ the ids are opened; a drill-down past it declines as a read does and opens nothi
 | `receiptLocations(opts)`, `repoReceiptDir`, `stateReceiptDir` | Where receipts are, present or absent; creates nothing |
 | `LineBuffer`, `splitLines`, `readFileLines` | Newline buffering: bytes in, complete lines out, the unterminated tail kept apart (§1.4, §5.4) |
 | `validator(schemas?)`, `schemaRef`, `envelopeGaps` | Exact-pair validation and the version-independent core (§4.5, §4.6) |
-| `SCHEMAS`, `SCHEMA_SOURCE` | The seventeen draft schemas this reader ships, with the commit and digest of each |
+| `SCHEMAS`, `SCHEMA_SOURCE` | The seventeen schemas this reader ships, the released versions of spec `0.2.0`'s release, with the commit and digest of each |
 | `QUARANTINE_CODES` | Which defect codes are a kept line rather than a judgement about a record |
 
 ## What a load says, rule by rule

@@ -13,7 +13,7 @@ it. This page is the reference for what the package does on `main`; the package
 | `defineTool(spec)` | Checks a tool's declaration for the things the writer needs: a non-empty name and version, at least one command, an intent per command, a SemVer version on every emitted type, and a positive retention count. Effects, secrets, error types, source resolvers and the `--human` renderer are carried as declared |
 | `main(spec, argv, handler, options)` | Parses the writer-owned flags (`--human`, `--humanize`, `--dry-run`, `--schema`, `--help`, `-h`) before the first `--`, which ends them (flyingrobots/parley#103), chooses the receipt location, opens the shared history stream when one is configured, resolves declared sources, redacts, bootstraps, writes the head, enforces retention, runs the handler under the top-level handler, closes with `end`, returns the exit status |
 | `Run` | `result`, `page`, `step`, `warning`, `error`, `input`, `finaliseInputs`, `end`; `receiptPath`, `cwd`, `dryRun`, `ended`, `status` |
-| `SCHEMAS`, `SCHEMA_SOURCE` | The seventeen draft schemas the package ships, with the commit and digest of each |
+| `SCHEMAS`, `SCHEMA_SOURCE` | The seventeen schemas the package ships, the released versions of spec `0.2.0`'s release, with the commit and digest of each |
 | `computeInv`, `canonical`, `digestTree`, `sha256` | The documented `inv` derivation and its parts |
 | `chooseLocation`, `repoRoot`, `stateBase`, `bookkeepingFor` | Receipt placement and the bookkeeping a run declares |
 | `resolveHistory`, `openHistory`, `isHistoryFailure`, `writeWholeLine`, `retainHistory`, `historyBookkeeping`, `segmentName`, `historyDays` | The shared history stream of spec §8: where it is, opening a segment, the whole-line append, segment retention, and the bookkeeping a run with a stream declares |
@@ -122,7 +122,7 @@ it does can put an invalid line or a changed envelope on the shared timeline:
 | Rule | Behaviour |
 | --- | --- |
 | The envelope is the writer's | `event`, `t`, `seq`, `run` and `_schema` are taken off whatever the transform returns and the receipt line's are put back, so the two copies of one event agree on all five (§1.3) |
-| The body is re-validated | Against the schema for its **exact** advertised pair (§4.5): this package's drafts, plus the schema the tool declared on the emitted or error type (§4.2) |
+| The body is re-validated | Against the schema for its **exact** advertised pair (§4.5): the schemas this package ships, plus the schema the tool declared on the emitted or error type (§4.2) |
 | An unverifiable line is withheld | A pair no schema document is held for, or one whose schema uses a construct `checkRecord` does not implement, is `history.transform_uncheckable`: an unchecked projection is never passed off as a checked one |
 | Failure is a warning, never an error | A throw is `history.transform_failed`, a body that no longer validates is `history.transform_invalid`, a body that restored a value §5.3 had replaced is `history.transform_unredacted`. Each names the withheld `seq`, goes to stderr and the receipt, and leaves the exit status alone (§6.1) |
 

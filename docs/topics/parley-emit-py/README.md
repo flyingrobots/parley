@@ -80,7 +80,7 @@ outside it; the package README lists them as the documented exceptions of spec Â
 `scripts/sync_schemas.py` (`bun run sync-schemas` in the package) embeds `schemas/*.schema.json`
 in the file between `# BEGIN SCHEMAS` and `# END SCHEMAS`, with the commit and each file's SHA-256
 in `SCHEMA_SOURCE`. The suite fails when an embedded schema's text does not digest to its pin, or
-when a pin differs from the draft in `schemas/`. `validate_line` and `check_record` check a line
+when a pin differs from the file in `schemas/`. `validate_line` and `check_record` check a line
 against the embedded schema for its exact pair with a bounded checker that reports a keyword it
 does not implement rather than ignoring it.
 

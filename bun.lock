@@ -13,7 +13,7 @@
     },
     "packages/parley-emit": {
       "name": "@flyingrobots/parley-emit",
-      "version": "0.1.0",
+      "version": "0.2.0",
     },
     "packages/parley-emit-py": {
       "name": "@flyingrobots/parley-emit-py",
@@ -23,7 +23,7 @@
       "name": "@flyingrobots/parley-read",
       "version": "0.1.0",
       "dependencies": {
-        "@flyingrobots/parley-emit": "workspace:*",
+        "@flyingrobots/parley-emit": "^0.2.0",
         "ajv": "^8.17.1",
         "ajv-formats": "^3.0.1",
       },

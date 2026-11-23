@@ -2,7 +2,7 @@
 
 Evidence lives in `packages/parley-emit/test/`. Where a case says the run conforms, it runs the
 doctor (`scripts/doctor.ts`) over the captured streams and asserts zero violations against the
-repository's draft schemas; cases about a single field or a refusal assert that field.
+repository's schemas; cases about a single field or a refusal assert that field.
 
 | ID | Requirement | Spec |
 | --- | --- | --- |
@@ -18,7 +18,7 @@ repository's draft schemas; cases about a single field or a refusal assert that 
 | PE-10 | Discovery is a run: `--schema` and `<command> --help` bootstrap, write a receipt, and close with `end` | §4.1, §4.2 |
 | PE-11 | A record over 65,536 bytes is stored as a sidecar whose event describes the stored bytes | §5 |
 | PE-12 | No run emits a non-JSON line on any stream, whatever a record contains; a library's console output is captured into the receipt | §1.1, §1.2 |
-| PE-13 | The shipped schemas are byte-identical to the repository drafts and pinned by commit | §4.5 |
+| PE-13 | The shipped schemas are byte-identical to the repository's top-level schemas and pinned by commit | §4.5 |
 | PE-14 | A declared secret value reaches no stream, receipt or `inv` on any path: no command selected, discovery, a secret inside the working-directory path, a secret colliding with an envelope word, a secret in an input path | §5.3, §2.2, §3.2 |
 | PE-15 | A throw from a tool callback before the bootstrap line is a startup failure; a throwing renderer falls back | §3.2, §6 |
 | PE-16 | Retention never deletes a receipt still in flight and deletes a bundle's sidecars with it | §5.1 |

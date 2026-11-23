@@ -17,7 +17,7 @@ writer (`@flyingrobots/parley-emit`) and load what it left behind.
 | RD-7 | A `parley.*` line is validated against the schema for its exact pair; an unshipped `parley.*` pair is partial; a tool-owned line is passed through as unvalidated | §4.5, §4.6 |
 | RD-8 | A sidecar is resolved relative to its receipt, its stored bytes checked against `bytes` and `sha256`, and the record it holds returned in its place; with resolution off, nothing about it is claimed either way | §5, §1.2a |
 | RD-9 | A bundle is unavailable for replay when a sidecar is missing, mismatched or escaping, when no newline-terminated `end` closes it, when its status is non-zero, or when it is redacted | §5, §5.3, §5.4 |
-| RD-10 | The shipped schemas are byte-identical to the repository drafts and pinned by commit | §4.5 |
+| RD-10 | The shipped schemas are byte-identical to the repository's top-level schemas and pinned by commit | §4.5 |
 | RD-11 | A quarantined line is never evidence: not a record, not termination, not a validation result | §1.4 |
 | RD-12 | The receipts the writer leaves behind load with zero quarantines and every `parley.*` record validates | §1, §4.4 |
 | RD-13 | A thousand small receipts load in one bounded pass | — |
@@ -71,7 +71,7 @@ writer (`@flyingrobots/parley-emit`) and load what it left behind.
 | RD-6b | The same line twice | one record, `copies: 2` | `copies of one event are deduplicated by run and seq` | implemented |
 | RD-6c | Two copies of one event, one carrying `detail` the other omits, and a pair disagreeing on `t` | the fuller record is returned; the disagreement is a reported defect | `a copy may carry a field another omits, and a disagreement is reported` | implemented |
 | RD-6d | The same bundle under both locations | one bundle naming two sources, records not doubled | `the same run found in both locations is one bundle` | implemented |
-| RD-7a | A head, a step and an `end` from the shipped drafts | every record validated against its exact pair | `a parley line is validated against the schema for its exact pair` | implemented |
+| RD-7a | A head, a step and an `end` from the shipped schemas | every record validated against its exact pair | `a parley line is validated against the schema for its exact pair` | implemented |
 | RD-7b | `parley.end` stamped `9.9.9` | state `partial`, never `validated`; reported | `a parley line of a version the reader does not ship is partial, never validated` | implemented |
 | RD-7c | A `t.count` result | state `unvalidated`, reason `tool_owned`; the record is still returned | `a tool-owned line is passed through as unvalidated` | implemented |
 | RD-7d | An `end` whose `status` is a string | state `invalid` with the validator's message | `a parley line that breaks its schema is reported invalid` | implemented |

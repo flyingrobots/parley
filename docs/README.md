@@ -13,7 +13,9 @@
 | [parley-emit-py](topics/parley-emit-py/README.md) | The Python writer, one vendorable file: its lifecycle, exit statuses, discovery, per-tool retention and what its stray-output capture cannot hold; its [test plan](topics/parley-emit-py/test-plan.md) is the contract ledger |
 | [parley-read](topics/parley-read/README.md) | The reader library: how a repository's receipt bundles are located, parsed, deduplicated, validated and ruled in or out for replay, and how a read over them is refused, recorded, ranked by its purpose and answered; its [test plan](topics/parley-read/test-plan.md) is the contract ledger |
 | [Conformance checking](topics/conformance/README.md) | The doctor: what it checks in a captured run, rule by rule, and what a pass does and does not establish |
+| [Releases](topics/release/README.md) | What a release is: the spec and schemas, each package and the Python file on their own tracks, and why a released schema is immutable; its [test plan](topics/release/test-plan.md) is the contract ledger |
 | [Releasing parley-emit](workflows/release-parley-emit/README.md) | The order of a package release and what the tag-triggered workflow checks, publishes and needs set up once |
+| [Releasing parley-read](workflows/release-parley-read/README.md) | The same for the reader: the dependency on parley-emit, the publish order, and the manual first publish with its trusted-publisher values |
 | [Checking the examples](workflows/check-examples/README.md) | How every JSON example is validated against its schema, and how to label one that is not complete |
 
 Living references describe what is true on `main`. Nothing is archived; git history is the archive.

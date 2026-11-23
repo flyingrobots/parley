@@ -1,6 +1,10 @@
 # parley v0.2 — specification
 
-**Status:** proposal. **Spec version:** `0.2.0`, versioned independently of any implementation.
+**Status:** implemented. Two conforming writers ([`@flyingrobots/parley-emit`](../packages/parley-emit/README.md)
+in TypeScript and [`parley_emit.py`](../packages/parley-emit-py/README.md) in Python) and one reader
+([`@flyingrobots/parley-read`](../packages/parley-read/README.md)) implement it and are tested against it;
+§8 and §9 remain informative. Its schemas were first released with this version (`CHANGELOG.md`).
+**Spec version:** `0.2.0`, versioned independently of any implementation.
 **Normative terms:** **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT** and **MAY** are to be
 interpreted as described in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119) and
 [RFC 8174](https://www.rfc-editor.org/rfc/rfc8174) when, and only when, they appear in bold.
@@ -502,7 +506,8 @@ the repository that holds the draft **MUST** pin a source commit or the schema's
 reader built from a draft holds whichever bytes it shipped and **SHOULD** state their commit or
 digest until a release exists.
 
-Nothing is released yet: no changelog heading names a schema version. The original `1.0.0`
+The first release is the `0.2.0` heading in `CHANGELOG.md`, which names every schema version it
+publishes. The original `1.0.0`
 drafts of `parley.run.bootstrap`, `parley.error` and `parley.receipt.head`, in git history before
 this section existed, predate every rule in it and were never released; a reader built against
 any of those three is outside the promise. The message types added since start at `1.0.0` under
@@ -514,8 +519,8 @@ this section's rules.
 pair to the schema it ships with for exactly that id and version, and applies §4.5 when it has
 none. The `$id` inside each published schema is
 `https://flyingrobots.dev/parley/schemas/<id>/<version>` and is likewise an identifier; it is
-not required to be served. The current draft of each schema lives at `schemas/<id>.schema.json`
-in this repository. Each released version is snapshotted, immutable, at
+not required to be served. The current version of each schema lives at `schemas/<id>.schema.json`
+in this repository, and is a draft while its changelog entry is under `Unreleased`. Each released version is snapshotted, immutable, at
 `schemas/released/<id>/<version>.schema.json`; the `CHANGELOG.md` entry for the release that
 published it is the pointer. A reader ships the snapshots it supports.
 

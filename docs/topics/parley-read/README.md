@@ -282,7 +282,7 @@ exact pair. It carries:
 | --- | --- |
 | `records` (required) | **The count.** The digest names at most this many records, and `records` in the answer holds exactly those |
 | `bytes` (optional) | **The line.** The `parley.lens` line as written — serialised JSON plus its newline, measured in UTF-8 — is at most this many bytes. Records are dropped from the tail of the ranking until it fits |
-| `ms` (optional) | **Nothing.** A read that has loaded the history has already spent its time, and a time bound means abandoning a load part-way; nothing here does that, and nothing pretends to |
+| `ms` (optional) | **Nothing.** A read that has loaded the history has already spent its time, and a time bound means abandoning a load part-way; nothing here does that, and nothing pretends to ([flyingrobots/parley#71](https://github.com/flyingrobots/parley/issues/71)) |
 
 A `bytes` budget too small even for a digest naming no records leaves it naming none: the envelope
 and the lens's own fields are not negotiable, because a lens that dropped them would no longer say
@@ -418,10 +418,11 @@ run went on.
 - Hand back what the bound excluded. The digest states the count and stores the way back; a call
   that asks for those records by identity is
   [flyingrobots/parley#51](https://github.com/flyingrobots/parley/issues/51).
-- Bound a read in time. `budget.ms` is recorded and applied to nothing.
-- Decline on budget grounds. "Not within your budget, and here is the budget that would do it"
-  is an answer a reader should be able to give, and `parley.lens` 1.0.0 cannot express it
-  ([observer geometry](../related-work/observer-geometry.md)).
+- Bound a read in time, or decline on budget grounds. `budget.ms` is recorded and applied to
+  nothing, and "not within your budget, and here is the budget that would do it" is an answer a
+  reader should be able to give that `parley.lens` 1.0.0 cannot express
+  ([observer geometry](../related-work/observer-geometry.md),
+  [flyingrobots/parley#71](https://github.com/flyingrobots/parley/issues/71)).
 - Recompute `inv` or any semantic digest (§7.1). It checks a sidecar's stored bytes against the
   digest the receipt declared, and nothing else.
 - Judge conformance. The [doctor](../conformance/README.md) names violated rules; a defect here is

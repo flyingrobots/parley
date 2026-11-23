@@ -172,7 +172,7 @@ holds by `(run, seq)` — the way back a drill-down needs — and the loss:
 | --- | --- |
 | `records` (required) | **The count.** At most this many records are named, and `answer.records` holds exactly those |
 | `bytes` (optional) | **The line.** The lens line as written, serialised JSON plus its newline in UTF-8, is at most this many bytes; records are dropped from the tail of the ranking until it fits |
-| `ms` (optional) | **Nothing.** A read that has loaded the history has already spent its time |
+| `ms` (optional) | **Nothing.** A read that has loaded the history has already spent its time (flyingrobots/parley#71) |
 
 `loss.excluded` is always there, zero included — an absent count and a count of zero are different
 claims — and `loss.bound` is `none` only beside a count of 0, which the schema refuses to pair any
@@ -376,7 +376,8 @@ secret, whether its `inv` matches — is the caller's to decide, and this reader
   (flyingrobots/parley#59).
 - Hand back what the bound excluded, or decline on budget grounds. The digest states the count and
   stores the way back; fetching those records is flyingrobots/parley#51, and "not within your
-  budget, and here is the budget that would do it" is something `parley.lens` 1.0.0 cannot say.
+  budget, and here is the budget that would do it" is something `parley.lens` 1.0.0 cannot say
+  (flyingrobots/parley#71).
 - Recompute `inv` or any semantic digest (§7.1). It checks a sidecar's stored bytes against the
   digest the receipt declared, and nothing else.
 - Judge conformance. The doctor under `scripts/` names violated rules; this is a loader, and a

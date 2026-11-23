@@ -2130,7 +2130,7 @@ describe("RD-50 a lens names each record with a summary of it", () => {
     const ranking = rankRecords(plan.query, [dated, absent, fractional, unnamed]);
     const envelope = { run: runId(8), seq: 30, t: T0 + 10 };
     const digested = digestFor(plan.query, { run: runId(8), seq: 1 }, ranking.records, envelope, ranking.outcomes);
-    const entry = (seq: number) => digested.digest.records.find((e) => e.seq === seq) as Record<string, unknown>;
+    const entry = (seq: number) => digested.digest.records.find((e) => e.seq === seq) as unknown as Record<string, unknown>;
     expect(entry(1)).toEqual({ run, seq: 1, event: "receipt.head", t: T0, outcome: "undetermined" });
     expect("t" in entry(2)).toBe(false);
     expect(entry(2).event).toBe("receipt.step");

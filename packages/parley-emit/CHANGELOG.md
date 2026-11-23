@@ -7,6 +7,16 @@ on its own; the spec and each message schema move separately (spec §4.4).
 
 ### Changed
 
+- **BREAKING for a caller that names a flag before the command: the command is now the first
+  argument once the writer's flags are set aside, and only that one argument is removed**
+  (flyingrobots/parley#101). The writer used to take the first argument anywhere that named a
+  command and remove every argument with the command's text, so a flag value equal to a command
+  name was lost (`edit --reason edit` gave the tool `["--reason"]`) or chosen as the command
+  (`--reason plan edit` ran `plan`). Now `edit --reason edit` gives `["--reason", "edit"]`, and in
+  a tool with more than one command a first argument that names none is
+  `startup.unknown_command`, exit 3, so `--verbose edit` must be written `edit --verbose`. The
+  writer's own flags are still recognised anywhere. A tool with one command may still omit its
+  name. The Python writer follows the same rule.
 - **BREAKING for a consumer that pins its discovery output: `<command> --help` now lists
   `parley.startup.failed@1.0.0` beside `parley.error@2.0.0`** (flyingrobots/parley#92, spec §4.2).
   A command that declares no `errors` now has the default `[parley.error, parley.startup.failed]`,

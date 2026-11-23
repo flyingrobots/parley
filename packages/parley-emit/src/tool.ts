@@ -116,7 +116,12 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
   const discovery = rawArgs.includes("--schema") ? "schema" : rawArgs.includes("--help") || rawArgs.includes("-h") ? "help" : null;
   const args = rawArgs.filter((a) => !OWN_FLAGS.has(a));
   const names = Object.keys(spec.commands);
-  const commandName = args.find((a) => !a.startsWith("-") && Object.hasOwn(spec.commands, a)) ?? (names.length === 1 ? names[0]! : undefined);
+  // The command is chosen by position (flyingrobots/parley#101): once the writer's flags are set
+  // aside, the first remaining argument is the command, and only that one argument is removed. A
+  // tool with one command may omit it. A later argument with a command's text is the tool's.
+  const named = args.length > 0 && Object.hasOwn(spec.commands, args[0]!);
+  const commandName = named ? args[0]! : names.length === 1 ? names[0]! : undefined;
+  const rest = named ? args.slice(1) : args;
   const command = commandName ? spec.commands[commandName]! : undefined;
 
   // Declared secrets of every command: a value passed to the wrong command is still a secret (§5.3).
@@ -174,7 +179,6 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
   // Everything the tool supplies before the bootstrap line can throw; a throw here is a startup failure (§3.2), not a stack trace.
   let resolvedRaw: Record<string, unknown>, inputs: InputDecl[];
   try {
-    const rest = args.filter((a) => a !== commandName);
     resolvedRaw = discovery ? { discovery, command: commandName } : await (opts.resolved ?? ((a, c) => ({ command: c, args: a })))(rest, commandName!);
     inputs = discovery || !command ? [] : await (opts.inputs ?? (() => []))(rest, commandName!);
   } catch (e) {
@@ -241,7 +245,7 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
   }
 
   try {
-    await handler(run, args.filter((a) => a !== commandName));
+    await handler(run, [...rest]);
   } catch (e) {
     if (run.ended) { release(); return 4; }
     const err = e instanceof Error ? e : new Error(String(e));

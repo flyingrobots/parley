@@ -1368,8 +1368,14 @@ def _main(tool: Tool, argv: List[str], handler: Callable[[Run, List[str]], Any],
     discovery = "schema" if "--schema" in raw_args else ("help" if ("--help" in raw_args or "-h" in raw_args) else None)
     args = [a for a in raw_args if a not in _OWN_FLAGS]
     names = list(tool.commands)
-    command_name = next((a for a in args if not a.startswith("-") and a in tool.commands), None)
-    if command_name is None and len(names) == 1:
+    # The command is chosen by position (flyingrobots/parley#101): once the writer's flags are set
+    # aside, the first remaining argument is the command, and only that one argument is removed. A
+    # tool with one command may omit it. A later argument with a command's text is the tool's.
+    command_name: Optional[str] = None
+    rest = args
+    if args and args[0] in tool.commands:
+        command_name, rest = args[0], args[1:]
+    elif len(names) == 1:
         command_name = names[0]
     command = tool.commands.get(command_name) if command_name else None
 
@@ -1425,7 +1431,6 @@ def _main(tool: Tool, argv: List[str], handler: Callable[[Run, List[str]], Any],
         return fail(location["code"], location["problem"], location["remedy"])
     state["location"] = location
 
-    rest = [a for a in args if a != command_name]
     try:
         if discovery:
             resolved_raw: Any = {"discovery": discovery, "command": command_name}

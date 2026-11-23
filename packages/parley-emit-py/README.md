@@ -137,8 +137,18 @@ and `count files --human` printed `2 file(s)` and nothing else, exit 0.
 ## Arguments and flags
 
 The writer's own flags, `--human`, `--humanize`, `--dry-run`, `--schema`, `--help` and `-h`, are
-recognised anywhere and set aside. **The first argument that remains is the command**, and only
-that one argument is removed: every other argument reaches `resolved`, `inputs` and the handler in
+recognised anywhere before the first `--` and set aside. **`--` ends the writer's flags**
+(flyingrobots/parley#103): that first `--` is removed, and every argument after it reaches
+`resolved`, `inputs` and the handler untouched, one with a writer flag's text or a second `--`
+included. So a tool flag whose value is a writer flag's text goes after the `--`: `edit --note -h`
+is `--help` for `edit`, while `edit -- --note -h` runs `edit` with `["--note", "-h"]`, `edit --`
+gives the tool `[]`, and `edit -- a -- b` gives it `["a", "--", "b"]`. The writer cannot know which
+of the tool's flags take a value, so it states this rule rather than guess. The TypeScript writer
+follows the same rule.
+
+**The first argument that remains before any `--` is the command**, and only that one argument is
+removed; nothing after `--` is ever the command, so `-- edit` in a tool with more than one command
+is `startup.unknown_command`, exit 3. Every other argument reaches `resolved`, `inputs` and the handler in
 order, a later one with a command's text included, so `edit --reason edit` gives the tool
 `["--reason", "edit"]`. In a tool with more than one command, a first argument that names none is
 `startup.unknown_command`, exit 3, even when a later argument names one: the writer cannot know

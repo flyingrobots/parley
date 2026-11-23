@@ -10,12 +10,35 @@ its manifest so it cannot be published by accident.
 
 ### Added
 
+- **A decline on budget grounds** (flyingrobots/parley#71). `budget.ms` is a deadline for the
+  whole read, read on `opts.clock` (default `MONOTONIC`, `performance.now`) once at the call and
+  once at each check: after the load, after the ranking and before the digest is written, and for
+  `openRecords` after the load and after the ids are opened. The deadline is inclusive. A read past
+  it, or whose `budget.bytes` cannot hold a digest naming no records, writes no lens, reports a
+  `receipt.step` and one `parley.error` `query.over_budget` (`measured`, `limit`, `remedy`,
+  `retryable: true`, and `detail` with `bound`, `phase`, `given`, `measured`, `sufficient` and
+  `at_least`), ends with status 2, and returns a new `QueryDeclined` / `OpenDeclined` outcome.
+  New exports: `Deadline`, `MONOTONIC`, `OVER_BUDGET`, `declineOnRun`, `sufficientBytes` and the
+  types `BudgetDecline`, `BudgetPhase`, `QueryDeclined`, `OpenDeclined`; `digestFor` reports
+  `fits`. `openRecords` accepts `budget.ms` and records it in its `parley.query`.
+
+- **Each run a digest names, stated once** (flyingrobots/parley#83). A `parley.lens` now carries
+  `runs`, one section per run its entries name, in the order they first name it: the head's
+  `tool`, `v`, `argv` and `inv` (or `receipt.inputs`'s `inv`), the run's `outcome` over the whole
+  window, and a `reason` (`no_end_in_window`, `end_status_unusable`) when that outcome is
+  `undetermined`. A run whose head is outside the window says `head: "not_in_window"`. A section is
+  bounded by `RUN_SECTION_BYTES` (512): whole fields are dropped, `argv`, then `inv`, then `v`,
+  then `tool`, and named in `dropped`; no string is cut. An `error` or `warning` entry also carries
+  its `code`. `runSection`, `RUN_SECTION_BYTES`, `DROPPABLE` and `UNDETERMINED_REASONS` are
+  exported. Under `{records: 20, bytes: 2048}` over three-record runs a digest now names 13 records
+  (RD-22b).
+
 - **A summary beside each record a digest names** (flyingrobots/parley#77). Each `parley.lens`
-  entry now carries the record's `event` and `t` as the loader read them and the `outcome` the
-  ranking established for its run over the whole window, each absent when the record does not
-  carry it. `lensEntry(record, outcomes?)` builds one; `digestFor` takes the ranking's `outcomes`
-  as a fifth argument and `queryReceipts` passes them. The summary counts against `budget.bytes`:
-  under `{records: 20, bytes: 2048}` a digest that named 20 records now names 15 or 16 (RD-22b).
+  entry now carries the record's `event` and `t` as the loader read them, each absent when the
+  record does not carry it. `lensEntry(record)` builds one; `digestFor` takes the ranking's
+  `outcomes` as a fifth argument and `queryReceipts` passes them. The run's outcome, which this
+  entry first put on every entry, is stated once per run in `runs` since flyingrobots/parley#83,
+  and `lensEntry` no longer takes `outcomes`. The summary counts against `budget.bytes` (RD-22b).
 - **A byte budget for the drill-down** (flyingrobots/parley#78): `openRecords` accepts
   `budget: { bytes }`. Records open whole, in the order asked, while their summed size (UTF-8 bytes
   of each record's JSON as returned, sidecar contents included) stays within the bound; every id
@@ -134,9 +157,10 @@ its manifest so it cannot be published by accident.
 - **The bound, exactly.** `budget.records` bounds the count of records a digest names.
   `budget.bytes`, when stated, bounds the lens line as written — serialised JSON plus its newline,
   in UTF-8 — and records are dropped from the tail of the ranking until it fits, by binary search
-  over the prefix length; a bytes budget too small even for a digest naming no records leaves it
-  naming none, because the envelope and the lens's own fields are not negotiable. `budget.ms`
-  bounds nothing: a read that has loaded the history has already spent its time. The bound is
+  over the prefix length; a bytes budget too small even for a digest naming no records left it
+  naming none, because the envelope and the lens's own fields are not negotiable (it now declines:
+  flyingrobots/parley#71, under Changed). `budget.ms` bounded nothing until the same issue made it
+  a deadline. The bound is
   applied **before** the line is written, by reconstructing the line the writer will write, which a
   case pins against the line the writer really wrote.
 - **A digest cannot read as complete.** `loss.excluded` is always present, zero included, because
@@ -153,7 +177,9 @@ its manifest so it cannot be published by accident.
   back by `(run, seq)` for the call that will.
 - A read states a retention policy that deletes nothing (`NO_RETENTION`): §5.1 asks every tool for
   one, and expiring the receipts a read was asked to read would destroy the history in order to
-  answer a question about it.
+  answer a question about it. (Since flyingrobots/parley#75 retention is per tool, so a read's
+  receipts no longer cost another tool its history; a read still deletes nothing, because it
+  would expire only its own receipts, and nothing asked it to.)
 - The loader: `loadReceipts` returns every run in both receipt locations for a working directory
   as bundles, and `readReceiptFile` reads one receipt file, yielding one bundle per run it holds.
   A bundle carries its records in `seq` order, its resolved sidecars, its quarantined lines, every
@@ -187,6 +213,14 @@ its manifest so it cannot be published by accident.
   and with `sidecars: false` a sidecar is reported `unchecked` rather than `intact`, since nothing
   about its stored bytes was established (§1.2a), which also rules replay out.
 - The sixteen draft schemas at the pinned commit, with a test that they match the repository.
+
+### Changed
+
+- **A `budget.bytes` too small for an empty digest declines** (flyingrobots/parley#71). It used to
+  answer with a digest naming no records whose line was still over the stated bound; it now
+  declines with `query.over_budget` and names the smallest sufficient `bytes`. `QueryAnswer` and
+  `OpenAnswer` carry `declined: false`, and `QueryOutcome` and `OpenOutcome` gain the declined
+  variant, so a caller that narrowed on `refused` alone narrows on `declined` too.
 
 ### Fixed
 

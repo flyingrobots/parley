@@ -42,6 +42,21 @@ rather than moving its version.
   whole records, which is the drill-down and breaks the byte bound. The summary is part of the line
   `budget.bytes` bounds, so a byte budget names fewer records than before. The shipped copies in
   both packages were re-synced, which moves no version.
+- `parley.lens` 1.0.0 (draft) gains an optional **`runs`** section, and each `records` entry
+  loses `outcome` and gains `code` (flyingrobots/parley#83). `runs` is an array with one item per
+  run the entries name: `run` (required), and, each optional, `tool`, `v` and `argv` off the run's
+  head, `inv`, the run's `outcome` (moved here from the entries), a `reason` from
+  `no_end_in_window` / `end_status_unusable` that the schema requires exactly when the outcome is
+  `undetermined`, `head: "not_in_window"`, and `dropped`, the fields left out whole to bound the
+  section. An entry's `code` is spec §6's pattern, carried on an `error` or `warning`. `outcome` is
+  no longer declared on an entry; entries were never closed to extra keys, and `runs` is
+  optional, so every `parley.lens` line written under the earlier draft still validates. The
+  decision behind it: the re-run of the cold resume opened 26 heads out of 49 ids to learn a
+  run's arguments, and could not tell from a digest why a run was `undetermined`. Stating the
+  identity once per run rather than per entry, and moving the outcome with it, is what the byte
+  budget can afford. Rejected: `argv` on every entry, which repeats one identity per record and
+  spends the budget fastest; `resolved` instead of `argv`, which is larger and tool-shaped. The
+  shipped copies in both packages were re-synced, which moves no version.
 
 - `parley.query` 1.0.0 (draft), the **description** of `records` and nothing else: it now says
   `budget.bytes`, when stated on a drill-down, bounds the records opened — whole records in the
@@ -122,7 +137,37 @@ rather than moving its version.
   description of `asker.task` is corrected in place, since the schema is still a draft under this
   `Unreleased` section (§4.5); that moves no version.
 
+- **What `budget.ms` bounds, and how a read declines** (flyingrobots/parley#71). `ms` is a
+  **deadline for the whole read**, measured from the call and checked between phases: after the
+  load, after the ranking, before the digest is written. A read never answers from a partial load.
+  A read that passes its deadline, or whose `budget.bytes` cannot hold even a digest naming no
+  records, **declines**: it is still a recorded run, and it answers with a structured
+  `parley.error`, code `query.over_budget`, whose `detail` states the budget given, what was
+  measured, and a budget that would have sufficed where that is known — the elapsed time for `ms`
+  when the read stopped at its last check (a lower bound, `at_least`, when phases were still to
+  run), and the size of the smallest digest for `bytes`, which is exact. The run ends with status
+  2, the §3.4 status for a reported structured error; this is the one part of the decision an
+  owner may most reasonably overrule, since a decline is an answer rather than a failure and §3.4
+  has no status for that. `ms` stays in `parley.query`. Rejected:
+  - *`ms` bounds the load*, abandoning it part-way and naming what was not reached. A digest drawn
+    from part of the history carries an excluded count of records the read *saw*, which reads as a
+    loss bound over the window and is not one.
+  - *Remove `ms`*, which moves `parley.query`. A caller with a deadline is the observer-geometry
+    treatment's own case, and a bound that is recorded and ignored was the defect, not the bound.
+  - *A field on a later `parley.lens`* saying what budget would suffice. A lens is a digest of
+    records; a declined read has none, and the verdict is a §6 error with `measured` and `limit`.
+  - *Another refusal code beside those `planQuery` returns*. A refusal is pure and pre-load; a verdict about whether
+    real history fits a budget can only come from a read that ran. No schema moved.
+
 ### Added
+
+- **A read that cannot meet its budget declines, and names the budget that would**
+  (flyingrobots/parley#71): `queryReceipts` and `openRecords` in `packages/parley-read` apply
+  `budget.ms` as a deadline checked between phases on an injectable `clock` (monotonic by default,
+  so tests script it rather than sleep), and decline a read past it — or one whose `budget.bytes`
+  cannot hold an empty digest — with a recorded run that ends in one `query.over_budget` error and
+  status 2. See the decision above and
+  [the reader page](docs/topics/parley-read/README.md#when-a-read-declines).
 
 - **A second conforming writer, in Python** (flyingrobots/parley#84): `packages/parley-emit-py`,
   one standard-library file a tool vendors by copying and pins by the digest `--vendor-info`
@@ -288,8 +333,8 @@ rather than moving its version.
   a result to carry its own lens so a later reader "cannot mistake a digest for the whole"; the
   digest is evidence rather than a return value, written into the read's own receipt and read back
   `validated` against the exact pair. `budget.records` bounds the count of records named,
-  `budget.bytes` bounds the lens line in UTF-8 bytes with its newline, and `budget.ms` bounds
-  nothing. `loss.excluded` is always present, zero included, and `loss.bound` is `none` only
+  `budget.bytes` bounds the lens line in UTF-8 bytes with its newline, and `budget.ms` bounded
+  nothing until flyingrobots/parley#71 made it a deadline (above). `loss.excluded` is always present, zero included, and `loss.bound` is `none` only
   beside a count of 0 — the schema refuses the other pairing, so a digest that left something out
   says so structurally. **This replaces the limit flyingrobots/parley#48 landed**, where the
   budget was recorded and bounded nothing. **No schema version moved**; see the in-place draft
@@ -528,6 +573,20 @@ so a receipt
 
 ### Fixed
 
+- **Retention is per tool** (flyingrobots/parley#75). `parley-emit` counted every `.jsonl` in a
+  receipt directory, so a reader's receipts (one per read) took slots of a tool's count and the
+  tool's next run deleted that many of its own, the history the reader came to read. `retain` now
+  counts and expires only completed bundles whose head names this tool; another tool's receipts
+  are never counted and never deleted, and a file whose first line is not a readable head is not
+  this tool's and is left alone. The head is read first line only. The decision line now says "of
+  this tool's receipts". The decision, the owner's on the issue: per tool, rather than a separate
+  place for reads, so one loader call still finds everything. **Spec §5.1** gained a sentence
+  saying so: a program's policy bounds the receipts it wrote and **MUST NOT** count or delete
+  another program's. It reads as a clarification of what "a retention policy" meant, made inside
+  the unreleased `0.2.0` entry, so **the spec version does not move** (AGENTS.md: a normative
+  sentence changed before release is recorded in that entry, not versioned). Cost: one bounded
+  read of each receipt's first line per run, up to a 1 MiB head, past which a file is read as
+  unreadable and left alone.
 - `parley-read`: under `what-changed`, a warning from a run that went on no longer outranks every
   result. The change-view promotion now holds the failure surface **of the runs that failed**, so a
   `warning` is promoted only with its run's failure and is otherwise placed by the view's own

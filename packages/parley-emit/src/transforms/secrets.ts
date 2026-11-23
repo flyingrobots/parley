@@ -126,7 +126,7 @@ export function refuseSuspectedSecrets(patterns: readonly SecretPattern[] = SECR
     const seq = typeof record.seq === "number" ? String(record.seq) : "?";
     return refuse(
       SUSPECTED_SECRET_CODE,
-      `the body of seq ${seq} matches the ${hit.pattern} token shape at ${hit.at}, so that line is not on the shared stream; the receipt is unaffected and still carries the value`,
+      `the body of seq ${seq} matches the ${hit.pattern} shape at ${hit.at}, so that line is not on the shared stream; the receipt is unaffected and still carries the value`,
       `declare the value as a secret in the command's secrets list (spec §5.3) so it is replaced in the receipt too, or keep it out of the record; an unlisted shape passes, and a legitimate value that matches costs this one stream line`,
     );
   };

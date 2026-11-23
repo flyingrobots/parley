@@ -80,6 +80,16 @@ The spec and each message schema are versioned separately from this package.
 
 ### Added
 
+- **A built-in history transform that refuses a suspected secret** (flyingrobots/parley#60), in
+  `parley-emit`: `refuseSuspectedSecrets()` withholds a line whose body matches one of ten
+  documented token shapes and warns under `history.suspected_secret`, naming the withheld `seq`.
+  It refuses rather than rewrites, so a false positive costs one stream line and never a changed
+  receipt. No schema moves and the spec does not move: §8 is informative, the warning is a
+  `parley.warning` 1.0.0 like any other, and nothing a conforming program must do changes. A
+  transform may now also return `refuse(code, problem, remedy?)` to withhold a line under a code
+  of its own; the writer still refuses a code that is not spec §6's shape or that carries a
+  declared secret value.
+
 - **A user-defined transform on the history sink, enforced** (flyingrobots/parley#57). A copy of a
   run on the shared stream of §8 can now be a **projection** of the receipt copy rather than the
   whole of it, because a path, a hostname or a repository name that is fine in a local receipt can

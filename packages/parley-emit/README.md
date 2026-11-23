@@ -255,7 +255,9 @@ the run carries on with no stream. The field name `history` is checked the same 
 secret that is a substring of it would rename the key the line prints.
 
 The limit to be clear about: an **undeclared** secret is exactly as exposed in the stream as in
-the receipt, for longer and across repositories. Declaring it is the fix, as it always was.
+the receipt, for longer and across repositories. Declaring it is the fix, as it always was —
+[`refuseSuspectedSecrets`](#refusing-a-line-that-looks-like-it-carries-a-credential) is the net
+under it, and refuses a line that looks like it carries one rather than claiming to clean it.
 
 ### A broken stream never breaks a run
 
@@ -349,6 +351,143 @@ every schema this package ships is inside the subset, so a future draft reaching
 there rather than silently going unchecked. A tool whose own type needs a construct outside the
 subset will see its projected lines withheld as `history.transform_uncheckable`, which is the
 fail-closed direction: better a gap you can see than a line nobody checked.
+
+### Refusing a line that looks like it carries a credential
+
+Declared redaction (§5.3) replaces what the program declared. It cannot catch a secret nobody
+declared, and the stream is where that gap costs most: a receipt lives one run's lifetime, while a
+segment lives for the retention window and is read by more observers than the run that wrote it.
+
+`refuseSuspectedSecrets()` is a built-in transform that **withholds** any line whose body matches
+one of a documented list of token shapes, and says so under its own code:
+
+```ts
+import { refuseSuspectedSecrets } from "@flyingrobots/parley-emit";
+
+await main(tool, argv, handler, { history: { transform: refuseSuspectedSecrets() } });
+```
+
+**It refuses; it never rewrites.** A heuristic must not claim the certainty that rewriting implies,
+and replacing the matched span would put a record on the stream that looks checked and differs from
+the receipt's copy of the same event in a way nothing records. So a false positive costs **one
+withheld stream line** and never a changed value in the receipt.
+
+The shapes ship as data in `src/transforms/secret-patterns.ts` — a name, a regex source and one
+line of rationale each — so reviewing what is refused is reading a table rather than reading code:
+
+| Pattern | Regex source |
+| --- | --- |
+| `aws.access_key_id` | `\bAKIA[0-9A-Z]{16}\b` |
+| `github.token` | `\bgh[opsur]_[A-Za-z0-9]{36}\b` |
+| `github.fine_grained_pat` | `\bgithub_pat_[A-Za-z0-9]{22}_[A-Za-z0-9]{59}\b` |
+| `slack.token` | `\bxox[abpr]-[0-9A-Za-z]{8,}(?:-[0-9A-Za-z]{8,}){0,3}\b` |
+| `google.api_key` | `\bAIza[0-9A-Za-z_-]{35}(?![0-9A-Za-z_-])` |
+| `pem.private_key` | `-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----` |
+| `jwt` | `\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}(?![A-Za-z0-9_-])` |
+| `http.bearer_token` | `\bBearer\s+[A-Za-z0-9._~+/=-]{20,}` |
+| `npm.token` | `\bnpm_[A-Za-z0-9]{36}\b` |
+| `stripe.live_key` | `\b(?:sk\|rk)_live_[0-9A-Za-z]{10,}\b` |
+
+Every one is anchored and length-bounded, and every one is a prefix a vendor assigns and documents,
+so a match is evidence about the string's provenance rather than about its entropy. There is
+deliberately no "forty hex characters" entry: it would refuse every SHA-1. Each has a positive and
+a negative sample in the suite, and the walk is over the shipped list, so a new entry without
+samples fails a test. `SECRET_PATTERNS` is exported: pass
+`refuseSuspectedSecrets([...SECRET_PATTERNS, ...mine])` to add to the list, a list of your own to
+replace it, and `[]` for the identity.
+
+**Captured from a real run** on 2026-11-22: a `release notes` tool that reads a token and forgot to
+declare it, with the built-in configured and a planted GitHub-shaped token (`ghp_` and
+`0123456789abcdefghij0123456789abcdef`, which is the right length and clearly nobody's). The
+receipt carries the line, value and all, because the receipt is the record and nothing was
+declared:
+
+```jsonl
+{"event":"receipt.step","t":1795391867203,"seq":4,"run":"01M82V3J9S5CBN324YFMY9PTC8","decision":"read the release token from the environment","because":"the token is not in the command's secrets list, which is the hole this refuses to widen","detail":{"token":"ghp_0123456789abcdefghij0123456789abcdef","repo":"flyingrobots/parley"},"_schema":{"id":"parley.receipt.step","version":"1.0.0"}}
+```
+
+The stream does not. stderr and the receipt carry one warning instead, naming the withheld `seq`,
+the shape and the JSON Pointer — and never the matched text, which would put the suspect on stderr
+and back on the stream through the warning's own copy:
+
+```jsonl
+{"event":"warning","t":1795391867203,"seq":5,"run":"01M82V3J9S5CBN324YFMY9PTC8","code":"history.suspected_secret","problem":"the body of seq 4 matches the github.token shape at /detail/token, so that line is not on the shared stream; the receipt is unaffected and still carries the value","remedy":"declare the value as a secret in the command's secrets list (spec §5.3) so it is replaced in the receipt too, or keep it out of the record; an unlisted shape passes, and a legitimate value that matches costs this one stream line","_schema":{"id":"parley.warning","version":"1.0.0"}}
+```
+
+The run's exit status is 0: a withheld line is a warning and warnings never change it (§6.1). The
+doctor reads the gap off the segment, from the same run:
+
+```text
+PROJECTION  01M82V3J9S5CBN324YFMY9PTC8  refuseSuspectedSecrets  94fe07733c98…  (history:1)
+GAP         01M82V3J9S5CBN324YFMY9PTC8  seq 4 is not in this copy
+SEGMENT     6 line(s); 1 run(s), 1 projected, 1 gap(s), 0 without end, 0 unparseable
+```
+
+**The limits, stated rather than implied.** This refuses what it recognises, and recognition is a
+floor:
+
+- **An unlisted shape passes.** A vendor's new prefix, an internal token format, a password: none
+  of them are here, and none of them are refused.
+- **A token split across two string values passes.** The scan is per value and claims nothing about
+  what concatenating two of them would spell.
+- **A token used as an object key passes.** Keys name fields; a value is what a program carries.
+- **A legitimate value that matches is withheld.** A commit message quoting a key id, a fixture, a
+  test key with a live prefix: each costs one stream line. The receipt still has it.
+- **The envelope is never scanned**, because `event`, `t`, `seq`, `run` and `_schema` are the
+  writer's and one unlucky run id would otherwise withhold every line of a run.
+
+Declaring the value as a secret (§5.3) is the real protection, and the warning's `remedy` says so.
+This is the net under it.
+
+#### A transform may refuse, not only withhold
+
+flyingrobots/parley#57 gave a transform two answers: a record to project, or nothing to withhold
+the line. Nothing is a gap with no reason attached, which is right for "the shared timeline does not
+carry step detail" and wrong when the reason is the point. So there is a third:
+
+```ts
+import { refuse } from "@flyingrobots/parley-emit";
+
+const offTimeline: HistoryTransform = (rec) =>
+  rec.event === "receipt.step" ? refuse("policy.off_timeline", `seq ${rec.seq} is not for the shared timeline`) : rec;
+```
+
+The writer withholds the line and raises one `warning` carrying that `code`, `problem` and
+`remedy`, on stderr and in the receipt, leaving the exit status alone — the same treatment the four
+`history.transform_*` codes get, under a code the transform chose. A refusal is a value rather than
+a throw because a throw already means something in #57's contract (`history.transform_failed`: the
+transform is broken), and because a value composes: a wrapping transform can read a refusal and
+pass it on without an exception handler.
+
+The code is the transform's; the namespace is still the writer's. A refusal whose `code` is not
+spec §6's shape, or whose `problem` is empty, is `history.transform_failed` — the transform being
+broken, like any other way of being broken. A refusal whose `code` carries a declared secret value
+is `history.transform_unredacted`, because a diagnostic's `code` is the one string §5.3 does not
+scrub, so a refusal cannot become the way a secret leaves. `refuse()` checks the first two at the
+point the refusal is written.
+
+#### Five decisions the owner may overrule
+
+flyingrobots/parley#60 asked for a built-in and a pattern list; these are judgement calls rather
+than consequences of the issue:
+
+1. **A refusal is a return value, not a throw.** The issue allowed either. A value keeps "it threw"
+   meaning "it is broken" and composes without exception handlers. Overrule by mapping a typed
+   error in `Run`'s `projectOne` instead of `isHistoryRefusal`.
+2. **The refusal's `problem` names the `seq`, and the writer does not append it.** The transform is
+   handed the record, so it has the `seq`; the writer never edits a sentence it did not write. The
+   cost is that a hand-written refusal can omit it. Overrule in `Run`'s `refused` in `src/run.ts`.
+3. **Object keys are not scanned, only values.** A key names a field. The writer's own §5.3
+   scrubber does rename keys, because there the value was declared and the certainty is earned.
+   Overrule in `findSuspectedSecret`'s walk in `src/transforms/secrets.ts`.
+4. **A caller's pattern list replaces the default rather than extending it**, so whoever passes one
+   is reviewing exactly what they refuse on. `[...SECRET_PATTERNS, ...mine]` is the extension, and
+   it is one line.
+5. **The first match wins and the scan stops.** A refusal needs one reason, not an inventory, and
+   the line is withheld either way. Overrule by collecting every hit before refusing.
+
+The list itself is the sixth: ten shapes, chosen for published prefixes and bounded lengths. Adding
+one is a row and two samples; removing one is a row and two samples.
 
 ### Three more decisions the owner may overrule
 

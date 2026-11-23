@@ -269,13 +269,12 @@ Where it does something different:
   status of its own through `run.end(status)`.
 - **A renderer that raised is not called again** for the rest of the run; the TypeScript writer
   keeps calling it and reports the first failure once.
-- **Retention is per tool**, as flyingrobots/parley#75 decided; the TypeScript writer counts every
-  bundle in the directory until that issue is fixed.
 
 What it does the same way: the declared secrets of every command are scrubbed and every
 command's declared variables that are present are listed in `redacted.env`, while only the running
 command's credential sources are resolved and listed in `redacted.sources` — scrub widely,
-resolve narrowly, as decided in flyingrobots/parley#93. And `--help` lists `parley.startup.failed`
+resolve narrowly, as decided in flyingrobots/parley#93. Retention is per tool in both, as
+flyingrobots/parley#75 decided. And `--help` lists `parley.startup.failed`
 among a command's error types by default, beside `parley.error`, because every command can produce
 one and §4.2 asks for "every error type it can produce", as decided on flyingrobots/parley#92; the
 suite checks that `count.py` and `count.ts` list the same types.

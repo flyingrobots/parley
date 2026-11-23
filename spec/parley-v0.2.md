@@ -499,8 +499,8 @@ A schema version whose changelog entry is still under `Unreleased` is a draft an
 in place; a draft change is recorded in that entry rather than as a bump. A release is a version
 heading in `CHANGELOG.md` that names the schema versions it publishes. A released schema version
 is immutable: the release snapshots it, and the snapshot is what the pair resolves to from then
-on (§4.6). The same change that snapshots a version bumps the draft to a new one, since a draft
-may not claim a released pair. A draft's version string does not identify exact bytes, so a fixture
+on (§4.6). A top-level schema file may hold a released version only with the snapshot's exact bytes, and
+the first change after a release moves it to a new draft version. A draft's version string does not identify exact bytes, so a fixture
 or test outside
 the repository that holds the draft **MUST** pin a source commit or the schema's digest, and a
 reader built from a draft holds whichever bytes it shipped and **SHOULD** state their commit or

@@ -829,14 +829,15 @@ timeline.
 ## 9. Reading history is an act (informative)
 
 This section is informative, for the same reason as §8: the reader it describes is designed
-([flyingrobots/parley#2](https://github.com/flyingrobots/parley/issues/2)). Its query entry point
-and the ranking that orders a result by purpose have an implementation and tests
+([flyingrobots/parley#2](https://github.com/flyingrobots/parley/issues/2)). Its query entry point,
+the ranking that orders a result by purpose, and the bounded digest that carries a result's lens
+and states what it excluded have an implementation and tests
 ([flyingrobots/parley#48](https://github.com/flyingrobots/parley/issues/48),
-[flyingrobots/parley#49](https://github.com/flyingrobots/parley/issues/49)); bounding an answer
-and its detail do not
-([flyingrobots/parley#50](https://github.com/flyingrobots/parley/issues/50),
-[flyingrobots/parley#51](https://github.com/flyingrobots/parley/issues/51)). The direction is kept
-here so the format above stays shaped for it.
+[flyingrobots/parley#49](https://github.com/flyingrobots/parley/issues/49),
+[flyingrobots/parley#50](https://github.com/flyingrobots/parley/issues/50)); fetching what a
+digest excluded does not
+([flyingrobots/parley#51](https://github.com/flyingrobots/parley/issues/51)). The direction is
+kept here so the format above stays shaped for it.
 
 A read against the stream is not a passive lookup. It is itself an event, and it is
 task-oriented. The intended rules:

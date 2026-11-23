@@ -1,5 +1,5 @@
 export { defineTool, main, type CommandSpec, type Effects, type EmittedType, type Handler, type InputDecl, type MainOptions, type ToolSpec } from "./tool.ts";
-export { Run, ParleyClosed, SCHEMA_IDS, SIDECAR_THRESHOLD, type Diagnostic, type SchemaRef, type Sink } from "./run.ts";
+export { DIGEST_KEYS, Run, ParleyClosed, SCHEMA_IDS, SIDECAR_THRESHOLD, type Diagnostic, type SchemaRef, type Sink } from "./run.ts";
 export { checkRecord, schemaSubsetGap, type CheckResult } from "./check.ts";
 export { REDACTED } from "./redact.ts";
 export { SCHEMAS, SCHEMA_SOURCE } from "./schemas.ts";
@@ -8,3 +8,4 @@ export { canonical, computeInv, digestTree, sha256, type InputDescriptor } from 
 export { chooseLocation, isLocationFailure, repoRoot, stateBase, bookkeepingFor } from "./location.ts";
 export { HISTORY_DAYS_ENV, HISTORY_DEFAULT_DAYS, HISTORY_ENV, HISTORY_MAX_DAYS, historyBookkeeping, historyDays, historyProjection, isHistoryFailure, isHistorySink, openHistory, resolveHistory, retainHistory, segmentName, transformDigest, transformName, writeWholeLine, type HistoryConfig, type HistoryFailure, type HistoryPlan, type HistoryProjection, type HistorySink, type HistoryTransform } from "./history.ts";
 export { carriesSecret, classifySecrets, collectSecretValues, redactArgv, scrub } from "./redact.ts";
+export { declaredProjection } from "./transforms/declared.ts";

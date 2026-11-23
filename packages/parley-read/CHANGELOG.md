@@ -86,14 +86,40 @@ its manifest so it cannot be published by accident.
   record in the window is in the answer whatever the view, pinned by a case over all five views and
   by a golden case on receipts a real tool wrote. Six thousand records rank in about 5 ms here,
   against a stated bound in the suite.
-- The answer is the window's records, ordered by the view, with the
+- The answer is the window's records, ordered by the view and cut at the budget, with the
   window echoed verbatim and the read's own records excluded — a read does not answer itself, and
-  `counts` says how many were scanned, in the window, undated and the read's own. A record whose
-  `t` is not a number cannot be placed in a window and is counted rather than dropped silently.
-- Deliberately **not** done, the safe intermediate state flyingrobots/parley#50 names: the budget
-  is recorded and bounds nothing, no excluded count is claimed, and no `parley.lens` is emitted,
-  because a read that returns every record it ranked has no loss to state. A test pins all five
-  views answering with the same records, so a filter cannot creep in unnoticed.
+  `counts` says how many were scanned, in the window, answered, excluded, undated and the read's
+  own. A record whose `t` is not a number cannot be placed in a window and is counted rather than
+  dropped silently.
+- **The first response is a bounded digest that states its lens and what it excluded**
+  (flyingrobots/parley#50). Spec §9 asks a result to carry its own lens so a later reader "cannot
+  mistake a digest for the whole", and to report what it excluded at least as a count. The digest
+  is a **`parley.lens` 1.0.0 record** — the message decided in flyingrobots/parley#46, not a new
+  one — emitted through the writer onto the read's stream and into its receipt, so the loader reads
+  it back `validated` against the exact pair. It names the query it answers by `(run, seq)`, the
+  asker, the view, the window, the budget actually applied, the records it holds by `(run, seq)`
+  and the loss. `digestFor`, `digestLine` and `digestBytes` are the bound as pure functions, and
+  `answer.digest` and `answer.digestBytes` are what the read wrote.
+- **The bound, exactly.** `budget.records` bounds the count of records a digest names.
+  `budget.bytes`, when stated, bounds the lens line as written — serialised JSON plus its newline,
+  in UTF-8 — and records are dropped from the tail of the ranking until it fits, by binary search
+  over the prefix length; a bytes budget too small even for a digest naming no records leaves it
+  naming none, because the envelope and the lens's own fields are not negotiable. `budget.ms`
+  bounds nothing: a read that has loaded the history has already spent its time. The bound is
+  applied **before** the line is written, by reconstructing the line the writer will write, which a
+  case pins against the line the writer really wrote.
+- **A digest cannot read as complete.** `loss.excluded` is always present, zero included, because
+  an absent count and a count of zero are different claims; `loss.bound` is `none` only beside a
+  count of 0 and the schema refuses the other pairing, so the claim is structural rather than
+  prose. The answer's `records` and the ranking it carries stop at the bound, while
+  `counts.inWindow` and the ranking's per-run outcomes and tier census still describe the whole
+  window the digest was drawn from — a caller can see the digest is not the whole without being
+  handed what it cut, and a run's outcome stays established from the window rather than from a
+  prefix of it (§1.2a). Measured over a history grown from 3 to 300 receipts under one budget, the
+  digest's line went 823 → 1325 → 1326 bytes: a hundredfold more history costs one byte.
+- Deliberately **not** done, the safe intermediate state flyingrobots/parley#51 names: what a
+  digest excluded is not fetchable. The count is all a caller gets, and the digest stores the way
+  back by `(run, seq)` for the call that will.
 - A read states a retention policy that deletes nothing (`NO_RETENTION`): §5.1 asks every tool for
   one, and expiring the receipts a read was asked to read would destroy the history in order to
   answer a question about it.

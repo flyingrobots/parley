@@ -4,10 +4,11 @@ The reader library: `@flyingrobots/parley-read`, under `packages/parley-read`. I
 receipt bundles a repository has accumulated and returns every run's records, under the rules the
 [specification](../../../spec/parley-v0.2.md) binds a reader to, and it answers a read over those
 records — refused unless it states who it is for and what it wants, recorded as a run of its own,
-and ordered by the purpose it states. This page is the reference for what the package does on
-`main`; the package [README](../../../packages/parley-read/README.md) is the front door with a
-captured load, a captured read and a captured ranking, and the [test plan](test-plan.md) beside
-this page is the contract ledger.
+ordered by the purpose it states, and bounded by the budget it states, with a digest that says
+what the bound left out. This page is the reference for what the package does on `main`; the
+package [README](../../../packages/parley-read/README.md) is the front door with a captured load,
+a captured read, a captured ranking and a captured digest, and the [test plan](test-plan.md)
+beside this page is the contract ledger.
 
 It is a library with no command, and it is not published. The repository's `bun test` runs its
 suite and `bun run typecheck` checks it strictly, over `src`, `scripts` and `test`.
@@ -17,13 +18,15 @@ suite and `bun run typecheck` checks it strictly, over `src`, `scripts` and `tes
 | Export | Job |
 | --- | --- |
 | `loadReceipts(opts)` | Every run in both receipt locations for a working directory, as bundles; `opts` takes `cwd`, `env`, `home`, `sidecars`, a `validate` validator and `history`, the stream segments to read beside the receipts |
-| `queryReceipts(request, opts)` | A read: refused without an asker, a view and a window, else recorded as a `parley.query` event through the writer and answered with the window's records **ordered by the view**; `opts` takes the loader's options plus `tool`, `stdout`, `stderr`, `session` and `now` |
+| `queryReceipts(request, opts)` | A read: refused without an asker, a view and a window, else recorded as a `parley.query` event through the writer and answered with a **digest** — the window's records ordered by the view, cut at the budget, and a `parley.lens` record saying what the cut left out; `opts` takes the loader's options plus `tool`, `stdout`, `stderr`, `session` and `now` |
 | `planQuery(request)` | The refusal rules and the budget default, as a pure function: it reads nothing, writes nothing and records nothing |
 | `queryRecord(query)` | The `parley.query` payload for an accepted read, without the envelope the writer owns |
 | `rankRecords(query, records)` | The ranking, as a pure function from an accepted query and records to the same records in one stated order |
+| `digestFor(query, answers, ranked, envelope)` | The bound, as a pure function from an accepted query and a ranking to the digest's `parley.lens` payload, the records it names, the count it excluded and the bytes its line will take |
+| `digestLine(digest, envelope)`, `digestBytes(digest, envelope)` | The line the writer will write for a digest, and its length in UTF-8 bytes: how a byte budget is applied before the line exists rather than discovered after it |
 | `runOutcomes(records)`, `onViewSurface(view, record)`, `onFailureSurface(record)`, `impliesChange(view)` | The four questions the ranking asks, each answerable on its own |
 | `TIERS`, `OUTCOMES`, `CHANGE_VIEWS` | The three tiers best first, the three outcomes best-known-worst first, and the views that imply a change |
-| `VIEWS`, `DEFAULT_BUDGET`, `QUERY_SCHEMA`, `NO_RETENTION` | The five view tokens, the one documented budget default (`{"records": 20}`), the pair a read emits, and the retention policy a read states |
+| `VIEWS`, `DEFAULT_BUDGET`, `QUERY_SCHEMA`, `LENS_SCHEMA`, `NO_RETENTION` | The five view tokens, the one documented budget default (`{"records": 20}`), the two pairs a read emits, and the retention policy a read states |
 | `readReceiptFile(path, opts)` | One receipt file, as a `FileRead`: its line count, the runs it holds, its quarantined lines and one bundle per run |
 | `readHistorySegment(path, opts)` | One segment of the shared history stream (§8), the same way: a file of whole runs from every tool that wrote to it, one bundle per run |
 | `receiptLocations(opts)`, `repoReceiptDir(cwd)`, `stateReceiptDir(opts)` | Where receipts are for a working directory, each location reported present or absent |
@@ -267,7 +270,7 @@ entry point, the refusal and the record.
 | `asker` — who the read is for, `tool` required | Refused `query.asker_unnamed`: §2.1 forbids inventing an identity, so a read whose caller cannot be named is not recorded under a guess. A `cwd` that is not an absolute POSIX path, or an empty `task`, is refused `query.asker_invalid` rather than emitted as a line that fails its own schema |
 | `view` — one of `what-ran`, `what-failed`, `what-changed`, `how-it-decided`, `everything` | Refused `query.view_missing`, or `query.view_unknown` for a token outside the five: there is no privileged view, and a guessed view is a different answer to a different question |
 | `window` — `from` and `to`, POSIX milliseconds, inclusive at both ends | Refused `query.window_missing`, `query.window_invalid` for a bound that is not a non-negative integer, or `query.window_inverted` when `to` is below `from` |
-| `budget` — `records` required, `bytes` and `ms` optional | Defaulted to `{"records": 20}`, visibly: the answer carries `budgetDefaulted`. A bound that is not a positive integer is refused `query.budget_invalid` |
+| `budget` — `records` required, `bytes` and `ms` optional | Defaulted to `{"records": 20}`, visibly: the answer carries `budgetDefaulted`, and the digest carries the budget that was actually applied. A bound that is not a positive integer is refused `query.budget_invalid` |
 | `note` — free text, optional | Refused `query.note_empty` for an empty string, which `parley.query` does not carry |
 
 A refusal carries `code`, `problem` and `remedy` — §6's fields, so a caller that is itself a
@@ -292,10 +295,10 @@ accepted before making it.
 
 The `parley.query` event goes through the writer
 ([`@flyingrobots/parley-emit`](../parley-emit/README.md)), so a read is a run like any other
-parley program: a bootstrap line, a receipt under the working directory it read, two decisions
-recorded as `receipt.step`, and an `end`. The receipt lands beside the ones being read, which is
-what makes the loader find the question on the next read, and the answer names the record by
-`(run, seq)` so a result can say which query it answers.
+parley program: a bootstrap line, a receipt under the working directory it read, three decisions
+recorded as `receipt.step`, the digest it answered with, and an `end`. The receipt lands beside
+the ones being read, which is what makes the loader find the question on the next read, and the
+digest names the query record by `(run, seq)` so a result says which question it answers.
 
 Three consequences worth stating:
 
@@ -312,21 +315,87 @@ Three consequences worth stating:
 
 ### What the answer is, and what it is not
 
-The answer is every record in the window, ordered by the view (below), with `(t, run, seq)`
-ascending as the last part of the key so two records stamped the same millisecond come back in one
-stable order. A record whose `t` is not a number cannot be placed in a window at all; it is not in
-the answer and `counts.undated` says how many there were, rather than dropping it silently.
+The answer is the window's records ordered by the view (below) and cut at the budget, with
+`(t, run, seq)` ascending as the last part of the key so two records stamped the same millisecond
+come back in one stable order. A record whose `t` is not a number cannot be placed in a window at
+all; it is not in the answer and `counts.undated` says how many there were, rather than dropping
+it silently.
 
 | Recorded | Applied |
 | --- | --- |
 | `asker` | Nothing branches on it: two askers asking the same thing get the same answer |
 | `view` | **The order.** It ranks the answer and filters none of it — see [how the purpose orders the answer](#how-the-purpose-orders-the-answer). It does not project a record to fewer fields, and it never removes one |
-| `budget` | **Nothing yet.** Nothing is truncated and no excluded count is claimed, because a count of what was left out belongs to the digest that left it out ([flyingrobots/parley#50](https://github.com/flyingrobots/parley/issues/50)) |
-| `window` | Yes, and echoed verbatim in the answer |
+| `budget` | **The bound.** `records` bounds how many records the answer names and `bytes` bounds the digest's line; what the bound left out is a count on the digest — see [the digest](#the-digest-and-what-it-left-out) |
+| `window` | Yes, and echoed verbatim in the answer and in the digest |
 | `note` | Never parsed |
 
-No `parley.lens` line is emitted. A lens states a loss bound and the records a result was built
-from; a read that returns the records has no loss to state, and the lens is the digest's (#50).
+## The digest, and what it left out
+
+Spec §9 asks a result to carry "its own lens — the observer, the purpose and the window that
+produced it — so a later reader knows what it is looking at and **cannot mistake a digest for the
+whole**", and to report "what it excluded, at least as a count, so a caller can widen deliberately
+rather than never learning what it missed". The first response to a read is that digest.
+
+It is a **`parley.lens` 1.0.0 record**, the message decided in
+[flyingrobots/parley#46](https://github.com/flyingrobots/parley/issues/46) — not a new one. It
+goes through the writer onto the read's own stream and into the read's own receipt, so the digest
+is evidence rather than a return value, and the loader reads it back `validated` against that
+exact pair. It carries:
+
+| Field | What it is |
+| --- | --- |
+| `query` | The recorded `parley.query` this digest answers, by `(run, seq)` |
+| `asker` | §9's observer: who the read was for |
+| `view` | §9's purpose: the shape of the answer, one of the five tokens |
+| `window` | The stretch of history the digest was drawn from, echoed verbatim |
+| `budget` | The budget **actually applied**, a default included: two digests under different budgets are not comparable |
+| `loss` | `bound` and `excluded`: what kind of statement the loss is, and how many records the bound left out |
+| `records` | The records the digest names, in rank order, by `(run, seq)` — the way back a drill-down needs ([flyingrobots/parley#51](https://github.com/flyingrobots/parley/issues/51)) |
+
+### The bound, exactly
+
+| Budget field | What it bounds |
+| --- | --- |
+| `records` (required) | **The count.** The digest names at most this many records, and `records` in the answer holds exactly those |
+| `bytes` (optional) | **The line.** The `parley.lens` line as written — serialised JSON plus its newline, measured in UTF-8 — is at most this many bytes. Records are dropped from the tail of the ranking until it fits |
+| `ms` (optional) | **Nothing.** A read that has loaded the history has already spent its time, and a time bound means abandoning a load part-way; nothing here does that, and nothing pretends to ([flyingrobots/parley#71](https://github.com/flyingrobots/parley/issues/71)) |
+
+A `bytes` budget too small even for a digest naming no records leaves it naming none: the envelope
+and the lens's own fields are not negotiable, because a lens that dropped them would no longer say
+what it is. The bound is applied **before** the line is written — `digestLine` reconstructs the
+line the writer will write, which a case pins against the line the writer really wrote — and it is
+measured against a seq one digit longer than the one the digest will carry, one byte of headroom,
+so that a `warning` the writer raises in between cannot push the line over a stated bound.
+
+Two things the bound is **not**:
+
+- It is not in the schema. `parley.lens` says a digest names "never more than `budget.records`"
+  records, and JSON Schema cannot compare an array's length to a sibling value, so that is the
+  library's invariant rather than a validator's — RD-21a and RD-22b are the gate on it.
+- It is not a refusal. A read whose budget cannot hold a useful answer still answers, bounded, and
+  says what it left out; "not within your budget, and here is the budget that would do it" is
+  something `parley.lens` 1.0.0 cannot express.
+
+What the bound cuts is the **tail of the ranking**, never a record chosen some other way. The
+order ranks every record in the window and removes none of it, so "the records the digest does not
+name" is exactly "the records the ranking placed beyond the bound", which is a number a count can
+state honestly.
+
+### A digest never reads as complete
+
+- `loss.excluded` is **always present**, zero included. An absent count and a count of zero are
+  different claims, and §9 asks for the count precisely so a caller can widen deliberately.
+- `loss.bound` is `none` only beside an excluded count of 0, and the schema refuses the other
+  pairing, so a digest that left something out says so **structurally** rather than in prose.
+  `count-only` is the other value, and it says the count is all that is known: one withheld record
+  can matter more than fifty, so a cardinality cannot bound what a view loses even in principle.
+- The answer's `records`, and the ranking it carries, **stop at the bound**. What was excluded is
+  not returned by another route; fetching it is
+  [flyingrobots/parley#51](https://github.com/flyingrobots/parley/issues/51).
+- `counts.inWindow`, and the ranking's per-run outcomes and tier census, still describe the
+  **whole window** the digest was drawn from. That is the asymmetry on purpose: a caller can see
+  the digest is not the whole without being handed what it excluded, and a run's outcome stays
+  established from the window rather than from a prefix of it (§1.2a).
 
 ## How the purpose orders the answer
 
@@ -334,8 +403,8 @@ Spec §9 says the purpose shapes the result: "I am about to change this program'
 should return records touching that surface, not the last fifty things in chronological order. It
 is the **ranking function**, not a filter applied afterwards, and that is exactly what this is —
 `rankRecords` returns every record it was given, reordered. Over-filtering is the failure mode §9
-names, and nothing here can drop a record even in principle; bounding an answer and saying what it
-left out is [flyingrobots/parley#50](https://github.com/flyingrobots/parley/issues/50).
+names, and nothing here can drop a record even in principle. Bounding an answer and saying what it
+left out happens one step later, above the full order: [the digest](#the-digest-and-what-it-left-out).
 
 ### The order, stated as a key
 
@@ -404,8 +473,10 @@ run went on.
 
 ### What the ranking is not
 
-- It is not a filter, a projection or a truncation. Every record in the window is in the answer,
-  whatever the view, and `rankRecords` is held to that by a case over all five views.
+- It is not a filter, a projection or a truncation. `rankRecords` returns every record it is
+  given, whatever the view, and a case over all five views holds it to that. The truncation is the
+  digest's, one step later and above the full order, which is the only place a cut can state its
+  own loss honestly.
 - It is not a relevance score. There is no weighting to tune and no number to compare between two
   reads; a record's position is a key made of a tier, an outcome and a timestamp.
 - It does not read the `note`, the `asker` or the `budget`. Two askers reading the same window
@@ -417,9 +488,17 @@ run went on.
 
 ## What it does not do
 
-- Project or truncate. A read returns every record in its window, ordered by the view; the budget
-  is recorded and bounds nothing, and no excluded count is claimed
-  (flyingrobots/parley#50).
+- Project. A read cuts its answer at the budget and says what it cut, but the records it does name
+  it returns whole: no view reduces a record to fewer fields
+  ([flyingrobots/parley#59](https://github.com/flyingrobots/parley/issues/59)).
+- Hand back what the bound excluded. The digest states the count and stores the way back; a call
+  that asks for those records by identity is
+  [flyingrobots/parley#51](https://github.com/flyingrobots/parley/issues/51).
+- Bound a read in time, or decline on budget grounds. `budget.ms` is recorded and applied to
+  nothing, and "not within your budget, and here is the budget that would do it" is an answer a
+  reader should be able to give that `parley.lens` 1.0.0 cannot express
+  ([observer geometry](../related-work/observer-geometry.md),
+  [flyingrobots/parley#71](https://github.com/flyingrobots/parley/issues/71)).
 - Recompute `inv` or any semantic digest (§7.1). It checks a sidecar's stored bytes against the
   digest the receipt declared, and nothing else.
 - Judge conformance. The [doctor](../conformance/README.md) names violated rules; a defect here is

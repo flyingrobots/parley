@@ -349,7 +349,7 @@ describe("schemas/", () => {
     });
   });
 
-  test("no draft and released snapshot claim the same (id, version) pair (§4.5)", () => {
+  test("no two schema files claim the same (id, version) pair with different bytes (§4.5)", () => {
     expect(() => loadSchemas("schemas")).not.toThrow();
   });
 

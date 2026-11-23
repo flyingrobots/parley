@@ -1,14 +1,54 @@
 # Changelog
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-The spec and each message schema are versioned separately from this package.
+This file tracks the spec and its message schemas. A version heading names the **spec** version;
+the entry under it names each schema version it releases, and those are separate numbers (spec
+§4.4). Each package keeps its own changelog under `packages/`.
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-11-22
+
+The first release of the schemas, with spec `0.2.0`. **From this entry on, no schema listed here is
+a draft:** each version below is released and immutable, snapshotted byte for byte at
+`schemas/released/<id>/<version>.schema.json` (spec §4.5, §4.6), and any change to one of them,
+a description included, needs a new version, recorded under `Unreleased` until the next release.
+The top-level file `schemas/<id>.schema.json` holds the same bytes as the snapshot until such a
+change moves it on; a test fails if a top-level file changes a released pair's bytes.
+
+Released schema versions:
+
+- `parley.run.bootstrap` 1.1.1
+- `parley.receipt.head` 2.0.0
+- `parley.error` 2.0.0
+- `parley.warning` 1.0.0
+- `parley.startup.failed` 1.0.0
+- `parley.end` 1.0.0
+- `parley.sidecar` 1.0.0
+- `parley.redaction` 1.0.0
+- `parley.receipt.step` 1.0.0
+- `parley.receipt.inputs` 1.0.0
+- `parley.cache.hit` 1.0.0
+- `parley.page` 1.0.0
+- `parley.command` 1.0.0
+- `parley.schema` 1.0.0
+- `parley.query` 1.0.0
+- `parley.lens` 1.0.0
+- `parley.history.transform` 1.0.0
+
+Released alongside, each versioned on its own: `@flyingrobots/parley-emit` 0.2.0 and
+`@flyingrobots/parley-read` 0.1.0 on npm (parley-read depends on parley-emit `^0.2.0`, so parley-emit
+is published first), and `parley_emit.py` 0.1.0, a vendorable file pinned by its SHA-256 and not
+published to a registry. Each package's changelog says what changed in it. The spec version does
+not move with this release: the spec status line now says what implements it and §4.5 no longer
+says nothing is released, and no normative sentence changed (flyingrobots/parley#85).
+
+The sections below record what changed while these versions were drafts.
+
 ### Changed in a draft schema
 
-Both reader schemas are drafts under this entry (spec §4.5), so a change to one is recorded here
-rather than moving its version.
+Both reader schemas were drafts under this entry until it was cut (spec §4.5), so a change to one
+was recorded here rather than moving its version.
 
 - `parley.lens` 1.0.0 (draft), `loss.bound`: the **description** of the `none` value changed, and
   nothing else in the schema did. It said "the view is the identity on the window and nothing was
@@ -279,6 +319,17 @@ rather than moving its version.
   work for a tool's README, not a change to any line it emits. No schema moved.
 
 ### Added
+
+- **The first release, and what keeps it immutable** (flyingrobots/parley#85): every schema's
+  snapshot under `schemas/released/`; the loader now accepts a top-level file carrying a released
+  pair only with the snapshot's exact bytes, and refuses two files that claim one pair with
+  different bytes; a test refuses a top-level version that is neither snapshotted nor named under
+  `Unreleased`. `RELEASE.md` declares the after-merge steps in the form footprint reads.
+  `.github/workflows/release-parley-read.yml` releases the reader by tag, as parley-emit's does,
+  and both workflows now fail before releasing anything if `npm publish --dry-run` reports it
+  would rewrite or remove part of the manifest, if the packed manifest differs from the
+  repository's, or if a dependency uses a `workspace:` range. `docs/topics/release` says what a
+  release is, with its test plan (REL-1 to REL-4).
 
 - **The doctor checks that discovery names the startup failure** (flyingrobots/parley#92):
   `R10.help_startup_failed`, §4.2. A run whose stdout carries a `command` line and ends with status

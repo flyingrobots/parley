@@ -5,6 +5,17 @@ on its own; the spec and each message schema move separately (spec §4.4).
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-11-22
+
+The schemas this version ships are the released versions of the repository's first schema release,
+spec `0.2.0` in the root `CHANGELOG.md`, byte for byte (`src/schemas.ts` records the commit and
+each digest); no schema version is released by this package release (spec §4.5).
+
+**Upgrading from 0.1.0**, the three changes marked BREAKING below, in brief: the command is now
+the first argument once the writer's flags are set aside, so a flag before the command is
+`startup.unknown_command`; `--` now ends the writer's flags and is removed; and `<command> --help`
+now lists `parley.startup.failed@1.0.0` beside `parley.error@2.0.0`.
+
 ### Changed
 
 - **BREAKING for a caller that puts a writer flag after `--`: `--` now ends the writer's flags**

@@ -72,14 +72,23 @@ export function schemaFiles(dir: string): string[] {
 
 export function loadSchemas(dir: string): SchemaIndex {
   const byKey = new Map<string, object>();
+  const textOf = new Map<string, string>();
   for (const file of schemaFiles(dir)) {
-    const schema = JSON.parse(readFileSync(file, "utf8"));
+    const text = readFileSync(file, "utf8");
+    const schema = JSON.parse(text);
     const id = String(schema.$id ?? "");
     const m = /\/schemas\/([^/]+)\/([^/]+)$/.exec(id);
     if (!m) throw new Error(`${file}: $id does not end in /schemas/<id>/<version>: ${id}`);
     const key = `${m[1]}@${m[2]}`;
-    if (byKey.has(key)) throw new Error(`${file}: a draft and a released snapshot both claim ${key}; a released version is immutable and the draft must move on (spec §4.5)`);
+    // A top-level file may carry a released pair only with the snapshot's exact bytes: it is then
+    // the released version, current until a change moves it to a new draft version. Any other
+    // byte under a released pair is a change to an immutable version (spec §4.5).
+    if (byKey.has(key)) {
+      if (textOf.get(key) === text) continue;
+      throw new Error(`${file}: two files claim ${key} with different bytes; a released version is immutable, so a change to it needs a new version (spec §4.5)`);
+    }
     byKey.set(key, schema);
+    textOf.set(key, text);
   }
   return { byKey };
 }

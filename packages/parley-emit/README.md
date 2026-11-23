@@ -7,8 +7,8 @@ the single sequence across streams, `inv`, redaction, sidecars, retention, disco
 `--human` renderer, the top-level handler and the exit status.
 
 Spec version `0.2.0`. Package version moves with this code; each message schema moves on its own
-(spec §4.4). The schemas this package ships are the repository drafts at the commit recorded in
-`src/schemas.ts`, byte-identical by test (spec §4.5).
+(spec §4.4). The schemas this package ships are the versions released with spec `0.2.0`, copied from
+`schemas/` at the commit recorded in `src/schemas.ts`, byte-identical by test (spec §4.5).
 
 ## Install
 
@@ -323,7 +323,7 @@ or a changed envelope on the shared timeline:
 | Rule | Behaviour |
 | --- | --- |
 | The envelope is not the transform's | `event`, `t`, `seq`, `run` and `_schema` are taken off whatever it returns and the receipt line's are put back, so the two copies of one event agree on all five (§1.3). It may read them; it cannot change them |
-| The body is re-validated | Against the schema for its **exact** advertised pair (§4.5): the drafts this package ships, plus the schema the tool declared on the emitted or error type (§4.2) |
+| The body is re-validated | Against the schema for its **exact** advertised pair (§4.5): the schemas this package ships, plus the schema the tool declared on the emitted or error type (§4.2) |
 | An unverifiable line is withheld | A pair this writer holds no schema document for, or one whose schema uses a construct the checker does not implement, is `history.transform_uncheckable`. An unchecked projection is never passed off as a checked one |
 | Everything that goes wrong is a warning | A throw is `history.transform_failed`; a body that no longer validates is `history.transform_invalid`; a body that carries a declared secret value the writer had already replaced is `history.transform_unredacted`. Each names the withheld `seq`, goes to stderr and the receipt, and leaves the exit status exactly where it was (§6.1) |
 

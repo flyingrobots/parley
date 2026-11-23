@@ -33,8 +33,8 @@ python3 path/to/your-tool/parley_emit.py --vendor-info
 re-run it after an upgrade, and in your own tests if you want a changed copy to fail them. Add
 `--human` for one line of prose. The file carries no other command-line surface.
 
-The seventeen draft schemas are embedded in the file, byte for byte, pinned by commit and digest
-(spec §4.5: a draft's version string does not identify exact bytes). `SCHEMA_SOURCE` holds the
+The seventeen schemas released with spec `0.2.0` are embedded in the file, byte for byte, pinned by
+commit and digest (spec §4.5: a later draft's version string would not identify exact bytes). `SCHEMA_SOURCE` holds the
 pins; `schema_text_digests()` recomputes them from the embedded text, so a copy can check itself.
 
 ## The smallest tool
@@ -110,7 +110,7 @@ and `count files --human` printed `2 file(s)` and nothing else, exit 0.
 | `main(tool, argv, handler, *, cwd, env, home, stdout, stderr, session, now, inputs, resolved)` | Runs one invocation and returns the exit status. `argv` is `[tool.name, *sys.argv[1:]]`; `handler(run, args)` is called with the arguments that remain once the writer's flags and the command, the first argument, are set aside (see [Arguments and flags](#arguments-and-flags)). Nothing raised inside escapes as a traceback |
 | `Run` | `result(record, schema, receipt_extra=None)`, `page(cursor, has_more, record=None, receipt_extra=None)`, `step(decision, because, detail=...)`, `warning(code, problem, **fields)`, `error(code, problem, receipt_extra=None, **fields)`, `input(path, data)`, `finalise_inputs()`, `end(status=None)`; `id`, `cwd`, `receipt_path`, `receipt_dir`, `dry_run`, `ended`, `status`, `sink_failed`. A schema is `("id", "version")` or `{"id": ..., "version": ...}`; diagnostic fields are `remedy`, `remedy_target`, `measured`, `limit`, `retryable` and `detail` |
 | `check_record(value, schema)`, `validate_line(line, extra=None)`, `schema_subset_gap(schema)` | The bounded JSON Schema checker (below) |
-| `SCHEMAS`, `SCHEMA_SOURCE`, `schema_for(pair)`, `schema_text_digests()` | The embedded drafts and their pins |
+| `SCHEMAS`, `SCHEMA_SOURCE`, `schema_for(pair)`, `schema_text_digests()` | The embedded schemas and their pins |
 | `compute_inv`, `canonical`, `digest_tree`, `digest_input`, `sha256` | The `inv` derivation and its parts |
 | `classify_secrets`, `collect_secret_values`, `redact_argv`, `scrub`, `REDACTED` | Redaction |
 | `repo_root`, `state_base`, `state_receipt_dir`, `bookkeeping_for` | Receipt placement, keyed exactly as `parley-read` looks for it |
@@ -225,7 +225,7 @@ What it cannot contain, stated rather than papered over (spec §6):
 
 A Python tool has no ajv, and spec §4.4 asks every program to validate its schemas against real
 output in its own tests. `validate_line(line, extra)` checks one emitted line against the schema
-for its exact advertised pair: an embedded draft, or a tool-owned schema passed in `extra` keyed by
+for its exact advertised pair: an embedded schema, or a tool-owned schema passed in `extra` keyed by
 `(id, version)`. A pair it has no schema for is reported, never validated. Under it,
 `check_record(value, schema)` implements the constructs the protocol's own schemas use (`type`,
 `const`, `enum`, `required`, `properties`, `additionalProperties`, `items`, the length, size and
@@ -233,8 +233,8 @@ range bounds, `pattern`, the `json-pointer` format, `not`, `anyOf`, `allOf`, `on
 `if`/`then`/`else`) and **reports** a keyword it does not implement, walking the whole schema
 before any value, rather than ignoring it. Patterns are ECMAScript patterns read by Python's `re`:
 `$` is the end of input and `.` excludes the four ECMAScript line terminators, as in JSON Schema.
-The suite checks it agrees with ajv on more than seven hundred samples of eleven drafts and their
-single-field mutations, and that every embedded draft is inside the subset.
+The suite checks it agrees with ajv on more than seven hundred samples of eleven of the
+schemas and their single-field mutations, and that every embedded schema is inside the subset.
 
 ## What a receipt can contain
 
@@ -248,7 +248,7 @@ Declared secrets are replaced before writing; an undeclared secret is not, so de
 ```bash
 cd packages/parley-emit-py
 python3 -m unittest discover -s tests     # the unittest suite, standard library only
-bun run sync-schemas                       # re-embed the drafts after a schema change
+bun run sync-schemas                       # re-embed the schemas after a schema change
 ```
 
 `bun test` at the repository root runs that suite and the oracles that live in TypeScript

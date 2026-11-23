@@ -16,11 +16,16 @@ excluded, built and tested ([#48](https://github.com/flyingrobots/parley/issues/
 [#50](https://github.com/flyingrobots/parley/issues/50)), and a drill-down that opens the records a
 digest names ([#51](https://github.com/flyingrobots/parley/issues/51)).
 
-> **Status: proposal.** The [specification](spec/) is written. The writer library,
-> [`@flyingrobots/parley-emit`](packages/parley-emit/README.md), is published and appends to the
-> shared history stream when one is configured; the reader library,
-> [`@flyingrobots/parley-read`](packages/parley-read/README.md), loads a repository's receipt
-> bundles and is not published yet. See the
+> **Status: implemented, first release.** The [specification](spec/) is at `0.2.0`, and its
+> seventeen message schemas are released and immutable ([CHANGELOG.md](CHANGELOG.md),
+> [schemas/](schemas/README.md)). Two writers implement it: the TypeScript library
+> [`@flyingrobots/parley-emit`](packages/parley-emit/README.md) 0.2.0, published on npm, which
+> also appends to the shared history stream when one is configured, and
+> [`parley_emit.py`](packages/parley-emit-py/README.md) 0.1.0, one vendorable Python file pinned
+> by its SHA-256. The reader library, [`@flyingrobots/parley-read`](packages/parley-read/README.md)
+> 0.1.0, loads a repository's receipt bundles and answers recorded reads; it is released by tag and
+> its first npm publish is made by hand ([how](docs/workflows/release-parley-read/README.md)).
+> §8 and §9 of the spec stay informative. See the
 > [open issues](https://github.com/flyingrobots/parley/issues).
 
 ## Two layers, and the dependency runs one way
@@ -28,7 +33,7 @@ digest names ([#51](https://github.com/flyingrobots/parley/issues/51)).
 | Layer | What it is | Requires |
 | --- | --- | --- |
 | **The output contract** | How a program speaks: JSON Lines, published schemas, a bootstrap line, a durable receipt | **Nothing.** A conforming tool is useful on its own |
-| **The history stream** | An optional shared sink where receipt lines from every tool, agent and session collect into one timeline | Opt in by configuring a path: `PARLEY_HISTORY`, or the state directory `parley-emit` looks for. Reading it back is still [#2](https://github.com/flyingrobots/parley/issues/2) |
+| **The history stream** | An optional shared sink where receipt lines from every tool, agent and session collect into one timeline | Opt in by configuring a path: `PARLEY_HISTORY`, or the state directory `parley-emit` looks for. `parley-read` reads it back (§9, informative) |
 
 This order matters. A tool that conforms is fully useful with zero infrastructure — no daemon, no
 database, no setup. The stream is a *consumer* of the format, never a prerequisite for it. Invert

@@ -62,7 +62,7 @@ jobs:
       - run: bun run check
       - run: bun run typecheck
 
-      - name: Verify the shipped schemas match the drafts
+      - name: Verify the shipped schemas match schemas/
         run: |
           cd "$PACKAGE_DIR"
           cp src/schemas.ts /tmp/schemas.before.ts
@@ -74,8 +74,44 @@ jobs:
           fi
           git checkout -- src/schemas.ts
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
       - name: Verify the pack contents
         run: cd "$PACKAGE_DIR" && npm pack --dry-run
+
+      # npm rewrites or removes manifest fields it considers invalid when it publishes, and says so
+      # only as a warning (a `./`-prefixed bin path was stripped from footprint this way). The
+      # published manifest must be the one in the repository, so any such correction fails here,
+      # before anything is released, and so does a dependency range npm would publish verbatim.
+      - name: Verify npm publishes the manifest as written
+        run: |
+          cd "$PACKAGE_DIR"
+          set +e
+          npx -y npm@latest publish --dry-run --access public > "$RUNNER_TEMP/publish-dry-run.log" 2>&1
+          status=$?
+          set -e
+          cat "$RUNNER_TEMP/publish-dry-run.log"
+          if grep -Eqi "auto-corrected|errors corrected|was invalid and removed|was changed from|was normalized|was removed" "$RUNNER_TEMP/publish-dry-run.log"; then
+            echo "::error::npm would rewrite or remove part of $PACKAGE_DIR/package.json when publishing; run npm pkg fix there and commit the result"
+            exit 1
+          fi
+          if [ "$status" -ne 0 ] && ! grep -q "cannot publish over the previously published" "$RUNNER_TEMP/publish-dry-run.log"; then
+            echo "::error::npm publish --dry-run failed (exit $status)"
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/pack"
+          npm pack --pack-destination "$RUNNER_TEMP/pack" > /dev/null
+          tar -xzf "$RUNNER_TEMP"/pack/*.tgz -C "$RUNNER_TEMP/pack"
+          node -e '
+            const [src, packed] = process.argv.slice(1).map((p) => require(p));
+            if (JSON.stringify(src) !== JSON.stringify(packed)) { console.error("the packed package.json differs from the one in the repository"); process.exit(1); }
+            for (const m of ["dependencies", "peerDependencies", "optionalDependencies"]) {
+              for (const [k, v] of Object.entries(src[m] ?? {})) if (String(v).startsWith("workspace:")) { console.error(`${k}@${v} would be published verbatim`); process.exit(1); }
+            }
+            console.log("the packed manifest is the manifest");
+          ' "$PWD/package.json" "$RUNNER_TEMP/pack/package/package.json"
 
   release:
     needs: sanity

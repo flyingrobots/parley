@@ -4,7 +4,7 @@ How a read against parley history states what it wants, and what a result says a
 page is a reference for the two message types that exist today, `parley.query` and `parley.lens`.
 
 **Both messages are now written by something.** What is on `main` is this representation, its two
-draft schemas under [`schemas/`](../../../schemas/README.md), the examples below, and a read in
+schemas under [`schemas/`](../../../schemas/README.md), the examples below, and a read in
 the reader library that states these fields, is refused without them, is recorded as a
 `parley.query` event, comes back **ordered by its view**, and answers with a **`parley.lens`
 digest bounded by its budget** that states what the bound left out —
@@ -145,13 +145,14 @@ Which budget field bounds what, and how the count is arrived at, is
 
 ## The two messages
 
-Both are drafts. See [`schemas/README.md`](../../../schemas/README.md) for the table and the rules
-that govern a draft.
+Both were released with spec `0.2.0`, so a change to either needs a new version. See
+[`schemas/README.md`](../../../schemas/README.md) for the table and the rules that govern a release
+and a draft.
 
 | Schema | Version | Message |
 | --- | --- | --- |
-| `parley.query` | 1.0.0 (draft) | A read, recorded as an event; with `records`, a drill-down naming the records it opens |
-| `parley.lens` | 1.0.0 (draft) | The lens a result carries |
+| `parley.query` | 1.0.0 | A read, recorded as an event; with `records`, a drill-down naming the records it opens |
+| `parley.lens` | 1.0.0 | The lens a result carries |
 
 A read is a run, so both lines carry the §1.3 envelope. `run` on these lines is the read's own run,
 not the run being read: the read writes its own receipt like any other parley program, and `asker`
@@ -220,5 +221,6 @@ of ids asked, and `budget.bytes`, when stated, bounds the records that open: the
   yet, so a caller who needs to know *what* a digest lost still has to widen the budget and read
   again.
 - Whether the view vocabulary is the right five is a question for the first reader built on it.
-  It is five tokens in a draft schema, not a settled list. All five now rank an answer, so each has
+  It is five tokens in a released schema, so adding a sixth is a minor version of `parley.query` and
+  `parley.lens`, not an edit in place. All five now rank an answer, so each has
   a surface and a test behind it, but no caller outside this repository has asked for one yet.

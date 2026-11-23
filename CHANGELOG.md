@@ -496,6 +496,12 @@ so a receipt
 
 ### Fixed
 
+- `parley-read`: under `what-changed`, a warning from a run that went on no longer outranks every
+  result. The change-view promotion now holds the failure surface **of the runs that failed**, so a
+  `warning` is promoted only with its run's failure and is otherwise placed by the view's own
+  surface rule (§6.1). Before, a history of runs that warned filled a `what-changed` digest with
+  warnings and named no result. `what-failed` keeps every warning on its surface.
+  (flyingrobots/parley#76)
 - The README bootstrap example emitted a top-level `receipt`; the schema requires
   `paths.receipt`. (flyingrobots/parley#5)
 - The spec's introduction, §8's opening paragraph and §9's opening paragraph still said the

@@ -110,7 +110,10 @@ What got in the way. Each of these is filed:
 - **`what-changed` never surfaced a single result.** Under a change purpose the failure tier
   ranks first, and it includes warnings: the digest's 20 slots went to 14 graft warnings, 3 errors
   and 3 status-2 `end`s
-  ([flyingrobots/parley#76](https://github.com/flyingrobots/parley/issues/76)).
+  ([flyingrobots/parley#76](https://github.com/flyingrobots/parley/issues/76)). Fixed since: the
+  failure tier now holds only the failure surface of the runs that failed. The same read over a
+  byte-for-byte copy of the same 50 receipts names the 3 errors and the 3 status-2 `end`s, then 14
+  `result` records, and no warning.
 - **Repeated runs crowd out everything else.** A test suite repeats the same invocations, and the
   digest named near-identical runs instead of distinct events
   ([flyingrobots/parley#79](https://github.com/flyingrobots/parley/issues/79)).

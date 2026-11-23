@@ -253,8 +253,10 @@ can see it is not the whole without being handed what it cut.
 Spec §9: the purpose shapes the result, and it is the **ranking function** rather than a filter
 applied afterwards. One total order on a key per record, compared left to right:
 
-1. **the failure surface**, when the view is an answer about a change — a read made in order to
-   change something is a read made in order not to repeat a failure;
+1. **the failure surface of the runs that failed**, when the view is an answer about a change — a
+   read made in order to change something is a read made in order not to repeat a failure. A
+   `warning` from a run that went on is not a failure (§6.1) and is placed by the view's own
+   surface instead;
 2. **the view's own surface** — the records the view is about, above the records it is not;
 3. **`(t, run, seq)` ascending** — so a view whose surface no record touches leaves the answer
    exactly as it was.

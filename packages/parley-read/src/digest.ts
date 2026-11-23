@@ -27,9 +27,9 @@
 //
 // **What the bound cuts is the tail of the ranking**, never a record chosen some other way. The
 // order is `rankRecords`'s total order (flyingrobots/parley#49), which reorders and never filters,
-// so "the records the digest does not name" is exactly "the records the ranking placed beyond the
-// bound" — and that is a number the count can state honestly. A digest built over a filtered
-// ranking could not.
+// so "the records the digest does not name" is exactly "the records the fold left out and the
+// records the ranking placed beyond the bound" — two numbers the loss can state honestly, and does.
+// A digest built over a filtered ranking could not.
 //
 // **`loss.bound` is `none` only when `loss.excluded` is 0**, and the schema refuses the other
 // pairing, so a digest that left something out says so structurally rather than in prose. Since

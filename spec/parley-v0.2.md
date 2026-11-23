@@ -7,8 +7,8 @@ interpreted as described in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119) a
 
 A protocol for programs whose primary caller is an agent. It defines how a program speaks on its
 output streams, how it describes itself, and what it leaves behind. Sections 1 to 7 are the
-normative core; §8 and §9 describe a history layer that consumes this format and is not yet
-built, and are informative.
+normative core; §8 and §9 describe a history layer that consumes this format, parts of which are
+now built, and remain informative.
 
 ## Lineage
 
@@ -792,10 +792,15 @@ unparseable at best and quietly wrong at worst.
 
 ## 8. The history stream (informative)
 
-This section is informative. It describes a layer that consumes the format above and does not
-yet exist ([flyingrobots/parley#3](https://github.com/flyingrobots/parley/issues/3)); nothing in
-it is a conformance requirement in v0.2, and it becomes normative only when an implementation and
-tests support its rules.
+This section is informative. It describes a layer that consumes the format above. The writer
+side — the shared stream, its segments and retention, and the transform that projects a copy of
+it — has an implementation and tests in `packages/parley-emit`
+([flyingrobots/parley#3](https://github.com/flyingrobots/parley/issues/3),
+[flyingrobots/parley#57](https://github.com/flyingrobots/parley/issues/57)); preferring the
+least-projected copy, below, does not yet
+([flyingrobots/parley#58](https://github.com/flyingrobots/parley/issues/58)). Nothing in it is a
+conformance requirement in v0.2, and it becomes normative only when an implementation and tests
+support its rules.
 
 Everything above works with no infrastructure. This layer is opt-in.
 
@@ -824,8 +829,14 @@ timeline.
 ## 9. Reading history is an act (informative)
 
 This section is informative, for the same reason as §8: the reader it describes is designed
-([flyingrobots/parley#2](https://github.com/flyingrobots/parley/issues/2)), not built. The
-direction is kept here so the format above stays shaped for it.
+([flyingrobots/parley#2](https://github.com/flyingrobots/parley/issues/2)). Its query entry point
+and the ranking that orders a result by purpose have an implementation and tests
+([flyingrobots/parley#48](https://github.com/flyingrobots/parley/issues/48),
+[flyingrobots/parley#49](https://github.com/flyingrobots/parley/issues/49)); bounding an answer
+and its detail do not
+([flyingrobots/parley#50](https://github.com/flyingrobots/parley/issues/50),
+[flyingrobots/parley#51](https://github.com/flyingrobots/parley/issues/51)). The direction is kept
+here so the format above stays shaped for it.
 
 A read against the stream is not a passive lookup. It is itself an event, and it is
 task-oriented. The intended rules:

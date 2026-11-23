@@ -99,6 +99,10 @@ rather than moving its version.
     larger, tool-shaped one, and `argv` is the protocol's, so when only one fits the protocol's is
     kept.
 
+  Because a section now states `resolved`, the fold of flyingrobots/parley#79 also requires the
+  heads' `resolved` to be equal: §2.2 keeps the working directory out of `inv`, so one `inv` can
+  carry two interpretations, and a fold must not state one run's for another (RD-100g).
+
   The cost is bytes: under RD-22b's `{records: 20, bytes: 2048}` a digest names 12 records where it
   named 13. On footprint's own receipts every section still fits, the largest at 495 of 512 bytes.
 

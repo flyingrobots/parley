@@ -14,6 +14,7 @@ its manifest so it cannot be published by accident.
   interpretation after defaults and environment, copied whole when it is an object, so a reader
   can tell which commits `HEAD~1..HEAD` was without opening the head. It is the first field
   dropped to fit `RUN_SECTION_BYTES` and is named in `dropped`. `RunSection` gains `resolved`.
+  Runs whose heads' `resolved` differ no longer fold, even with one `inv` (RD-100g).
 
 - **Runs of one invocation with one result are named once** (flyingrobots/parley#79). Before the
   bound is applied, `digestFor` folds the window's runs whose `inv`, outcome, `reason`, `end`

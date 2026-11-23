@@ -457,7 +457,7 @@ by the last of them.
 
 | Rule | Because |
 | --- | --- |
-| Two runs fold when their `inv` is equal **and** their outcome, `reason`, `end` status and error, warning and startup-failure codes, in the order emitted, are all equal | `inv` is the run's identity (§2.2), not its result. "Same `inv`, different result" is a divergence (§2.3), exactly what a reader must see, so a flaky run that failed once and passed once is two sections, never one |
+| Two runs fold when their `inv` is equal **and** their outcome, `reason`, `end` status, error, warning and startup-failure codes in the order emitted, and the head's `resolved` are all equal | `inv` is the run's identity (§2.2), not its result. "Same `inv`, different result" is a divergence (§2.3), exactly what a reader must see, so a flaky run that failed once and passed once is two sections, never one |
 | A run with no `inv` never folds | §2.2 omits `inv` when a program cannot make it safe, and a discovery run has none. Argument vectors are not identity |
 | A redacted run never folds: its head carries `redacted`, its `end` says `redacted: true`, or it emitted a `redaction`. Nor does a run whose window holds neither its head nor an `end`, since nothing then shows it is unredacted | A redacted receipt shares its `inv` with every run that differed only in a secret (§2.3), and a missing statement is not a negative one (§1.2a) |
 | Nothing folds when `digestFor` is given no outcomes | "The same result" cannot be established without them |

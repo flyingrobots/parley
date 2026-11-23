@@ -13,7 +13,8 @@
 // that "same `inv`, different result" is a divergence, the thing a reader most needs to see. So
 // two runs fold only when their `inv` is equal **and** every summary a lens would state about the
 // run is equal too: the outcome, the `reason` an undetermined outcome carries, the `end` status,
-// and the error, warning and startup-failure codes in the order the run emitted them. A flaky run
+// the error, warning and startup-failure codes in the order the run emitted them, and the head's
+// `resolved`, which the section carries (flyingrobots/parley#90). A flaky run
 // that failed once and passed once is two results and two sections, never one.
 //
 // **What never folds.**
@@ -89,7 +90,17 @@ function foldKey(own: readonly LoadedRecord[], outcome: Outcome | undefined): st
     .filter((r) => r.event !== null && CODED.has(r.event))
     .sort((a, b) => a.seq - b.seq)
     .map((r) => [r.event, typeof r.record.code === "string" ? r.record.code : null]);
-  return JSON.stringify([inv, outcome, reason, ends.map((r) => r.record.status ?? null), codes]);
+  // The head's `resolved` too, since a section states it (flyingrobots/parley#90): §2.2 keeps the
+  // working directory and the like out of `inv`, so one `inv` can carry two interpretations, and
+  // a fold must not state one run's for another. Keys are sorted so key order is not a difference.
+  return JSON.stringify([inv, outcome, reason, ends.map((r) => r.record.status ?? null), codes, canonical(head?.record.resolved)]);
+}
+
+/** A JSON value with every object's keys sorted, so two equal values serialise alike. */
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value === null || typeof value !== "object") return value ?? null;
+  return Object.fromEntries(Object.keys(value).sort().map((k) => [k, canonical((value as Record<string, unknown>)[k])]));
 }
 
 /** The latest dated record's `t`, or -1 when the run has none dated. */

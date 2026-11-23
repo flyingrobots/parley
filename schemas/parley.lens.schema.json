@@ -143,7 +143,7 @@
             "none",
             "count-only"
           ],
-          "description": "What kind of statement the loss is. none: the view is the identity on the window and nothing was left out. count-only: the excluded count is all that is known, which is a weak proxy. A measured distortion bound needs a translator to measure it and is a later version of this schema."
+          "description": "What kind of statement the loss is. none: nothing in the window was left out, so the result and the window hold the same records and excluded must be 0. Not restricted to the identity view: a view orders a result and filters none of it (flyingrobots/parley#49), so any view whose result reached the end of its order lost nothing. count-only: the excluded count is all that is known, which is a weak proxy. A measured distortion bound needs a translator to measure it and is a later version of this schema."
         },
         "excluded": {
           "type": "integer",

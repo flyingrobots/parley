@@ -3,14 +3,15 @@
 How a read against parley history states what it wants, and what a result says about itself. This
 page is a reference for the two message types that exist today, `parley.query` and `parley.lens`.
 
-**The entry point and the ranking exist; the digest does not.** What is on `main` is this
-representation, its two draft schemas under [`schemas/`](../../../schemas/README.md), the examples
-below, and a read in the reader library that states these fields, is refused without them, is
-recorded as a `parley.query` event, and comes back **ordered by its view** —
-[parley-read](../parley-read/README.md#making-a-read) and
-[how the purpose orders the answer](../parley-read/README.md#how-the-purpose-orders-the-answer).
-What that read does **not** do is bound the answer to the budget or emit a `parley.lens`: that is
-[flyingrobots/parley#50](https://github.com/flyingrobots/parley/issues/50), and the drill-down is
+**Both messages are now written by something.** What is on `main` is this representation, its two
+draft schemas under [`schemas/`](../../../schemas/README.md), the examples below, and a read in
+the reader library that states these fields, is refused without them, is recorded as a
+`parley.query` event, comes back **ordered by its view**, and answers with a **`parley.lens`
+digest bounded by its budget** that states what the bound left out —
+[parley-read](../parley-read/README.md#making-a-read),
+[how the purpose orders the answer](../parley-read/README.md#how-the-purpose-orders-the-answer)
+and [the digest](../parley-read/README.md#the-digest-and-what-it-left-out). What that read does
+**not** do is hand back what the digest excluded: the drill-down is
 [flyingrobots/parley#51](https://github.com/flyingrobots/parley/issues/51). Spec
 [§9](../../../spec/parley-v0.2.md) is informative and unchanged; the reasoning behind the three
 fields is [Observer geometry and spec §9](../related-work/observer-geometry.md), and the decision
@@ -109,11 +110,17 @@ the view, and results computed under different budgets are not comparable. It al
   each further summarising step adds its own loss to the loss already taken;
 - **a loss bound**, `loss.bound`, with the count of what was left out beside it.
 
-`loss.bound` is `none` when the view is the identity on the window — then `excluded` is `0` — or
-`count-only` when the count is all that is known. The count is a proxy and the schema says so:
+`loss.bound` is `none` when nothing in the window was left out — then `excluded` is `0`, and the
+schema refuses any other pairing — or `count-only` when the count is all that is known. `none` is
+not restricted to the identity view: a view orders a result and filters none of it
+([flyingrobots/parley#49](https://github.com/flyingrobots/parley/issues/49)), so any view whose
+result reached the end of its order lost nothing. The count is a proxy and the schema says so:
 what a view loses is worst-case, and one withheld record can matter more than fifty, so a
 cardinality cannot bound it even in principle. A bound measured from a real translator is a later
 version of `parley.lens`, written when something exists to measure it.
+
+Which budget field bounds what, and how the count is arrived at, is
+[the digest](../parley-read/README.md#the-digest-and-what-it-left-out) on the library's page.
 
 ## The two messages
 
@@ -162,12 +169,12 @@ The lens of the result that answers it, naming the failed run of this specificat
 ## What is still open
 
 - A read that cannot be answered within the declared budget should say so, and say what budget
-  would suffice. Nothing in `parley.lens` 1.0.0 expresses that, and the read on `main` does not
-  bound its answer at all ([flyingrobots/parley#50](https://github.com/flyingrobots/parley/issues/50)).
-- The view **orders** a read's answer and the digest a lens precedes has its own message type and
-  its own bound ([flyingrobots/parley#50](https://github.com/flyingrobots/parley/issues/50)). Until
-  then every view answers with the whole window, so the view changes the order and never the
-  contents, and no result has a loss to state.
+  would suffice. Nothing in `parley.lens` 1.0.0 expresses that: a read on `main` bounds its answer
+  and states the loss, but it cannot decline, and `budget.ms` bounds nothing at all.
+- `loss.bound` has two values and only one of them is a measurement. A distortion bound measured
+  from a real translator is a later version of `parley.lens`, and nothing exists to measure it
+  yet, so a caller who needs to know *what* a digest lost still has to widen the budget and read
+  again.
 - Whether the view vocabulary is the right five is a question for the first reader built on it.
   It is five tokens in a draft schema, not a settled list. All five now rank an answer, so each has
   a surface and a test behind it, but no caller outside this repository has asked for one yet.

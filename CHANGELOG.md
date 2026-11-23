@@ -5,6 +5,21 @@ The spec and each message schema are versioned separately from this package.
 
 ## [Unreleased]
 
+### Changed in a draft schema
+
+Both reader schemas are drafts under this entry (spec §4.5), so a change to one is recorded here
+rather than moving its version.
+
+- `parley.lens` 1.0.0 (draft), `loss.bound`: the **description** of the `none` value changed, and
+  nothing else in the schema did. It said "the view is the identity on the window and nothing was
+  left out", which would have read as a rule that only `everything` may ever claim a lossless
+  result. It now says that `none` means nothing in the window was left out and `excluded` must be
+  0, and that this is not restricted to the identity view, because a view orders a result and
+  filters none of it (flyingrobots/parley#49) — so any view whose result reached the end of its
+  order lost nothing. No constraint changed: the schema's `if`/`then` already refused `none`
+  beside a non-zero count, and still does. The shipped copies in both packages were re-synced,
+  which is a digest change and no version change.
+
 ### Decided
 
 - **How a read states its observer and its purpose** (flyingrobots/parley#46). §9 asks a query for
@@ -115,10 +130,25 @@ The spec and each message schema are versioned separately from this package.
   `parley.query` 1.0.0 event through the writer — so a read is a run with a receipt of its own and
   the loader reads the question back as validated against the exact pair. The answer is the
   window's records in time order, the window echoed verbatim, the read excluded from its own
-  answer. Nothing projects to the view and nothing is bounded by the budget yet
-  (flyingrobots/parley#49, flyingrobots/parley#50): both are recorded, the limits are stated on
-  the reader's and the library's reference pages, and a test pins two views over one window
-  answering the same so the limit cannot drift unnoticed. No schema moved.
+  answer. Nothing projects a record to fewer fields (flyingrobots/parley#59): the view is
+  recorded, the limit is stated on the reader's and the library's reference pages, and a test pins
+  two views over one window answering with the same records so a filter cannot creep in
+  unnoticed. The order the view now imposes is flyingrobots/parley#49's and the bound the budget
+  now applies is flyingrobots/parley#50's, both below. No schema moved.
+- The digest the first response of a read is (flyingrobots/parley#50): `queryReceipts` in
+  `packages/parley-read` now **bounds** its answer to the budget it records and emits a
+  `parley.lens` 1.0.0 record through the writer saying what the bound left out — the query it
+  answers by `(run, seq)`, the asker, the view, the window, the budget actually applied, the
+  records it holds by `(run, seq)`, and `loss` with its `bound` and its `excluded` count. §9 asks
+  a result to carry its own lens so a later reader "cannot mistake a digest for the whole"; the
+  digest is evidence rather than a return value, written into the read's own receipt and read back
+  `validated` against the exact pair. `budget.records` bounds the count of records named,
+  `budget.bytes` bounds the lens line in UTF-8 bytes with its newline, and `budget.ms` bounds
+  nothing. `loss.excluded` is always present, zero included, and `loss.bound` is `none` only
+  beside a count of 0 — the schema refuses the other pairing, so a digest that left something out
+  says so structurally. **This replaces the limit flyingrobots/parley#48 landed**, where the
+  budget was recorded and bounded nothing. **No schema version moved**; see the in-place draft
+  change below. Fetching what a digest excluded is flyingrobots/parley#51.
 - The shared history stream of spec §8, inside the writer: `packages/parley-emit` appends every
   line of the receipt to a dated daily segment when one is configured, by `PARLEY_HISTORY` or by
   `$XDG_STATE_HOME/parley/history` existing, so one timeline spans tools, repositories, agents

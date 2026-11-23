@@ -1347,7 +1347,7 @@ describe("RD-40 under a change view a warning ranks with its run's failure", () 
     expect(answer.records.map((r) => r.event)).toEqual(Array(20).fill("result"));
     expect(answer.records.some((r) => r.event === "warning")).toBe(false);
     expect(answer.ranking.counts.failure).toBe(0);
-    expect(answer.digest.loss).toEqual({ bound: "count-only", excluded: 80 });
+    expect(answer.digest.loss).toEqual({ bound: "count-only", excluded: 80, folded: 0 });
   });
 
   test("a failed run's warning is promoted with its failure and a succeeded run's is not", async () => {
@@ -1437,20 +1437,25 @@ describe("RD-19 ranking reorders and never filters", () => {
     const window = { from: 0, to: realDone };
     const all = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window }, { cwd: dir, env }));
     expect(ids(all.records)).toEqual(timeOrder(all.records));
-    expect(new Set(all.records.map((r) => r.run))).toEqual(new Set([first.run, broke.run, third.run]));
-    expect(all.records.length).toBe(11);
+    // The first and third runs are one invocation with one result, so the digest names the third
+    // for both (flyingrobots/parley#79): the window holds 11 records, the digest names 7, and the
+    // fold says it left out the first run's 4.
+    expect(new Set(all.records.map((r) => r.run))).toEqual(new Set([broke.run, third.run]));
+    expect(all.counts.inWindow).toBe(11);
+    expect(all.records.length).toBe(7);
+    expect(all.counts.folded).toBe(4);
 
     const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "what-changed", window }, { cwd: dir, env }));
     const real = new Set([first.run, broke.run, third.run]);
     const realOnly = (a: QueryAnswer) => [...ids(a.records.filter((r) => real.has(r.run)))].sort();
     expect(realOnly(answer)).toEqual(realOnly(all));
-    expect(realOnly(answer).length).toBe(11);
+    expect(realOnly(answer).length).toBe(7);
     expect(answer.ranking.outcomes[broke.run]).toBe("failed");
     expect(answer.ranking.outcomes[first.run]).toBe("succeeded");
     expect(answer.ranking.outcomes[third.run]).toBe("succeeded");
     expect(answer.records.slice(0, 2).map((r) => [r.run, r.event])).toEqual([[broke.run, "error"], [broke.run, "end"]]);
     const results = answer.ranking.ranked.filter((r) => r.record.event === "result");
-    expect(results.length).toBe(2);
+    expect(results.length).toBe(1);
     expect(results.every((r) => r.tier === "surface")).toBe(true);
     for (const r of results) {
       const own = answer.ranking.ranked.filter((o) => o.record.run === r.record.run && o.record.event !== "result");
@@ -1614,7 +1619,7 @@ describe("RD-21 the digest is bounded by the budget", () => {
     ));
     expect(answer.records.length).toBe(7);
     expect(answer.digest.records.length).toBe(7);
-    expect(answer.digest.loss).toEqual({ bound: "count-only", excluded: 23 });
+    expect(answer.digest.loss).toEqual({ bound: "count-only", excluded: 23, folded: 0 });
     expect(answer.counts.inWindow).toBe(30);
     expect(answer.counts.answered).toBe(7);
     expect(answer.counts.excluded).toBe(23);
@@ -1689,7 +1694,7 @@ describe("RD-21 the digest is bounded by the budget", () => {
       { cwd: dir, env },
     ));
     expect(answer.records.length).toBe(9);
-    expect(answer.digest.loss).toEqual({ bound: "none", excluded: 0 });
+    expect(answer.digest.loss).toEqual({ bound: "none", excluded: 0, folded: 0 });
     expect(answer.counts.excluded).toBe(0);
   });
 
@@ -1698,12 +1703,12 @@ describe("RD-21 the digest is bounded by the budget", () => {
     const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: SEALED }, { cwd: dir, env }));
     expect(answer.records).toEqual([]);
     expect(answer.digest.records).toEqual([]);
-    expect(answer.digest.loss).toEqual({ bound: "none", excluded: 0 });
+    expect(answer.digest.loss).toEqual({ bound: "none", excluded: 0, folded: 0 });
     expect(answer.counts.answered).toBe(0);
     expect(answer.counts.excluded).toBe(0);
     const lens = lensRecord(dir, env, answer.run);
     expect(lens.validation.state).toBe("validated");
-    expect((lens.record as { loss: unknown }).loss).toEqual({ bound: "none", excluded: 0 });
+    expect((lens.record as { loss: unknown }).loss).toEqual({ bound: "none", excluded: 0, folded: 0 });
   });
 });
 
@@ -1721,13 +1726,13 @@ describe("RD-22 a digest never reads as complete", () => {
       { asker: { tool: "t" }, view: "everything", window: SEALED, budget: { records: 1000 } },
       { cwd: dir, env },
     ));
-    expect(whole.digest.loss).toEqual({ bound: "none", excluded: 0 });
+    expect(whole.digest.loss).toEqual({ bound: "none", excluded: 0, folded: 0 });
     // The loss is where the digest says what it is: there is no prose field to read instead, and
     // `none` is impossible with a non-zero count because the schema refuses it.
     const lens = validator();
     const asRecord = (a: QueryAnswer) => a.lines.find((l) => l.event === "lens")!;
     expect(lens.validate({ ...asRecord(cut), loss: { bound: "none", excluded: cut.digest.loss.excluded } }).state).toBe("invalid");
-    expect(Object.keys(cut.digest.loss).sort()).toEqual(["bound", "excluded"]);
+    expect(Object.keys(cut.digest.loss).sort()).toEqual(["bound", "excluded", "folded"]);
   });
 
   test("the digest's size stays under its bound as history grows", async () => {
@@ -1757,10 +1762,12 @@ describe("RD-22 a digest never reads as complete", () => {
     // its identity and outcome once (flyingrobots/parley#83), about 100 bytes for each of these
     // three-record runs, while the entries lost the outcome they each repeated. 13 entries, the
     // whole of four runs and the head of a fifth, with five sections, fit at 30 receipts and at
-    // 300 alike; the fourteenth entry, about 80 bytes, does not. Measured, not claimed.
+    // 300 alike; the fourteenth entry, about 80 bytes, does not. The loss also says how much of
+    // it a fold left out (flyingrobots/parley#79), `"folded":0` here because these heads carry no
+    // `inv`: eleven bytes more on every line, and no fewer records. Measured, not claimed.
     expect(named).toEqual([9, 13, 13]);
     expect(excluded).toEqual([0, 77, 887]);
-    expect(sizes).toEqual([1422, 1970, 1971]);
+    expect(sizes).toEqual([1433, 1981, 1982]);
     // Every line is inside the stated byte bound: the line does not grow with history.
     expect(sizes.every((b) => b <= BYTES)).toBe(true);
   }, 120_000);
@@ -1782,7 +1789,9 @@ describe("RD-22 a digest never reads as complete", () => {
     ));
     expect(answer.counts.inWindow).toBe(11);
     expect(answer.records.length).toBe(2);
-    expect(answer.digest.loss).toEqual({ bound: "count-only", excluded: 9 });
+    // The first run is folded into the third, one invocation with one result (flyingrobots/parley#79):
+    // its 4 records are part of the 9 excluded, and the loss says so.
+    expect(answer.digest.loss).toEqual({ bound: "count-only", excluded: 9, folded: 4 });
     // The failing run's error is what a change purpose puts first, and the digest keeps it.
     expect(answer.digest.records[0]).toEqual({
       run: broke.run, seq: answer.records[0]!.seq, event: "error", t: answer.records[0]!.t!, code: answer.records[0]!.record.code as string,
@@ -2200,7 +2209,8 @@ describe("RD-50 a lens names each record with a summary of it", () => {
       { asker: { tool: "t", task: "flyingrobots/parley#77" }, view: "what-changed", window },
       { cwd: dir, env },
     ));
-    expect(answer.digest.records.length).toBe(11);
+    // 11 in the window; the first run's 4 are folded into the third's (flyingrobots/parley#79).
+    expect(answer.digest.records.length).toBe(7);
     const byId = loadedById(dir, env);
     const held = heldEntries(dir, env, answer.run);
     expect(held).toEqual(answer.digest.records as unknown as Record<string, unknown>[]);
@@ -2465,7 +2475,7 @@ describe("RD-72 a bytes budget that cannot hold an empty digest declines and nam
     // The size named is exact: under it, the read answers with a digest naming no records…
     const fits = answered(await ask(smallest));
     expect(fits.digest.records).toEqual([]);
-    expect(fits.digest.loss).toEqual({ bound: "count-only", excluded: 30 });
+    expect(fits.digest.loss).toEqual({ bound: "count-only", excluded: 30, folded: 0 });
     expect(fits.digestBytes).toBeLessThanOrEqual(smallest);
     // …and one byte under it, the read declines again.
     expect(declined(await ask(smallest - 1)).decline.bound).toBe("bytes");
@@ -2547,7 +2557,7 @@ describe("RD-73 a read that states no ms has no deadline", () => {
 // afterwards.
 
 /** The keys a run section may carry, and no others. */
-const SECTION_KEYS = new Set(["run", "tool", "v", "argv", "inv", "outcome", "reason", "head", "dropped"]);
+const SECTION_KEYS = new Set(["run", "tool", "v", "argv", "inv", "outcome", "reason", "head", "folded", "dropped"]);
 
 /**
  * Assert the lens's `runs` say what the loaded window says and nothing else: one section per run
@@ -2604,8 +2614,11 @@ describe("RD-80 a lens states each run it names once", () => {
     expect(lens.validation.state).toBe("validated");
     const held = lens.record as unknown as { records: Record<string, unknown>[]; runs: Record<string, unknown>[] };
     expect(held.runs).toEqual(answer.digest.runs as unknown as Record<string, unknown>[]);
-    expect(held.runs.length).toBe(3);
+    // The first and third runs are one invocation with one result, so they are folded into the
+    // third (flyingrobots/parley#79, RD-90); the failing run is not the same result and stands alone.
     const byId = loadedById(dir, env);
+    expect(held.runs.map((r) => r.run)).toEqual([broke.run, third.run]);
+    expect(held.runs[1]!.folded).toEqual({ runs: 2, records: [...byId.values()].filter((r) => r.run === first.run).length });
     expectSectionsMatch(held, byId, answer.ranking.outcomes);
     expect(sectionOutcomes(held.runs)[broke.run]).toBe("failed");
     // The failing run's error entry names its code, so three failures of one case read as one.
@@ -2761,5 +2774,198 @@ describe("RD-80 a lens states each run it names once", () => {
     // per run took 1.1 to 1.6 s here, the index about 30 ms; the bound fails on that complexity,
     // not on a noisy machine.
     expect(elapsed).toBeLessThan(500);
+  }, 60_000);
+});
+
+// ---- RD-90 runs of one invocation, folded ----------------------------------------------------
+//
+// flyingrobots/parley#79: footprint's test suite runs the CLI about fifteen times in a burst with
+// the same few argv, and those bursts filled every digest of 20 with the same runs. A digest now
+// folds runs that are the same invocation with the same result (§2.2's `inv`, and every summary
+// the lens would state about the run) into their most recent run, whose section says how many it
+// stands for. Equal `inv` with a different result is a divergence (§2.3) and is never folded.
+
+/** Four records of one run, stamped from `at`: a head (carrying `inv` when given), a step, a result, an end. */
+function invRun(run: string, at: number, inv: string | undefined, over: { status?: unknown; error?: string; redacted?: boolean } = {}): LoadedRecord[] {
+  const third = over.error === undefined
+    ? loaded(run, 3, "result", at + 2, { value: 1 })
+    : loaded(run, 3, "error", at + 2, { code: over.error, problem: "p" });
+  return [
+    loaded(run, 1, "receipt.head", at, { tool: "t", v: "1", argv: ["t", "x"], ...(inv === undefined ? {} : { inv }), ...(over.redacted ? { redacted: { argv: [1] } } : {}) }),
+    loaded(run, 2, "receipt.step", at + 1),
+    third,
+    loaded(run, 4, "end", at + 3, { status: over.status ?? 0, ...(over.redacted ? { redacted: true } : {}) }),
+  ];
+}
+
+/** The same run written as a receipt, so a real read loads it. */
+function invReceipt(dir: string, run: string, at: number, inv: string) {
+  const path = join(dir, `${run}.jsonl`);
+  return writeReceipt(dir, run, [
+    { ...head(run, { inv }), t: at },
+    { ...step(run, 2), t: at + 1 },
+    { ...toolResult(run, 3), t: at + 2 },
+    { ...end(run, 4, path), t: at + 3 },
+  ]);
+}
+
+const foldOf = (runs: readonly Record<string, unknown>[], run: string) => runs.find((r) => r.run === run)?.folded;
+
+describe("RD-90 runs of one invocation with one result are folded", () => {
+  test("five identical runs are named once and the section says five", async () => {
+    const { dir, env } = scratch();
+    const receipts = repoReceipts(dir);
+    for (let i = 1; i <= 5; i++) invReceipt(receipts, runId(i), T0 - (6 - i) * DAY, "inv_same");
+    const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: SEALED, budget: { records: 100 } }, { cwd: dir, env }));
+    const lens = lensRecord(dir, env, answer.run);
+    expect(lens.validation.state).toBe("validated");
+    const held = lens.record as unknown as { records: Record<string, unknown>[]; runs: Record<string, unknown>[]; loss: Record<string, unknown> };
+    // The most recent run stands for the five.
+    expect(held.records.map((e) => `${e.run}:${e.seq}`)).toEqual([1, 2, 3, 4].map((s) => `${runId(5)}:${s}`));
+    expect(held.runs.length).toBe(1);
+    expect(held.runs[0]!.run).toBe(runId(5));
+    expect(held.runs[0]!.folded).toEqual({ runs: 5, records: 16 });
+    expect(held.loss).toEqual({ bound: "count-only", excluded: 16, folded: 16 });
+    // Nothing folded away is in the answer either: not its records, not its ranking prefix.
+    expect(answer.records.every((r) => r.run === runId(5))).toBe(true);
+    expect(answer.ranking.ranked.map((r) => idOf(r.record))).toEqual(ids(answer.records));
+    expect(answer.counts.folded).toBe(16);
+    expect(answer.counts.excluded).toBe(16);
+  });
+
+  test("equal inv with a different outcome is never folded", () => {
+    const records = [
+      // The flaky pair: one invocation, one failure and one pass.
+      ...invRun(runId(1), T0, "inv_flaky", { status: 2, error: "t.flaked" }),
+      ...invRun(runId(2), T0 + 10, "inv_flaky"),
+      // Both failed, with different statuses.
+      ...invRun(runId(3), T0 + 20, "inv_status", { status: 1 }),
+      ...invRun(runId(4), T0 + 30, "inv_status", { status: 2 }),
+      // Both failed with status 2, with different errors.
+      ...invRun(runId(5), T0 + 40, "inv_code", { status: 2, error: "t.one" }),
+      ...invRun(runId(6), T0 + 50, "inv_code", { status: 2, error: "t.two" }),
+    ];
+    const { digested } = digestOf(records);
+    expect(digested.digest.runs.map((r) => r.run)).toEqual([1, 2, 3, 4, 5, 6].map(runId));
+    expect(digested.digest.runs.some((r) => "folded" in r)).toBe(false);
+    expect(digested.digest.loss).toEqual({ bound: "none", excluded: 0, folded: 0 });
+  });
+
+  test("a run with no inv is never folded", () => {
+    const records = [
+      ...invRun(runId(1), T0, undefined),
+      ...invRun(runId(2), T0 + 10, undefined),
+      ...invRun(runId(3), T0 + 20, undefined),
+      // One inv, both undetermined, for different reasons.
+      loaded(runId(4), 1, "receipt.head", T0 + 30, { tool: "t", v: "1", argv: ["t"], inv: "inv_open" }),
+      loaded(runId(5), 1, "receipt.head", T0 + 40, { tool: "t", v: "1", argv: ["t"], inv: "inv_open" }),
+      loaded(runId(5), 2, "end", T0 + 41, { status: "zero" }),
+    ];
+    const { digested } = digestOf(records);
+    expect(digested.digest.runs.map((r) => r.run)).toEqual([1, 2, 3, 4, 5].map(runId));
+    expect(digested.digest.runs.some((r) => "folded" in r)).toBe(false);
+    expect(digested.digest.loss.folded).toBe(0);
+  });
+
+  test("a redacted run is never folded", () => {
+    const records = [
+      ...invRun(runId(1), T0, "inv_secret", { redacted: true }),
+      ...invRun(runId(2), T0 + 10, "inv_secret"),
+    ];
+    const { digested } = digestOf(records);
+    expect(digested.digest.runs.map((r) => r.run)).toEqual([runId(1), runId(2)]);
+    expect(digested.digest.runs.some((r) => "folded" in r)).toBe(false);
+
+    // Two runs whose window holds neither head nor end, only `receipt.inputs` with one `inv`: the
+    // window cannot show either is unredacted (§1.2a), so neither folds.
+    const blind = [3, 4].map((n) => loaded(runId(n), 3, "receipt.inputs", T0 + n * 10, { inputs: [], inv: "inv_blind" }));
+    const unknown = digestOf(blind).digested;
+    expect(unknown.digest.runs.map((r) => r.run)).toEqual([runId(3), runId(4)]);
+    expect(unknown.folded).toBe(0);
+  });
+
+  test("the loss separates what the fold left out from what the budget cut", () => {
+    // Twelve runs in four groups of three, interleaved in time, so the representatives come last.
+    const records = Array.from({ length: 12 }, (_, i) => invRun(runId(i), T0 + i * 10, `inv_g${i % 4}`)).flat();
+    const wide = digestOf(records).digested;
+    expect(wide.digest.runs.map((r) => [r.run, r.folded])).toEqual([8, 9, 10, 11].map((i) => [runId(i), { runs: 3, records: 8 }]));
+    expect(wide.digest.loss).toEqual({ bound: "count-only", excluded: 32, folded: 32 });
+    expect(wide.folded).toBe(32);
+
+    const cut = digestOf(records, { records: 6 }).digested;
+    expect(cut.digest.records.length).toBe(6);
+    // The fold's count does not depend on the budget; the budget's loss is the rest.
+    expect(cut.digest.loss).toEqual({ bound: "count-only", excluded: 42, folded: 32 });
+    expect(cut.excluded - cut.folded).toBe(16 - 6);
+    const stated = cut.digest.runs.reduce((n, r) => n + (r.folded?.records ?? 0), 0);
+    expect(stated).toBeLessThanOrEqual(cut.digest.loss.folded);
+
+    // The schema holds the pairing: a loss of none cannot say the fold left anything out.
+    const line = JSON.parse(digestLine(wide.digest, { run: runId(99), seq: 30, t: T0 + 10 })) as Record<string, unknown>;
+    expect(validator().validate(line).state).toBe("validated");
+    expect(validator().validate({ ...line, loss: { bound: "none", excluded: 0, folded: 3 } }).state).toBe("invalid");
+    expect(validator().validate({ ...line, runs: [{ run: runId(11), outcome: "succeeded", folded: { runs: 1, records: 0 } }] }).state).toBe("invalid");
+  });
+
+  test("the byte search and the sufficient size are exact with a fold", () => {
+    const records = Array.from({ length: 9 }, (_, i) => invRun(runId(i), T0 + i * 10, `inv_${i % 3}`)).flat();
+    const whole = digestOf(records).digested;
+    expect(whole.folded).toBe(24);
+    for (let bytes = 1; bytes <= whole.bytes; bytes++) {
+      const { digested, envelope, ranking } = digestOf(records, { records: 100, bytes });
+      const kept = digested.digest.records.length;
+      if (digested.fits) expect(digested.bytes).toBeLessThanOrEqual(bytes);
+      if (kept < whole.digest.records.length && digested.fits) {
+        const plan = planQuery({ asker: { tool: "t", cwd: "/w" }, view: "everything", window: WIDE, budget: { records: kept + 1 } });
+        if (plan.refused) throw new Error("the plan was refused");
+        const more = digestFor(plan.query, { run: runId(99), seq: 1 }, ranking.records, envelope, ranking.outcomes);
+        expect(digestBytes({ ...more.digest, budget: digested.digest.budget }, envelope)).toBeGreaterThan(bytes);
+      }
+    }
+    const { envelope, ranking } = digestOf(records);
+    const plan = planQuery({ asker: { tool: "t", cwd: "/w" }, view: "everything", window: WIDE, budget: { records: 100 } });
+    if (plan.refused) throw new Error("the plan was refused");
+    const least = sufficientBytes(plan.query, { run: runId(99), seq: 1 }, ranking.records.length, envelope, whole.folded);
+    const at = (bytes: number) => digestFor({ ...plan.query, budget: { records: 100, bytes } }, { run: runId(99), seq: 1 }, ranking.records, envelope, ranking.outcomes);
+    expect(at(least).fits).toBe(true);
+    expect(at(least).digest.records.length).toBe(0);
+    expect(at(least).bytes).toBe(least);
+    expect(at(least - 1).fits).toBe(false);
+  });
+
+  test("a thousand identical runs fold into one section in a bounded pass", () => {
+    const records = Array.from({ length: 1000 }, (_, i) => invRun(runId(i), T0 + i * 10, "inv_suite")).flat();
+    const plan = planQuery({ asker: { tool: "t" }, view: "everything", window: WIDE, budget: { records: 4000 } });
+    if (plan.refused) throw new Error("the plan was refused");
+    const ranking = rankRecords(plan.query, records);
+    const started = Date.now();
+    const digested = digestFor(plan.query, { run: runId(99_999), seq: 1 }, ranking.records, { run: runId(99_999), seq: 30, t: T0 }, ranking.outcomes);
+    const elapsed = Date.now() - started;
+    expect(digested.digest.runs).toEqual([{ run: runId(999), tool: "t", v: "1", argv: ["t", "x"], inv: "inv_suite", outcome: "succeeded", folded: { runs: 1000, records: 3996 } }]);
+    expect(digested.digest.records.length).toBe(4);
+    expect(digested.digest.loss).toEqual({ bound: "count-only", excluded: 3996, folded: 3996 });
+    expect(elapsed).toBeLessThan(500);
+  }, 60_000);
+
+  test("three real runs of one invocation fold into one", async () => {
+    const { dir, state, env } = scratch();
+    writeFileSync(join(dir, "a.txt"), "hello");
+    const runs = [realRun(dir, state), realRun(dir, state), realRun(dir, state)];
+    expect(runs.map((r) => r.status)).toEqual([0, 0, 0]);
+    const byId = loadedById(dir, env);
+    const invs = runs.map((r) => byId.get(`${r.run}:1`)!.record.inv);
+    expect(typeof invs[0]).toBe("string");
+    expect(new Set(invs).size).toBe(1);
+
+    const answer = answered(await queryReceipts(
+      { asker: { tool: "t", task: "flyingrobots/parley#79" }, view: "what-ran", window: { from: 0, to: Date.now() } },
+      { cwd: dir, env },
+    ));
+    const lens = lensRecord(dir, env, answer.run);
+    expect(lens.validation.state).toBe("validated");
+    const held = lens.record as unknown as { runs: Record<string, unknown>[] };
+    expect(held.runs.length).toBe(1);
+    expect(held.runs[0]!.run).toBe(runs[2]!.run);
+    expect((foldOf(held.runs, runs[2]!.run) as { runs: number }).runs).toBe(3);
   }, 60_000);
 });

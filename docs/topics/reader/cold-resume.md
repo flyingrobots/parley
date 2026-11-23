@@ -118,7 +118,9 @@ What got in the way. Each of these is filed:
   `result` records, and no warning.
 - **Repeated runs crowd out everything else.** A test suite repeats the same invocations, and the
   digest named near-identical runs instead of distinct events
-  ([flyingrobots/parley#79](https://github.com/flyingrobots/parley/issues/79)).
+  ([flyingrobots/parley#79](https://github.com/flyingrobots/parley/issues/79)). Fixed since: a
+  digest folds runs of one invocation with one result. See
+  [folding repeated runs](#folding-repeated-runs).
 - **The drill-down had no byte bound.** Eight footprint results, each embedding a Markdown report,
   overflowed what the reader's harness would show inline. It now takes `budget.bytes`, and an id
   past the bound comes back `over_budget` with its size
@@ -285,6 +287,49 @@ What the run sections did not settle, by the third reader's account:
   show inline, and it narrowed the window instead. Most of its 14 queries were that narrowing: the
   cost the earlier readers paid in drill-downs, moved into queries. Folding repeated runs,
   [flyingrobots/parley#79](https://github.com/flyingrobots/parley/issues/79), is aimed at it.
+
+## Folding repeated runs
+
+This is a measurement, not a fourth cold reader. The same 50 receipts were copied byte for byte
+into a fresh directory for each read, SHA-256 identical to the copy the third reader used. Each
+of the five views was then read over the same window under the default budget of 20 records,
+once with the library at `8a1445c` (before the fold) and once with
+[flyingrobots/parley#79](https://github.com/flyingrobots/parley/issues/79) applied. The script
+reads each lens line back from the read's own receipt. "Invocations" counts the distinct `inv`s
+among the runs a digest names, and every run in this window has one.
+
+The window holds 508 records in 50 runs, and those runs have 17 distinct `inv`s. Seven groups of
+runs share an `inv` and a result, 4, 4, 6, 3, 3, 10 and 10 runs each, so the fold leaves 17 runs
+and leaves out 345 records. No two runs share an `inv` and differ in result.
+
+| View | Runs named, before | Invocations, before | Runs named, after | Invocations, after | Runs they stand for, after | `loss`, after |
+| --- | --- | --- | --- | --- | --- | --- |
+| `what-ran` | 14 | 6 | 11 | 11 | 31 | `excluded` 488, `folded` 345 |
+| `what-failed` | 11 | 5 | 9 | 9 | 24 | `excluded` 488, `folded` 345 |
+| `what-changed` | 10 | 6 | 8 | 8 | 13 | `excluded` 488, `folded` 345 |
+| `how-it-decided` | 7 | 2 | 6 | 6 | 17 | `excluded` 488, `folded` 345 |
+| `everything` | 5 | 2 | 4 | 4 | 10 | `excluded` 488, `folded` 345 |
+
+Every digest still names 20 records and excludes 488, because the default budget is a record
+count. What changed is which 20: before, a digest of 20 named at most 6 distinct invocations;
+after, every run it names is a distinct invocation and result. Under `what-ran` it now reaches
+from the 14:37 burst to the `543477a~1..543477a` run of the third, where it stopped in the second
+burst before. Byte sizes fell too, from 5,145 to 4,505 bytes under `what-ran`, because a fold
+names fewer runs and so pays for fewer sections.
+
+Two sections of the `what-ran` digest after the fold, captured:
+
+```jsonl illustrative
+{"run":"01M82PJNQXQBW5ZRRM8T0MENJ7","tool":"footprint","v":"0.2.0","argv":["footprint","HEAD~2..HEAD~1"],"inv":"03803fef496f7a07616dc14a5172130f24a87d41b6bd91fb9165af141686834c","outcome":"undetermined","reason":"no_end_in_window","folded":{"runs":4,"records":12}}
+{"run":"01M82S0D86ZC0QZWGHDV2A5HZJ","tool":"footprint","v":"0.2.0","argv":["footprint","HEAD~1..HEAD","--human"],"inv":"70377768731b22e10242fac4cfac373e8edf08cfd2fc4ba3adc9a25ce2a5dca5","outcome":"succeeded","folded":{"runs":10,"records":117}}
+```
+
+The fences are labelled illustrative because each line is a fragment of a lens, not a message.
+The first says the four 14:37 runs on `HEAD~2..HEAD~1` never ended. The second is the second
+burst's ten runs of `HEAD~1..HEAD`, six without `--human` and four with it. footprint gives runs
+with and without the flag the same `inv`, so they are one invocation. The section shows the
+representative's own `argv`, which for that group happens to carry `--human`. This is
+what folding by `inv` rather than by `argv` means, as the issue chose.
 
 ## How the exercise departed from its rules
 

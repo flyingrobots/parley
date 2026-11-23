@@ -10,6 +10,17 @@ its manifest so it cannot be published by accident.
 
 ### Added
 
+- **Runs of one invocation with one result are named once** (flyingrobots/parley#79). Before the
+  bound is applied, `digestFor` folds the window's runs whose `inv`, outcome, `reason`, `end`
+  status and error, warning and startup-failure codes are all equal into the most recent of
+  them. That run's section carries `folded: {runs, records}`, and the lens's `loss` carries
+  `folded`, how many of `excluded` the fold left out. A run with no `inv`, or a redacted run,
+  never folds, and nothing folds when `digestFor` is given no outcomes. New exports: `foldRuns`
+  and the types `Folding` and `RunFold`. `Digested` and `QueryAnswer.counts` gain `folded`,
+  `runSection` takes the run's fold as a fourth argument, and `sufficientBytes` takes the fold's
+  count as a fifth, default 0. On footprint's own 50 receipts a digest of 20 under `what-ran` now
+  names 11 distinct invocations where it named 6 (`docs/topics/reader/cold-resume.md`).
+
 - **A decline on budget grounds** (flyingrobots/parley#71). `budget.ms` is a deadline for the
   whole read, read on `opts.clock` (default `MONOTONIC`, `performance.now`) once at the call and
   once at each check: after the load, after the ranking and before the digest is written, and for
@@ -215,6 +226,13 @@ its manifest so it cannot be published by accident.
 - The sixteen draft schemas at the pinned commit, with a test that they match the repository.
 
 ### Changed
+
+- **A digest no longer names every repeat of a run** (flyingrobots/parley#79). Where two runs are
+  one invocation with one result, the answer's `records` and the ranking it carries now hold only
+  the most recent one's records, and `loss.excluded` counts the other's. Three runs of the
+  writer's `count` example, two of which succeed, now come back as 7 named records of 11. Every
+  lens line carries `"folded":0` or more in its `loss`, 11 bytes more than before when nothing
+  folds (RD-22b: 1433, 1981 and 1982 bytes).
 
 - **A `budget.bytes` too small for an empty digest declines** (flyingrobots/parley#71). It used to
   answer with a digest naming no records whose line was still over the stated bound; it now

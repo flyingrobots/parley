@@ -513,7 +513,9 @@ describe("RD-60 a byte budget on the drill-down: whole records up to the bound, 
       }
       expect(used).toBeLessThanOrEqual(bytes);
     }
-  });
+    // Six recorded drill-downs and a load after each: real I/O, which a loaded machine stretches past
+    // the default 5 s. The case bounds bytes, not time.
+  }, 60_000);
 
   test("the recorded budget is the one applied", async () => {
     const { dir, env } = scratch();

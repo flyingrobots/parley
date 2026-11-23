@@ -63,8 +63,49 @@ rather than moving its version.
   order asked while their summed size stays within it, and an `over_budget` outcome with no
   contents for each id past it (flyingrobots/parley#78). `bytes` was already an optional positive
   integer in the schema, so no constraint moved. Both packages were re-synced; no version moved.
+- `parley.lens` 1.0.0 (draft) gains **`loss.folded`** and **`runs[].folded`**
+  (flyingrobots/parley#79). `loss.folded` is a non-negative integer: how many of `loss.excluded`
+  were left out because their run was folded into another run of the same invocation and the same
+  result, rather than by the budget. `runs[].folded` is `{runs, records}`, `runs` at least 2 and
+  `records` at least 0: on a representative's section, how many runs it stands for, itself
+  included, and how many of the others' records the fold left out. The schema's `if`/`then` now
+  also requires `loss.folded` to be 0 beside `bound: "none"`. Both fields are optional, so every
+  `parley.lens` line written under the earlier draft still validates; parley-read always writes
+  `loss.folded`, 0 included. The decision is under *Decided*. The shipped copies in both packages
+  were re-synced, which moves no version.
 
 ### Decided
+
+- **How a digest folds repeated runs, and how the lens says so** (flyingrobots/parley#79). The
+  issue left the lens field open; this is the decision, and an owner may overrule any part of it.
+  - *What folds.* Two runs fold when their `inv` is equal and every summary the lens states about
+    their result is equal too: the outcome, the `reason`, the `end` status, and the error, warning
+    and startup-failure codes in the order emitted. Equal `inv` alone is not enough, because §2.3
+    makes "same `inv`, different result" a divergence, and the issue's risk is a flaky run folded
+    into a passing one. A run with no `inv` never folds, and neither does a redacted run, which
+    §2.3 says shares its `inv` with every run that differed only in a secret.
+  - *Which run is named.* The most recent of the group: the run whose latest dated record in the
+    window is latest, ties to the greater run id.
+  - *How the lens says so.* On the representative's run section, `folded: {runs, records}`, where
+    `runs` counts the group, the representative included, so a digest over N identical runs
+    states N. The folded runs' ids are **not** listed, to keep the line small. A narrower read, or
+    a load of the window, finds them.
+  - *How the loss tells fold from budget.* `loss.excluded` still counts every record of the window
+    the digest does not name, the folded ones included, and a new `loss.folded` says how many of
+    those the fold left out. `excluded − folded` is what the budget cut. `loss.folded` depends on
+    the window alone, so the same window folds the same way under any budget. It is always
+    written, 0 included, so "folded nothing" reads differently from a lens written before the
+    field.
+  - *Where it happens.* The fold is part of how the digest is built: the ranking still orders
+    every record and drops none, the fold removes the folded-away runs' records from what the
+    digest may name, and the bound cuts the tail of what is left. It applies under every view.
+  - Rejected: a new view token, because grouping is orthogonal to purpose, as the issue says;
+    folding by `argv`, because argv is not identity; folding on `inv` and outcome alone, which
+    would merge two failures with different errors; listing the folded ids, which costs about 30
+    bytes a run and would let a burst of a thousand runs crowd out the budget again; demoting the
+    folded runs' records to the tail of the ranking instead of leaving them out, which keeps the
+    ranking's "never filters" literally true but makes a wide budget name every repeat again and
+    leaves fold loss and budget loss indistinguishable.
 
 - **How a read states its observer and its purpose** (flyingrobots/parley#46). §9 asks a query for
   an observer and a purpose. The observer-geometry treatment §9 cites uses "observer" for the

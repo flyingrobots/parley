@@ -122,8 +122,12 @@ the view, and results computed under different budgets are not comparable. It al
   `end_status_unusable`). A run whose head the window does not hold still has a section, saying
   `head: "not_in_window"`, and a section too large for its bound drops whole fields and names them
   rather than cutting a string
-  ([flyingrobots/parley#83](https://github.com/flyingrobots/parley/issues/83));
-- **a loss bound**, `loss.bound`, with the count of what was left out beside it.
+  ([flyingrobots/parley#83](https://github.com/flyingrobots/parley/issues/83)). Runs that are one
+  invocation with one result — an equal `inv` and an equal outcome, status and error and warning
+  codes — are named once, by the most recent of them, whose section says `folded: {runs,
+  records}` ([flyingrobots/parley#79](https://github.com/flyingrobots/parley/issues/79));
+- **a loss bound**, `loss.bound`, with the count of what was left out beside it, and
+  `loss.folded`, how many of those a fold rather than the budget left out.
 
 `loss.bound` is `none` when nothing in the window was left out — then `excluded` is `0`, and the
 schema refuses any other pairing — or `count-only` when the count is all that is known. `none` is

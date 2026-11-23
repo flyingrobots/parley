@@ -19,6 +19,7 @@
 // is sent anywhere.
 import { closeSync, mkdirSync, openSync, readdirSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
+import { sha256 } from "./inv.ts";
 import { stateBase } from "./location.ts";
 import { carriesSecret } from "./redact.ts";
 
@@ -53,6 +54,58 @@ export interface HistorySink {
    */
   append(line: string): void;
   close(): void;
+}
+
+/**
+ * A user-defined projection of one record for the stream copy (flyingrobots#57). It is handed the
+ * parsed record the receipt already holds, after §5.3 has replaced every declared secret, and
+ * returns a record to put on the stream or nothing to withhold the line. The envelope is not its
+ * to change: the writer reattaches `event`, `t`, `seq`, `run` and `_schema` afterwards and
+ * re-validates the returned body against the schema for that exact pair.
+ */
+export type HistoryTransform = (record: Record<string, unknown>) => Record<string, unknown> | undefined | null | void;
+
+/** `MainOptions.history` in its long form: the sink, the transform, and what to call it. */
+export interface HistoryConfig {
+  /** A sink to use instead of resolving one from the environment; `null` is no stream at all. */
+  readonly sink?: HistorySink | null;
+  /** The projection applied to the stream copy, and to nothing else. */
+  readonly transform?: HistoryTransform;
+  /** What the transform is called on the stream; its function name by default. */
+  readonly name?: string;
+}
+
+/** What the stream copy's opening line says about the projection that wrote it. */
+export interface HistoryProjection {
+  readonly name: string;
+  readonly sha256: string;
+  readonly fn: HistoryTransform;
+  /** Schema documents by `id@version`: this package's drafts and the tool's own declared types. */
+  readonly schemas: ReadonlyMap<string, Record<string, unknown>>;
+}
+
+/**
+ * The digest the stream names a projection by: SHA-256, hex, of the transform's source text as
+ * the runtime renders it (`fn.toString()`). That is honestly what it is — a digest of rendered
+ * source, not of a build — and it is enough to tell two projections apart and to pin which one
+ * wrote a copy. A function closing over different values has the same source and the same digest;
+ * name the configuration, not only the function, when that distinction matters.
+ */
+export function transformDigest(fn: HistoryTransform): string { return sha256(fn.toString()); }
+
+/** The transform's name: what the configuration called it, else the function's own name. */
+export function transformName(fn: HistoryTransform, given?: string): string {
+  const n = (given ?? fn.name ?? "").trim();
+  return n === "" ? "anonymous" : n;
+}
+
+export function historyProjection(cfg: { transform: HistoryTransform; name?: string }, schemas: ReadonlyMap<string, Record<string, unknown>>): HistoryProjection {
+  return { name: transformName(cfg.transform, cfg.name), sha256: transformDigest(cfg.transform), fn: cfg.transform, schemas };
+}
+
+/** Whether `MainOptions.history` was given a sink or the long form. */
+export function isHistorySink(h: HistorySink | HistoryConfig): h is HistorySink {
+  return typeof (h as HistorySink).append === "function";
 }
 
 export interface HistoryFailure { readonly code: "history.unavailable"; readonly problem: string; readonly remedy: string }

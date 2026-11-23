@@ -29,6 +29,29 @@ Capture stdout and stderr separately and pass the receipt the bootstrap line ann
 | R8 | §3.3 | `end.redacted` matches the receipt: the head's `redacted` or any `redaction` event. |
 | R9 | §5 | Every result, error and warning has a copy or a sidecar in the receipt. |
 
+## Reading a segment of the shared stream
+
+```text
+bun run doctor --history ~/.local/state/parley/history/2026-11-22.jsonl
+bun run doctor --history SEGMENT.jsonl --human
+```
+
+A segment of the shared history stream (spec §8, informative) is not one run's three streams: it
+interleaves whole runs from every tool on the machine, and a copy in it may be a **projection** of
+the receipt copy written through a history transform. So the questions are different, and the
+doctor answers those instead of the rules above:
+
+| Line | What it says |
+| --- | --- |
+| `doctor.projection` | This run's copy is a projection, by the named transform, whose source digests to `sha256`. Read off the run's `parley.history.transform` line |
+| `doctor.gap` | This run's copy does not carry this `seq`. A line withheld by a transform, or a record the writer stored beside the receipt — a `sidecar` event's `source` is accounted for and is not reported |
+| `doctor.segment` | The totals: lines, runs, projected runs, gaps, copies with no `end`, and lines that could not be parsed |
+
+A gap is not a violation: withholding a line is what a transform is for, and `passed` is false
+only when a line could not be parsed or could not be attributed to a run (§1.4, §1.3). Exit
+status is `0` when it passed and `1` when it did not. The receipt copy is the record; a projection
+is a view of it, which is why §8 tells a reader with both to prefer the least-projected one.
+
 ## What a pass establishes
 
 A conforming verdict means the captured run has the declared shapes and the lifecycle rules hold

@@ -11,16 +11,24 @@ import addFormats from "ajv-formats";
 import { readFileSync, existsSync } from "node:fs";
 import { loadSchemas } from "./check-examples.ts";
 
-export const OUTPUT_SCHEMA = { id: "parley.tooling.doctor", version: "1.0.0" } as const;
+export const OUTPUT_SCHEMA = { id: "parley.tooling.doctor", version: "1.1.0" } as const;
 export type Stream = "stdout" | "stderr" | "receipt";
-export interface Violation { event: "doctor.violation"; rule: string; section: string; stream: Stream; line: number; problem: string }
+/** A segment of the shared history stream (spec §8) is a fourth thing a line can come from. */
+export type Source = Stream | "history";
+export interface Violation { event: "doctor.violation"; rule: string; section: string; stream: Source; line: number; problem: string }
 export interface Summary { event: "doctor.summary"; passed: boolean; violations: number; lines: Record<Stream, number>; run: string | null; status: number | null; partial: number }
+/** A run whose copy in a segment is a projection, and what projected it (spec §8, informative). */
+export interface Projection { event: "doctor.projection"; run: string; name: string; sha256: string; line: number }
+/** A seq a run's copy in a segment does not carry: a withheld line, or one stored as a sidecar. */
+export interface Gap { event: "doctor.gap"; run: string; seq: number }
+export interface SegmentSummary { event: "doctor.segment"; passed: boolean; lines: number; runs: number; projected: number; gaps: number; torn: number; incomplete: number }
 export type Verdict = Violation | Summary;
+export type SegmentVerdict = Violation | Projection | Gap | SegmentSummary;
 
-interface Line { stream: Stream; n: number; raw: string; obj?: Record<string, unknown>; }
+interface Line { stream: Source; n: number; raw: string; obj?: Record<string, unknown>; }
 const ENVELOPE = ["event", "t", "seq", "run", "_schema"] as const;
 
-export function splitLines(stream: Stream, text: string): { lines: Line[]; unterminated: Line | null } {
+export function splitLines(stream: Source, text: string): { lines: Line[]; unterminated: Line | null } {
   // §1.4 and §5.4: a line is newline-terminated; a trailing fragment is not a line.
   const parts = text.split("\n");
   const last = parts.pop() ?? "";
@@ -35,7 +43,7 @@ function parse(l: Line): Record<string, unknown> | null {
 
 export function doctor(input: { stdout?: string; stderr?: string; receipt?: string; receiptPresent?: boolean }, schemasDir = "schemas"): Verdict[] {
   const out: Violation[] = [];
-  const V = (rule: string, section: string, stream: Stream, line: number, problem: string) => out.push({ event: "doctor.violation", rule, section, stream, line, problem });
+  const V = (rule: string, section: string, stream: Source, line: number, problem: string) => out.push({ event: "doctor.violation", rule, section, stream, line, problem });
   const index = loadSchemas(schemasDir);
   const ajv = new Ajv2020({ strict: false, allErrors: true }); addFormats(ajv);
   const compiled = new Map<string, ReturnType<typeof ajv.compile>>();
@@ -163,9 +171,63 @@ export function doctor(input: { stdout?: string; stderr?: string; receipt?: stri
   return [...out, summary];
 }
 
-export function stamp(v: Verdict) { return { ...v, _schema: OUTPUT_SCHEMA }; }
-function human(v: Verdict): string {
+/**
+ * Read one segment of the shared history stream (spec §8, informative) rather than one run's
+ * three streams. A segment interleaves whole runs from every tool on the machine, and a copy in
+ * it may be a **projection** of the receipt copy written through a history transform, so the
+ * questions are different: which runs are here, which of them are projected and by what, and
+ * which `seq` of each run the copy does not carry. A gap is not a violation — withholding a line
+ * is what a transform is for — so this reports and does not judge. An unparseable line is the one
+ * real defect, quarantined as §1.4 asks.
+ */
+export function inspectSegment(text: string): SegmentVerdict[] {
+  const out: SegmentVerdict[] = [];
+  const { lines, unterminated } = splitLines("history", text);
+  if (unterminated) out.push({ event: "doctor.violation", rule: "R1.unterminated", section: "§5.4", stream: "history", line: unterminated.n, problem: "final line has no newline; ignored as not written" });
+  let torn = 0;
+  const order: string[] = [];
+  const byRun = new Map<string, Line[]>();
+  for (const l of lines) {
+    if (l.raw.trim() === "") { torn++; out.push({ event: "doctor.violation", rule: "R1.blank", section: "§1.1", stream: "history", line: l.n, problem: "blank line" }); continue; }
+    const obj = parse(l);
+    if (!obj) { torn++; out.push({ event: "doctor.violation", rule: "R1.quarantined", section: "§1.4", stream: "history", line: l.n, problem: "not a JSON object; quarantined, not a protocol line" }); continue; }
+    l.obj = obj;
+    const run = typeof obj.run === "string" ? obj.run : "";
+    if (!run) { out.push({ event: "doctor.violation", rule: "R2.envelope", section: "§1.3", stream: "history", line: l.n, problem: "missing run; a line in a shared segment cannot be attributed" }); continue; }
+    if (!byRun.has(run)) { byRun.set(run, []); order.push(run); }
+    byRun.get(run)!.push(l);
+  }
+  let projected = 0, gaps = 0, incomplete = 0;
+  for (const run of order) {
+    const ls = byRun.get(run)!;
+    for (const l of ls) {
+      const o = l.obj!;
+      if (o.event !== "history.transform") continue;
+      projected++;
+      out.push({ event: "doctor.projection", run, name: String(o.name ?? ""), sha256: String(o.sha256 ?? ""), line: l.n });
+    }
+    const seqs = new Set(ls.map((l) => l.obj!.seq).filter((v): v is number => Number.isInteger(v)));
+    // A record stored beside the receipt reaches the stream as its `sidecar` event, so the seq it
+    // stood for is accounted for and is not a withheld line (§5).
+    const stored = new Set(ls.filter((l) => l.obj!.event === "sidecar").map((l) => l.obj!.source).filter((v): v is number => Number.isInteger(v)));
+    if (seqs.size) {
+      const lo = Math.min(...seqs), hi = Math.max(...seqs);
+      for (let seq = lo; seq <= hi; seq++) if (!seqs.has(seq) && !stored.has(seq)) { gaps++; out.push({ event: "doctor.gap", run, seq }); }
+    }
+    if (ls[ls.length - 1]!.obj!.event !== "end") incomplete++;
+  }
+  // A gap is not a defect — withholding a line is what a transform is for — so `passed` is about
+  // the violations: a line that does not parse, or one no run can be attributed to.
+  const summary: SegmentSummary = { event: "doctor.segment", passed: out.every((v) => v.event !== "doctor.violation"), lines: lines.length, runs: order.length, projected, gaps, torn, incomplete };
+  return [...out, summary];
+}
+
+export function stamp(v: Verdict | SegmentVerdict) { return { ...v, _schema: OUTPUT_SCHEMA }; }
+function human(v: Verdict | SegmentVerdict): string {
   if (v.event === "doctor.violation") return `${v.rule.padEnd(24)} ${v.section.padEnd(6)} ${v.stream}:${v.line}  ${v.problem}`;
+  if (v.event === "doctor.projection") return `PROJECTION  ${v.run}  ${v.name}  ${v.sha256.slice(0, 12)}…  (history:${v.line})`;
+  if (v.event === "doctor.gap") return `GAP         ${v.run}  seq ${v.seq} is not in this copy`;
+  if (v.event === "doctor.segment") return `${v.passed ? "SEGMENT" : "TORN"}     ${v.lines} line(s); ${v.runs} run(s), ${v.projected} projected, ${v.gaps} gap(s), ${v.incomplete} without end, ${v.torn} unparseable`;
   return `${v.passed ? "CONFORMS" : "VIOLATIONS"}  ${v.violations} violation(s); stdout ${v.lines.stdout}, stderr ${v.lines.stderr}, receipt ${v.lines.receipt} lines; run ${v.run ?? "-"}; status ${v.status ?? "-"}; ${v.partial} line(s) tool-owned or unvalidated`;
 }
 
@@ -174,8 +236,13 @@ if (import.meta.main) {
   const arg = (k: string) => { const i = a.indexOf(k); return i >= 0 ? a[i + 1] : undefined; };
   const write = (v: object, s: NodeJS.WriteStream) => s.write(JSON.stringify(v) + "\n");
   try {
-    const so = arg("--stdout"), se = arg("--stderr"), rc = arg("--receipt");
-    if (!so && !se) { write({ event: "error", code: "doctor.usage", problem: "usage: doctor --stdout FILE [--stderr FILE] [--receipt FILE] [--human]", _schema: OUTPUT_SCHEMA }, process.stderr); process.exit(2); }
+    const so = arg("--stdout"), se = arg("--stderr"), rc = arg("--receipt"), hi = arg("--history");
+    if (hi) {
+      const vs = inspectSegment(readFileSync(hi, "utf8"));
+      for (const v of vs) process.stdout.write((prose ? human(v) : JSON.stringify(stamp(v))) + "\n");
+      process.exit((vs[vs.length - 1] as SegmentSummary).passed ? 0 : 1);
+    }
+    if (!so && !se) { write({ event: "error", code: "doctor.usage", problem: "usage: doctor --stdout FILE [--stderr FILE] [--receipt FILE] [--human], or doctor --history SEGMENT.jsonl [--human]", _schema: OUTPUT_SCHEMA }, process.stderr); process.exit(2); }
     const input = { stdout: so ? readFileSync(so, "utf8") : undefined, stderr: se ? readFileSync(se, "utf8") : undefined, receipt: rc && existsSync(rc) ? readFileSync(rc, "utf8") : undefined, receiptPresent: rc ? existsSync(rc) : undefined };
     const vs = doctor(input);
     for (const v of vs) process.stdout.write((prose ? human(v) : JSON.stringify(stamp(v))) + "\n");

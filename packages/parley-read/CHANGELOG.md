@@ -10,6 +10,12 @@ its manifest so it cannot be published by accident.
 
 ### Added
 
+- `src/schemas.ts` re-synced from the repository drafts: the reader now ships seventeen, adding
+  `parley.history.transform` 1.0.0 (flyingrobots/parley#57), so a projected copy's opening line on
+  the shared stream validates against its exact pair rather than being reported as partial. No
+  reader behaviour changed and no schema moved; preferring the least-projected copy of a record is
+  flyingrobots/parley#58.
+
 - A read over the loaded records, `queryReceipts`, taking the representation decided in
   flyingrobots/parley#46: a read states an `asker`, a `view` and a `window`, and is **refused**
   without them. `asker.tool` is never invented (§2.1) and there is no privileged view to fall back

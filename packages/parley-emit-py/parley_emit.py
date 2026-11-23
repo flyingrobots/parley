@@ -1327,7 +1327,7 @@ def main(tool: Tool, argv: Sequence[str], handler: Callable[[Run, List[str]], An
     out_sink = stdout if stdout is not None else FdSink(1)
     err_sink = stderr if stderr is not None else FdSink(2)
     clock = now or _now_ms
-    state: Dict[str, Any] = {"run": None, "capture": None}
+    state: Dict[str, Any] = {"run": None, "capture": None, "location": None}
     try:
         return _main(tool, list(argv), handler, cwd, env, home, out_sink, err_sink, session, clock, inputs, resolved, state)
     except BaseException as e:  # the top-level handler: nothing escapes as plain text (spec 6)
@@ -1339,6 +1339,13 @@ def main(tool: Tool, argv: Sequence[str], handler: Callable[[Run, List[str]], An
                 return run.end()
             if run is not None:
                 return 4
+            location = state["location"]
+            if location is not None:  # reserved but never announced: a startup failure has no receipt (3.2)
+                try:
+                    os.close(location.fd)
+                except OSError:
+                    pass
+                _unlink_safe(location.receipt_path)
             line = {"event": "startup.failed", "t": max(0, int(clock())), "seq": 0, "run": ulid(), "tool": tool.name or "unknown", "v": tool.version or "unknown",
                     "code": "startup.writer_failed", "problem": f"the writer failed before the bootstrap line: {type(e).__name__}", "remedy": "this is a defect in parley_emit or in the tool's declaration; report it", "_schema": SCHEMA_IDS["startup_failed"]}
             err_sink.write(_dumps(line) + "\n")
@@ -1416,6 +1423,7 @@ def _main(tool: Tool, argv: List[str], handler: Callable[[Run, List[str]], Any],
     location = _choose_location(cwd, run_id, env, home, secret_values)
     if not isinstance(location, _Location):
         return fail(location["code"], location["problem"], location["remedy"])
+    state["location"] = location
 
     rest = [a for a in args if a != command_name]
     try:

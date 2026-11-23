@@ -2488,4 +2488,24 @@ describe("RD-80 a lens states each run it names once", () => {
       }
     }
   });
+
+  test("ten thousand run sections are built in one bounded pass", () => {
+    const records: LoadedRecord[] = [];
+    for (let i = 0; i < 10_000; i++) {
+      const run = runId(i);
+      records.push(loaded(run, 1, "receipt.head", T0 + i * 10, { tool: "t", v: "1", argv: ["t"] }));
+      records.push(loaded(run, 2, "receipt.step", T0 + i * 10 + 1));
+      records.push(loaded(run, 3, "end", T0 + i * 10 + 2, { status: 0 }));
+    }
+    const plan = planQuery({ asker: { tool: "t" }, view: "everything", window: WIDE, budget: { records: 30_000 } });
+    if (plan.refused) throw new Error("the plan was refused");
+    const ranking = rankRecords(plan.query, records);
+    const started = Date.now();
+    const digested = digestFor(plan.query, { run: runId(99_999), seq: 1 }, ranking.records, { run: runId(99_999), seq: 30, t: T0 }, ranking.outcomes);
+    const elapsed = Date.now() - started;
+    expect(digested.digest.runs.length).toBe(10_000);
+    // A section per run is found by an index over the window, not a scan of it per run. A scan
+    // per run took about 1.5 s here; the bound fails on that complexity, not on a noisy machine.
+    expect(elapsed).toBeLessThan(500);
+  }, 60_000);
 });

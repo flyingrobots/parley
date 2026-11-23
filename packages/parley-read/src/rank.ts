@@ -16,23 +16,31 @@
 //
 // The order is one total order on a key per record, compared left to right:
 //
-//   1. **the failure surface, when the view implies a change.** A read made in order to change
-//      something is a read made in order not to repeat a failure, so what failed goes first.
+//   1. **the failure surface of the runs that failed, when the view implies a change.** A read
+//      made in order to change something is a read made in order not to repeat a failure, so what
+//      failed goes first. A `warning` from a run the records do not establish as failed is not a
+//      failure (§6.1): it is placed by the view's own surface rule like any other record, so a
+//      history of runs that warned and went on cannot crowd the view's own surface out of a digest
+//      (flyingrobots/parley#76).
 //   2. **the view's own surface.** The records the view is an answer about, above the records it
 //      is not. This is §9's sentence, and for the identity view every record is on the surface, so
 //      the tier is empty of consequence.
 //   3. **`(t, run, seq)` ascending.** The order a read already answers in, so a view whose surface
 //      no record touches leaves the answer exactly as it was.
 //
-// A record's tier is a property of the record. A record's outcome is a property of its run, and it
-// is established from the records being ranked rather than from the whole history: a window that
+// A record's tier is a property of the record and, for the failure tier only, of its run's outcome.
+// A record's outcome is a property of its run, and it is established from the records being ranked rather than from the whole history: a window that
 // does not hold a run's `end` leaves that run `undetermined`, which §1.2a asks for — a reader must
 // not take one kind of evidence for another, and "no `end` in this window" is not "it succeeded".
 import type { LoadedRecord } from "./load.ts";
 import type { AcceptedQuery, View } from "./query.ts";
 import { PROTOCOL_PREFIX } from "./validate.ts";
 
-/** The three tiers, best first. A tier is a property of the record, not of its run. */
+/**
+ * The three tiers, best first. A tier is a property of the record, except that the `failure` tier
+ * holds a failure-surface record only when its run failed: an `error`, a `startup.failed` and a
+ * non-zero `end` make their run a failed one, so that condition binds only a `warning`.
+ */
 export const TIERS = ["failure", "surface", "other"] as const;
 export type Tier = (typeof TIERS)[number];
 
@@ -60,7 +68,7 @@ export type Outcome = (typeof OUTCOMES)[number];
  */
 export const CHANGE_VIEWS: ReadonlySet<View> = new Set<View>(["what-changed"]);
 
-/** True when the view is an answer about a change, so failures rank above successes. */
+/** True when the view is an answer about a change, so the failed runs' failures rank above everything else. */
 export function impliesChange(view: View): boolean {
   return CHANGE_VIEWS.has(view);
 }
@@ -111,7 +119,11 @@ function endedBadly(record: LoadedRecord): boolean {
   return record.event === "end" && typeof record.record.status === "number" && record.record.status !== 0;
 }
 
-/** On the failure surface: an error, a startup failure, a warning, or an `end` that did not succeed. */
+/**
+ * On the failure surface: an error, a startup failure, a warning, or an `end` that did not succeed.
+ * This is `what-failed`'s surface, which a warning is on. It is not, on its own, the change-view
+ * promotion: `rankRecords` promotes a failure-surface record only when its run failed.
+ */
 export function onFailureSurface(record: LoadedRecord): boolean {
   if (record.event !== null && FAILURE_EVENTS.has(record.event)) return true;
   return endedBadly(record);
@@ -178,7 +190,7 @@ export interface Ranked {
 
 export interface Ranking {
   readonly view: View;
-  /** True when the view is an answer about a change, so the failure surface and failed runs rank first. */
+  /** True when the view is an answer about a change, so the failed runs' failure surface ranks first and failed runs lead each tier. */
   readonly impliesChange: boolean;
   /**
    * Every record given, reordered. Never a subset as `rankRecords` returns it: ranking reorders
@@ -223,9 +235,12 @@ export function rankRecords(query: RankQuery, records: readonly LoadedRecord[]):
   const outcomes = runOutcomes(records);
 
   const keyed = records.map((record, index) => {
-    const failure = onFailureSurface(record);
-    const tier: Tier = promotes && failure ? "failure" : onViewSurface(view, record) ? "surface" : "other";
     const outcome = outcomes[record.run] ?? "undetermined";
+    // Promoted only with its run's failure. Every error, startup failure and non-zero end is in a
+    // failed run by `runOutcomes`' own rule, so this excludes exactly the warnings of runs the
+    // records do not establish as failed — a recovered condition, not a failure (§6.1).
+    const failure = onFailureSurface(record);
+    const tier: Tier = promotes && failure && outcome === "failed" ? "failure" : onViewSurface(view, record) ? "surface" : "other";
     return {
       record,
       index,
@@ -236,6 +251,8 @@ export function rankRecords(query: RankQuery, records: readonly LoadedRecord[]):
       // carries the same outcome key and the tier falls straight through to time.
       outcomeIndex: promotes ? OUTCOMES.indexOf(outcome) : 0,
       t: typeof record.t === "number" ? record.t : UNDATED,
+      // On the failure surface under a change view and still not promoted: a warning of a run that went on.
+      demoted: promotes && failure && tier !== "failure",
     };
   });
 
@@ -252,7 +269,7 @@ export function rankRecords(query: RankQuery, records: readonly LoadedRecord[]):
     rank: i + 1,
     tier: entry.tier,
     outcome: entry.outcome,
-    why: why(view, promotes, entry.tier, entry.outcome, entry.t === UNDATED),
+    why: why(view, promotes, entry.tier, entry.outcome, entry.t === UNDATED, entry.demoted),
   }));
 
   const runs = Object.values(outcomes);
@@ -273,11 +290,13 @@ export function rankRecords(query: RankQuery, records: readonly LoadedRecord[]):
   };
 }
 
-function why(view: View, promotes: boolean, tier: Tier, outcome: Outcome, undated: boolean): string[] {
+function why(view: View, promotes: boolean, tier: Tier, outcome: Outcome, undated: boolean, demoted: boolean): string[] {
   const reasons: string[] = [];
   if (tier === "failure") reasons.push(`on the failure surface, and ${view} is an answer about a change`);
-  else if (tier === "surface") reasons.push(`touches the ${view} surface`);
-  else reasons.push(`off the ${view} surface`);
+  else {
+    if (demoted) reasons.push("a warning, and its run is not established as failed, so it is placed by the view's surface (§6.1)");
+    reasons.push(tier === "surface" ? `touches the ${view} surface` : `off the ${view} surface`);
+  }
   if (promotes) {
     reasons.push(outcome === "failed"
       ? "its run failed"

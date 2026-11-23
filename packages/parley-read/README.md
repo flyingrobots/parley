@@ -253,8 +253,10 @@ can see it is not the whole without being handed what it cut.
 Spec §9: the purpose shapes the result, and it is the **ranking function** rather than a filter
 applied afterwards. One total order on a key per record, compared left to right:
 
-1. **the failure surface**, when the view is an answer about a change — a read made in order to
-   change something is a read made in order not to repeat a failure;
+1. **the failure surface of the runs that failed**, when the view is an answer about a change — a
+   read made in order to change something is a read made in order not to repeat a failure. A
+   `warning` from a run that went on is not a failure (§6.1) and is placed by the view's own
+   surface instead;
 2. **the view's own surface** — the records the view is about, above the records it is not;
 3. **`(t, run, seq)` ascending** — so a view whose surface no record touches leaves the answer
    exactly as it was.
@@ -419,6 +421,7 @@ for (const o of opened.opened) console.log(o.outcome, o.record?.record, o.bundle
 | Outcome | Means |
 | --- | --- |
 | `opened` | The record, in full. A record stored in a sidecar comes back with its contents, checked against the declared `sha256`; opening the `sidecar` event itself brings the record it holds as `held` |
+| `over_budget` | Only under `budget.bytes`: the record would pass the bound, so its size is named in `bytes` and no part of it is returned |
 | `sidecar_unavailable` | The sidecar's stored bytes are missing, mismatched, unreadable or unchecked: the pointer is returned and the contents are not claimed |
 | `run_not_found`, `seq_not_found` | Which half of the id did not resolve, with a remedy |
 
@@ -426,6 +429,14 @@ Every id whose run resolved carries the loader's replay ruling, so the `error` o
 opens and says its bundle is unavailable for replay. A drill-down is recorded as a `parley.query`
 carrying `records`, so the next reader can see what was opened; it is refused without an asker, a
 view, a window and at least one id, and then writes nothing.
+
+A drill-down may state `budget: { bytes }`. Records open whole, in the order asked, while their
+summed size (UTF-8 bytes of each record's JSON as returned, sidecar contents included) stays within
+the bound; each later id is judged against what remains, so a small record after an over-budget one
+may still open. Every id past the bound is `over_budget` with its size and no contents, never a
+truncated record. Not-found and `sidecar_unavailable` outcomes cost nothing. The recorded
+`parley.query` carries the bound applied. The full rules are in
+[the reader page](../../docs/topics/parley-read/README.md#a-byte-bound).
 
 ## Surface
 

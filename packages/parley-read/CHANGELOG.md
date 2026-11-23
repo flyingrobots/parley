@@ -10,12 +10,25 @@ its manifest so it cannot be published by accident.
 
 ### Added
 
+<<<<<<< HEAD
 - **A summary beside each record a digest names** (flyingrobots/parley#77). Each `parley.lens`
   entry now carries the record's `event` and `t` as the loader read them and the `outcome` the
   ranking established for its run over the whole window, each absent when the record does not
   carry it. `lensEntry(record, outcomes?)` builds one; `digestFor` takes the ranking's `outcomes`
   as a fifth argument and `queryReceipts` passes them. The summary counts against `budget.bytes`:
   under `{records: 20, bytes: 2048}` a digest that named 20 records now names 15 or 16 (RD-22b).
+||||||| b985111
+=======
+- **A byte budget for the drill-down** (flyingrobots/parley#78): `openRecords` accepts
+  `budget: { bytes }`. Records open whole, in the order asked, while their summed size (UTF-8 bytes
+  of each record's JSON as returned, sidecar contents included) stays within the bound; every id
+  past it is a new `over_budget` outcome carrying `bytes` and no contents, never a truncated
+  record. Each id is judged against what remains, so a small record after an over-budget one may
+  still open; not-found and `sidecar_unavailable` outcomes cost nothing. The recorded
+  `parley.query` and the answer's `budget` carry the bound applied; `counts.overBudget` is new.
+  `recordBytes`, `openedBytes` and `applyBudget` are exported. A malformed bound is refused
+  `query.budget_invalid`.
+>>>>>>> origin/main
 - **The drill-down**, `openRecords(request, opts)` (flyingrobots/parley#51): records by the
   `(run, seq)` pairs a `parley.lens` names, each in full, in the order asked, with exactly one
   outcome per id — `opened`, `sidecar_unavailable`, `run_not_found` or `seq_not_found` — and never
@@ -178,3 +191,18 @@ its manifest so it cannot be published by accident.
   and with `sidecars: false` a sidecar is reported `unchecked` rather than `intact`, since nothing
   about its stored bytes was established (§1.2a), which also rules replay out.
 - The sixteen draft schemas at the pinned commit, with a test that they match the repository.
+
+### Fixed
+
+- **Under `what-changed`, a warning no longer outranks every result** (flyingrobots/parley#76).
+  The change-view promotion put the whole failure surface in the `failure` tier, warnings included,
+  so a history of runs that warned and went on filled a digest with warnings and named none of the
+  view's own surface: on 50 real footprint receipts, every one of the 20 records a default
+  `what-changed` read named was an error, a non-zero `end` or a warning, and no result was among
+  them. The tier now holds **the failure surface of the runs that failed**. A `warning` from a run
+  the ranked records do not establish as failed, whether it succeeded or its outcome is
+  `undetermined`, is placed by the view's own surface rule (§6.1, §1.2a), and its `why` says so.
+  Errors, startup failures and non-zero ends still rank first, a failed run's warning ranks with
+  them, and `what-failed` keeps every warning on its surface. `onFailureSurface` is unchanged. No
+  schema moved and `spec/` is untouched. RD-18e's oracle changed with the rule; RD-40a to RD-40d
+  are new.

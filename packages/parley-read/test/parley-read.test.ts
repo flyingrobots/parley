@@ -10,6 +10,7 @@ import {
   SCHEMA_SOURCE,
   VIEWS,
   loadReceipts,
+  onFailureSurface,
   digestBytes,
   digestFor,
   digestLine,
@@ -1297,15 +1298,103 @@ describe("RD-18 a purpose that implies a change puts the failures first", () => 
     expect(placed(answer, runId(3), 1).why.join(" ")).toContain("not established");
   });
 
-  test("a warning is on the failure surface and does not make its run a failed one", async () => {
+  test("a warning in a run that succeeded is not promoted and does not make its run a failed one", async () => {
     const { dir, env } = scratch();
     richReceipt(repoReceipts(dir), runId(1), T0 - DAY, "warned");
     const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "what-changed", window: WIDE }, { cwd: dir, env }));
     expect(placed(answer, runId(1), 3).record.event).toBe("warning");
-    expect(placed(answer, runId(1), 3).tier).toBe("failure");
-    expect(ids(answer.records)[0]).toBe(`${runId(1)}:3`);
+    // off what-changed's surface, and its run went on (§6.1), so the view's own rule places it
+    expect(placed(answer, runId(1), 3).tier).toBe("other");
+    expect(ids(answer.records)[0]).toBe(`${runId(1)}:4`);
+    expect(at(answer, runId(1), 4)).toBeLessThan(at(answer, runId(1), 3));
+    expect(answer.ranking.counts.failure).toBe(0);
     expect(answer.ranking.outcomes[runId(1)]).toBe("succeeded");
     expect(answer.ranking.counts.failedRuns).toBe(0);
+    expect(answer.records.length).toBe(5);
+  });
+});
+
+describe("RD-40 under a change view a warning ranks with its run's failure", () => {
+  /** A run that warned, then either went on to a result and an end of 0 or failed with an error and status 2. */
+  const warnedRun = (dir: string, run: string, at: number, fate: "succeeded" | "failed" | "cut") => {
+    const path = join(dir, `${run}.jsonl`);
+    const lines: object[] = [
+      { ...head(run), t: at },
+      { event: "warning", t: at + 1, seq: 2, run, code: "graft.review_failed", problem: "graft is not answering", _schema: { id: "parley.warning", version: "1.0.0" } },
+    ];
+    if (fate === "failed") {
+      lines.push({ event: "error", t: at + 2, seq: 3, run, code: "count.unreadable", problem: "it failed", _schema: { id: "parley.error", version: "2.0.0" } });
+    } else {
+      lines.push({ ...toolResult(run, 3), t: at + 2 });
+    }
+    lines.push({ ...end(run, 4, path, { status: fate === "failed" ? 2 : 0 }), t: fate === "cut" ? T0 + 10 * DAY : at + 3 });
+    return writeReceipt(dir, run, lines);
+  };
+  const read = async (dir: string, env: Record<string, string>, view: string, window = WIDE, budget?: { records: number }) =>
+    answered(await queryReceipts({ asker: { tool: "t" }, view, window, ...(budget ? { budget } : {}) }, { cwd: dir, env }));
+
+  test("a history of runs that warned and went on still names the change surface first", async () => {
+    const { dir, env } = scratch();
+    const receipts = repoReceipts(dir);
+    for (let i = 0; i < 25; i++) warnedRun(receipts, runId(i), T0 - (25 - i) * DAY, "succeeded");
+    const answer = await read(dir, env, "what-changed", { from: 0, to: T0 + 1000 }, { records: 20 });
+    expect(answer.counts.inWindow).toBe(100);
+    expect(answer.digest.records.length).toBe(20);
+    expect(answer.records.map((r) => r.event)).toEqual(Array(20).fill("result"));
+    expect(answer.records.some((r) => r.event === "warning")).toBe(false);
+    expect(answer.ranking.counts.failure).toBe(0);
+    expect(answer.digest.loss).toEqual({ bound: "count-only", excluded: 80 });
+  });
+
+  test("a failed run's warning is promoted with its failure and a succeeded run's is not", async () => {
+    const { dir, env } = scratch();
+    const receipts = repoReceipts(dir);
+    const [failed, ok] = [runId(1), runId(2)];
+    warnedRun(receipts, failed, T0 - 2 * DAY, "failed");
+    warnedRun(receipts, ok, T0 - DAY, "succeeded");
+    const answer = await read(dir, env, "what-changed");
+    // errors and non-zero ends still rank first, and the failed run's warning goes with them
+    expect(ids(answer.records).slice(0, 3)).toEqual([`${failed}:2`, `${failed}:3`, `${failed}:4`]);
+    expect(answer.records.slice(0, 3).map((r) => r.event)).toEqual(["warning", "error", "end"]);
+    expect(answer.ranking.ranked.slice(0, 3).every((r) => r.tier === "failure")).toBe(true);
+    expect(answer.ranking.counts.failure).toBe(3);
+    // the succeeded run's result is the view's surface and ranks above its own warning
+    expect(placed(answer, ok, 3).tier).toBe("surface");
+    expect(placed(answer, ok, 2).tier).toBe("other");
+    expect(at(answer, ok, 3)).toBeLessThan(at(answer, ok, 2));
+    expect(placed(answer, ok, 2).why.join(" ")).toContain("not established as failed");
+    expect(answer.records.length).toBe(8);
+  });
+
+  test("a warning in a run whose outcome is undetermined is not promoted", async () => {
+    const { dir, env } = scratch();
+    const receipts = repoReceipts(dir);
+    const [cut, ok] = [runId(1), runId(2)];
+    warnedRun(receipts, cut, T0 - 2 * DAY, "cut");
+    warnedRun(receipts, ok, T0 - DAY, "succeeded");
+    const answer = await read(dir, env, "what-changed", { from: 0, to: T0 });
+    expect(answer.ranking.outcomes[cut]).toBe("undetermined");
+    expect(placed(answer, cut, 2).tier).toBe("other");
+    expect(answer.ranking.counts.failure).toBe(0);
+    // within its tier, an undetermined run still ranks above a run known to have succeeded
+    expect(at(answer, cut, 2)).toBeLessThan(at(answer, ok, 2));
+    expect(answer.records.length).toBe(7);
+  });
+
+  test("what-failed keeps every warning on its surface", async () => {
+    const { dir, env } = scratch();
+    const receipts = repoReceipts(dir);
+    const [failed, ok] = [runId(1), runId(2)];
+    warnedRun(receipts, failed, T0 - 2 * DAY, "failed");
+    warnedRun(receipts, ok, T0 - DAY, "succeeded");
+    const answer = await read(dir, env, "what-failed");
+    expect(placed(answer, failed, 2).tier).toBe("surface");
+    expect(placed(answer, ok, 2).tier).toBe("surface");
+    const surface = answer.ranking.ranked.filter((r) => r.tier === "surface");
+    expect(surface.map((r) => r.record.event)).toEqual(["warning", "error", "end", "warning"]);
+    expect(Math.max(...surface.map((r) => r.rank))).toBe(surface.length);
+    expect(onFailureSurface(placed(answer, ok, 2).record)).toBe(true);
+    expect(answer.records.length).toBe(8);
   });
 });
 

@@ -144,7 +144,7 @@
           }
         }
       },
-      "description": "Present only on a drill-down: the records the read asks for by (run, seq), the identity a parley.lens names them by, in the order asked (flyingrobots/parley#51). A drill-down answers with exactly these records in full, a sidecar's stored record included, and an outcome per id; the view and window are recorded and select nothing, and budget.records is the number of ids asked. Absent on a read that answers with a digest."
+      "description": "Present only on a drill-down: the records the read asks for by (run, seq), the identity a parley.lens names them by, in the order asked (flyingrobots/parley#51). A drill-down answers with exactly these records in full, a sidecar's stored record included, and an outcome per id; the view and window are recorded and select nothing, budget.records is the number of ids asked, and budget.bytes, when stated, bounds the records opened: whole records in the order asked while their summed size stays within it, and an over_budget outcome with no contents for each id past it (flyingrobots/parley#78). Absent on a read that answers with a digest."
     },
     "_schema": {
       "type": "object",

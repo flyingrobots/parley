@@ -145,7 +145,7 @@ export interface QueryAnswer {
   readonly note?: string;
   /**
    * The records the digest names, in full: the window ordered by the view — the failure surface
-   * first when the view implies a change, then the view's own surface, then `(t, run, seq)`
+   * of the runs that failed first when the view implies a change, then the view's own surface, then `(t, run, seq)`
    * ascending — and cut at the budget. Never more than `budget.records` of them, and fewer when a
    * stated `budget.bytes` cuts first. What the bound left out is `counts.excluded`; it is named
    * nowhere, so reaching it is a wider read, not a drill-down.

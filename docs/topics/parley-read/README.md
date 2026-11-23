@@ -457,8 +457,8 @@ later reader sees which records were opened as well as which questions were aske
 
 A refused drill-down writes nothing, like a refused read. The **view and window select nothing**:
 an id is opened by identity whatever its `t`, and the view is recorded as the purpose the records
-were opened for. `budget` is not taken from the caller; the recorded budget is `{"records": n}` for
-`n` ids asked, which is the bound the ids already are. A drill-down emits no `parley.lens`: it
+were opened for. The recorded budget is `{"records": n}` for `n` ids asked, which is the bound the ids already
+are, plus `bytes` when the caller states [a byte bound](#a-byte-bound). A drill-down emits no `parley.lens`: it
 answers with records, not a digest, and has no loss to state.
 
 ### One outcome per id
@@ -469,9 +469,33 @@ twice. Nothing about one id can lose the others, and nothing throws:
 | Outcome | Means | Carries |
 | --- | --- | --- |
 | `opened` | The record is there | `record` in full; `sidecar` when the record was restored from one; `held`, the stored record in full, when the id names the `sidecar` event itself |
+| `over_budget` | The record is there but opening it would pass the caller's `budget.bytes` | `bytes`, the size it would have occupied, `problem`, `remedy` and the bundle's ruling. **No record and no part of one** |
 | `sidecar_unavailable` | The id is a `sidecar` event or the record one holds, and the stored bytes could not be established: `missing`, `digest_mismatch`, `bytes_mismatch`, `escapes_bundle`, `unparseable`, `unreadable`, or `unchecked` when resolution was off | `record` is the pointer and only the pointer, `sidecar` with the declared and actual digests, `problem` and `remedy`. The contents are never claimed |
 | `run_not_found` | No receipt in either location holds that run | `problem` and `remedy` |
 | `seq_not_found` | The run is there and holds no record at that `seq` | `problem`, `remedy` and the bundle's ruling |
+
+### A byte bound
+
+A drill-down may state `budget.bytes` (a positive integer; anything else is refused
+`query.budget_invalid` and writes nothing). A record is **whole or absent**: there is no truncated
+record, because a partial record read as whole is the §1.2a mistake. The rules:
+
+- **Size** is the UTF-8 bytes of the record's JSON exactly as the drill-down returns it
+  (`recordBytes`: `JSON.stringify` of the loaded record, envelope fields included). A record stored
+  in a sidecar is sized by its contents, since the loader has restored them into it; opening the
+  `sidecar` event itself returns the pointer and `held`, and both count, so the pointer is no way
+  past the bound.
+- **Order and remainder.** Each id is judged in the order asked against what remains: it opens if
+  the running total plus its size is within the bound (the bound is inclusive), else it is
+  `over_budget`. An over-budget id spends nothing, so a small record asked after it may still
+  open. The answer keeps one outcome per id, in order, and nothing is skipped silently.
+- **What costs nothing.** Only `opened` outcomes spend budget. `run_not_found`, `seq_not_found` and
+  `sidecar_unavailable` return no contents (a broken sidecar returns the pointer, which is
+  diagnosis, not contents) and keep their own outcome under any bound.
+- **Recorded.** The `parley.query` carries `{"records": n, "bytes": b}`, the budget actually
+  applied, the answer states it as `budget`, `counts.overBudget` counts the refused ids and the
+  `receipt.step` carries `over_budget`. A caller who gets `over_budget` asks for that id again
+  alone or under a larger bound.
 
 The sidecar's stored bytes are checked by the loader against the `bytes` and `sha256` the receipt
 declared before the record is restored (§5); the drill-down reports that resolution rather than
@@ -504,7 +528,7 @@ in hand, so the same records under the same view come back in the same order eve
 
 | | Key | Smaller ranks first | Why |
 | --- | --- | --- | --- |
-| 1 | **tier** | `failure`, `surface`, `other` | A record on the failure surface is in the `failure` tier **only when the view implies a change**; otherwise it is placed by the view's own surface like any other record |
+| 1 | **tier** | `failure`, `surface`, `other` | A record on the failure surface is in the `failure` tier **only when the view implies a change and its run failed**; otherwise it is placed by the view's own surface like any other record. An `error`, a `startup.failed` and a non-zero `end` always make their run a failed one, so the condition on the run binds only a `warning` |
 | 2 | **outcome** | `failed`, `undetermined`, `succeeded` | What the ranked records establish about the record's run, and **only when the view implies a change**. Otherwise every record carries the same outcome key and the tier falls straight through to time |
 | 3 | **`t`**, then **`run`**, then **`seq`** | ascending | The order a read answered in before there was a ranking, so a view whose surface no record touches leaves the answer exactly as it was. A record with no usable `t` sorts last within its tier |
 
@@ -561,6 +585,22 @@ reader not to take one kind of evidence for another, and "no `end` in this windo
 ended well". A `warning` is on the failure surface, because that is what `what-failed` is an answer
 about, and it does not make its run a failed one — §6.1 makes it a warning precisely because the
 run went on.
+
+### Where a warning ranks under a change view
+
+A view that implies a change promotes **the failure surface of the runs that failed**, not the
+failure surface as a whole. A `warning` goes into the `failure` tier only when the records being
+ranked establish that its run failed; a warning from a run that succeeded, or whose outcome is
+`undetermined`, is placed by the view's own surface rule like any other record. `what-changed`'s
+surface does not hold a `warning`, so there it falls to the `other` tier, below the view's own
+results, and its `why` says it is a warning whose run is not established as failed.
+
+That is what keeps a history of runs that warned and went on from crowding the view's surface out
+of a digest ([flyingrobots/parley#76](https://github.com/flyingrobots/parley/issues/76)): 25 runs
+that each warn and emit one result, read under `what-changed` with a budget of 20, name 20 results
+and count the 25 warnings among the excluded. An `undetermined` run's warning is not promoted
+either, because a missing `end` is not evidence that the run failed (§1.2a); within its tier it
+still ranks above a succeeded run's. `what-failed` is unaffected: every warning is on its surface.
 
 ### What the ranking is not
 

@@ -136,7 +136,7 @@ describe("RD-30 a drill-down opens records by identity, in full", () => {
       expect(recordOf(o).record).toEqual(loadedAt(dir, env, o.id.run, o.id.seq).record);
     }
     expect((recordOf(answer.opened[0]!).record as { decision: string }).decision).toBe("third");
-    expect(answer.counts).toEqual({ asked: 3, opened: 3, sidecarUnavailable: 0, runNotFound: 0, seqNotFound: 0 });
+    expect(answer.counts).toEqual({ asked: 3, opened: 3, sidecarUnavailable: 0, runNotFound: 0, seqNotFound: 0, overBudget: 0 });
   });
 
   test("every id a digest names opens to the record the read answered with", async () => {
@@ -262,7 +262,7 @@ describe("RD-32 an id that does not resolve, and a bundle that cannot be replaye
     }
     expect(answer.opened[0]!.bundle).toBeUndefined();
     expect(answer.opened[1]!.bundle!.terminated).toBe(true);
-    expect(answer.counts).toEqual({ asked: 3, opened: 1, sidecarUnavailable: 0, runNotFound: 1, seqNotFound: 1 });
+    expect(answer.counts).toEqual({ asked: 3, opened: 1, sidecarUnavailable: 0, runNotFound: 1, seqNotFound: 1, overBudget: 0 });
   });
 
   test("a record whose bundle is unavailable for replay still opens and says so", async () => {
@@ -396,4 +396,151 @@ describe("RD-34 every id a real digest names opens", () => {
       expect(recordOf(o).validation.state).toBe(loaded.validation.state);
     }
   }, 60_000);
+});
+
+// ---- RD-60 ------------------------------------------------------------------------------------
+
+/** The size a record has as returned: the UTF-8 bytes of its JSON, the definition the module states. */
+const sizeOf = (r: LoadedRecord | undefined): number => (r === undefined ? 0 : Buffer.byteLength(JSON.stringify(r), "utf8"));
+const costOf = (o: Opened): number => sizeOf(o.record) + sizeOf(o.held);
+
+/** Head, three large results (seq 2 to 4, about 6 KB each), a small step at 5, end at 6. */
+function bigResults(dir: string, run = RUN_A): string {
+  const path = join(dir, `${run}.jsonl`);
+  const big = (seq: number) => toolResult(run, seq, { report: `${"r".repeat(6000)}${seq}` });
+  return writeReceipt(dir, run, [head(run), big(2), big(3), big(4), step(run, 5, "small"), end(run, 6, path)]);
+}
+
+const ask = (records: { run: string; seq: number }[], bytes?: number) => ({
+  asker: ASKER, view: "how-it-decided" as const, window: WIDE, records,
+  ...(bytes === undefined ? {} : { budget: { bytes } }),
+});
+
+describe("RD-60 a byte budget on the drill-down: whole records up to the bound, over_budget past it", () => {
+  test("a bound that fits two of three large records opens two and refuses the third", async () => {
+    const { dir, env } = scratch();
+    bigResults(repoReceipts(dir));
+    const ids = [2, 3, 4].map((seq) => ({ run: RUN_A, seq }));
+    const each = sizeOf(loadedAt(dir, env, RUN_A, 2));
+    const answer = opened(await openRecords(ask(ids, each * 2 + 100), { cwd: dir, env }));
+    expect(kinds(answer)).toEqual(["opened", "opened", "over_budget"]);
+    const [a, b, c] = answer.opened;
+    expect(recordOf(a!)).toEqual(loadedAt(dir, env, RUN_A, 2));
+    expect(recordOf(b!)).toEqual(loadedAt(dir, env, RUN_A, 3));
+    expect(c!.bytes).toBe(sizeOf(loadedAt(dir, env, RUN_A, 4)));
+    expect(c!.record).toBeUndefined();
+    expect(c!.held).toBeUndefined();
+    expect(c!.problem).toContain("budget");
+    expect(c!.remedy).toBeTruthy();
+    expect(c!.bundle?.terminated).toBe(true);
+    expect(answer.counts).toEqual({ asked: 3, opened: 2, sidecarUnavailable: 0, runNotFound: 0, seqNotFound: 0, overBudget: 1 });
+  });
+
+  test("the bound is inclusive", async () => {
+    const { dir, env } = scratch();
+    bigResults(repoReceipts(dir));
+    const ids = [2, 3].map((seq) => ({ run: RUN_A, seq }));
+    const total = sizeOf(loadedAt(dir, env, RUN_A, 2)) + sizeOf(loadedAt(dir, env, RUN_A, 3));
+    expect(kinds(opened(await openRecords(ask(ids, total), { cwd: dir, env })))).toEqual(["opened", "opened"]);
+    expect(kinds(opened(await openRecords(ask(ids, total - 1), { cwd: dir, env })))).toEqual(["opened", "over_budget"]);
+  });
+
+  test("a bound smaller than the first record refuses it and still opens a later small one", async () => {
+    const { dir, env } = scratch();
+    bigResults(repoReceipts(dir));
+    const ids = [{ run: RUN_A, seq: 2 }, { run: RUN_A, seq: 5 }];
+    const small = sizeOf(loadedAt(dir, env, RUN_A, 5));
+    const answer = opened(await openRecords(ask(ids, small + 10), { cwd: dir, env }));
+    expect(kinds(answer)).toEqual(["over_budget", "opened"]);
+    expect(answer.opened.map((o) => o.id)).toEqual(ids);
+    expect(answer.opened[0]!.bytes).toBeGreaterThan(small + 10);
+  });
+
+  test("a sidecar record is sized by its contents", async () => {
+    const { dir, env } = scratch();
+    withSidecar(repoReceipts(dir));
+    const rec = loadedAt(dir, env, RUN_A, 2);
+    const contents = sizeOf(rec);
+    expect(contents).toBeGreaterThan(100);
+    const byRecord = [{ run: RUN_A, seq: 2 }];
+    const below = opened(await openRecords(ask(byRecord, contents - 1), { cwd: dir, env }));
+    expect(kinds(below)).toEqual(["over_budget"]);
+    expect(below.opened[0]!.bytes).toBe(contents);
+    expect(kinds(opened(await openRecords(ask(byRecord, contents), { cwd: dir, env })))).toEqual(["opened"]);
+    // The pointer is not a way past the bound: it is sized by the record as returned plus what it holds.
+    const byPointer = [{ run: RUN_A, seq: 3 }];
+    const full = opened(await openRecords(ask(byPointer), { cwd: dir, env })).opened[0]!;
+    const cost = costOf(full);
+    expect(cost).toBeGreaterThan(contents);
+    const refused = opened(await openRecords(ask(byPointer, cost - 1), { cwd: dir, env })).opened[0]!;
+    expect(refused.outcome).toBe("over_budget");
+    expect(refused.bytes).toBe(cost);
+    expect(refused.held).toBeUndefined();
+    expect(kinds(opened(await openRecords(ask(byPointer, cost), { cwd: dir, env })))).toEqual(["opened"]);
+  });
+
+  test("outcomes that return no contents cost nothing", async () => {
+    const { dir, env } = scratch();
+    withSidecar(repoReceipts(dir), RUN_A);
+    bigResults(repoReceipts(dir), RUN_B);
+    rmSync(resolve(repoReceipts(dir), `${RUN_A}/2.json`));
+    const rec = loadedAt(dir, env, RUN_B, 2);
+    const ids = [{ run: RUN_C, seq: 1 }, { run: RUN_B, seq: 99 }, { run: RUN_A, seq: 2 }, { run: RUN_B, seq: 2 }];
+    const answer = opened(await openRecords(ask(ids, sizeOf(rec)), { cwd: dir, env }));
+    expect(kinds(answer)).toEqual(["run_not_found", "seq_not_found", "sidecar_unavailable", "opened"]);
+  });
+
+  test("a record is never cut part-way", async () => {
+    const { dir, env } = scratch();
+    bigResults(repoReceipts(dir));
+    const ids = [2, 3, 4, 5].map((seq) => ({ run: RUN_A, seq }));
+    for (const bytes of [1, 5000, 6500, 13000, 20000, 25000]) {
+      const answer = opened(await openRecords(ask(ids, bytes), { cwd: dir, env }));
+      let used = 0;
+      for (const o of answer.opened) {
+        if (o.outcome === "opened") {
+          expect(recordOf(o)).toEqual(loadedAt(dir, env, o.id.run, o.id.seq));
+          used += costOf(o);
+        } else {
+          expect(o.outcome).toBe("over_budget");
+          expect(o.record).toBeUndefined();
+          expect(o.held).toBeUndefined();
+          expect(o.bytes).toBe(sizeOf(loadedAt(dir, env, o.id.run, o.id.seq)));
+        }
+      }
+      expect(used).toBeLessThanOrEqual(bytes);
+    }
+  });
+
+  test("the recorded budget is the one applied", async () => {
+    const { dir, env } = scratch();
+    bigResults(repoReceipts(dir));
+    const ids = [2, 3, 4].map((seq) => ({ run: RUN_A, seq }));
+    const answer = opened(await openRecords(ask(ids, 7000), { cwd: dir, env }));
+    expect(answer.budget).toEqual({ records: 3, bytes: 7000 });
+    const own = loadReceipts({ cwd: dir, env }).bundles.find((b) => b.run === answer.run)!;
+    const q = own.records.find((r) => r.event === "query")!;
+    expect(q.validation.state).toBe("validated");
+    expect((q.record as { budget: unknown }).budget).toEqual({ records: 3, bytes: 7000 });
+    const steps = own.records.filter((r) => r.event === "receipt.step").map((r) => r.record as { detail?: Record<string, unknown> });
+    expect(steps.some((s) => s.detail?.opened === 1 && s.detail?.over_budget === 2)).toBe(true);
+    expect(validator().validate(answer.lines.find((l) => l.event === "query")!).state).toBe("validated");
+
+    const plain = opened(await openRecords(ask(ids), { cwd: dir, env }));
+    expect(plain.budget).toEqual({ records: 3 });
+    expect(kinds(plain)).toEqual(["opened", "opened", "opened"]);
+  });
+
+  test("a malformed byte bound is refused and writes nothing", async () => {
+    const { dir, env } = scratch();
+    bigResults(repoReceipts(dir));
+    const before = readdirSync(repoReceipts(dir)).sort();
+    for (const bytes of [0, -1, 1.5]) {
+      const outcome = await openRecords(ask([{ run: RUN_A, seq: 2 }], bytes), { cwd: dir, env });
+      expect(outcome.refused).toBe(true);
+      if (outcome.refused) expect(outcome.refusals.map((r) => r.code)).toContain("query.budget_invalid");
+    }
+    expect(readdirSync(repoReceipts(dir)).sort()).toEqual(before);
+    expect(existsSync(join(env.XDG_STATE_HOME!, "parley"))).toBe(false);
+  });
 });

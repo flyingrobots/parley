@@ -43,6 +43,12 @@ rather than moving its version.
   `budget.bytes` bounds, so a byte budget names fewer records than before. The shipped copies in
   both packages were re-synced, which moves no version.
 
+- `parley.query` 1.0.0 (draft), the **description** of `records` and nothing else: it now says
+  `budget.bytes`, when stated on a drill-down, bounds the records opened — whole records in the
+  order asked while their summed size stays within it, and an `over_budget` outcome with no
+  contents for each id past it (flyingrobots/parley#78). `bytes` was already an optional positive
+  integer in the schema, so no constraint moved. Both packages were re-synced; no version moved.
+
 ### Decided
 
 - **How a read states its observer and its purpose** (flyingrobots/parley#46). §9 asks a query for
@@ -507,6 +513,12 @@ so a receipt
 
 ### Fixed
 
+- `parley-read`: under `what-changed`, a warning from a run that went on no longer outranks every
+  result. The change-view promotion now holds the failure surface **of the runs that failed**, so a
+  `warning` is promoted only with its run's failure and is otherwise placed by the view's own
+  surface rule (§6.1). Before, a history of runs that warned filled a `what-changed` digest with
+  warnings and named no result. `what-failed` keeps every warning on its surface.
+  (flyingrobots/parley#76)
 - The README bootstrap example emitted a top-level `receipt`; the schema requires
   `paths.receipt`. (flyingrobots/parley#5)
 - The spec's introduction, §8's opening paragraph and §9's opening paragraph still said the

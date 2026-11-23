@@ -318,15 +318,18 @@ from the 14:37 burst to the `543477a~1..543477a` run of the third, where it stop
 burst before. Byte sizes fell too, from 5,145 to 4,505 bytes under `what-ran`, because a fold
 names fewer runs and so pays for fewer sections.
 
-Two sections of the `what-ran` digest after the fold, captured:
+Two sections of the `what-ran` digest after the fold, captured. They were re-captured from the
+same 50 receipts after [flyingrobots/parley#100](https://github.com/flyingrobots/parley/issues/100)
+renamed the count (see [a fold counts only the others](#a-fold-counts-only-the-others)), so they
+also carry `resolved` from [flyingrobots/parley#90](https://github.com/flyingrobots/parley/issues/90):
 
 ```jsonl illustrative
-{"run":"01M82PJNQXQBW5ZRRM8T0MENJ7","tool":"footprint","v":"0.2.0","argv":["footprint","HEAD~2..HEAD~1"],"inv":"03803fef496f7a07616dc14a5172130f24a87d41b6bd91fb9165af141686834c","outcome":"undetermined","reason":"no_end_in_window","folded":{"runs":4,"records":12}}
-{"run":"01M82S0D86ZC0QZWGHDV2A5HZJ","tool":"footprint","v":"0.2.0","argv":["footprint","HEAD~1..HEAD","--human"],"inv":"70377768731b22e10242fac4cfac373e8edf08cfd2fc4ba3adc9a25ce2a5dca5","outcome":"succeeded","folded":{"runs":10,"records":117}}
+{"run":"01M82PJNQXQBW5ZRRM8T0MENJ7","tool":"footprint","v":"0.2.0","argv":["footprint","HEAD~2..HEAD~1"],"resolved":{"command":"footprint","base":"HEAD~2..HEAD~1","default_base":null,"range":"HEAD~2..HEAD~1","base_commit":"db68fedd93a1a7173769ddd35c209d9ed9a14a65","head_commit":"e1e9ce67e4e0132273d868d4f069c296d1f2d91d","graft":null},"inv":"03803fef496f7a07616dc14a5172130f24a87d41b6bd91fb9165af141686834c","outcome":"undetermined","reason":"no_end_in_window","folded":{"others":3,"records":12}}
+{"run":"01M82S0D86ZC0QZWGHDV2A5HZJ","tool":"footprint","v":"0.2.0","argv":["footprint","HEAD~1..HEAD","--human"],"resolved":{"command":"footprint","base":"HEAD~1..HEAD","default_base":null,"range":"HEAD~1..HEAD","base_commit":"fb0950821fc982ba11e54906ed09eaf7613b165e","head_commit":"7e9959dcf34ba49292e797fdf4cf548e504f5478","graft":null},"inv":"70377768731b22e10242fac4cfac373e8edf08cfd2fc4ba3adc9a25ce2a5dca5","outcome":"succeeded","folded":{"others":9,"records":117}}
 ```
 
 The fences are labelled illustrative because each line is a fragment of a lens, not a message.
-The first says the four 14:37 runs on `HEAD~2..HEAD~1` never ended. The second is the second
+The first says the 14:37 run on `HEAD~2..HEAD~1` and three others like it never ended. The second, this run plus nine others, is the second
 burst's ten runs of `HEAD~1..HEAD`, six without `--human` and four with it. footprint gives runs
 with and without the flag the same `inv`, so they are one invocation. The section shows the
 representative's own `argv`, which for that group happens to carry `--human`. This is
@@ -382,12 +385,42 @@ What it could not settle, by its account:
 
 - **How many runs there were.** It added the seven `folded.runs` counts to 40 and could not tell
   whether a count includes the run it is attached to, so it said "either 57 or about 50". It does
-  include it: the window holds 50 runs. The schema says so, but a lens line does not, and a cold
+  include it: the window holds 50 runs. The schema said so, but a lens line did not, and a cold
   reader has only the line. Filed as
-  [flyingrobots/parley#100](https://github.com/flyingrobots/parley/issues/100).
+  [flyingrobots/parley#100](https://github.com/flyingrobots/parley/issues/100), and since resolved:
+  see [a fold counts only the others](#a-fold-counts-only-the-others).
 - **The folded runs' own times.** The fold names none of them, by design. A narrower window, or the
   loader, finds them.
 - As before: why the 14:38 runs never ended, who started each burst, and why `node` was missing.
+
+## A fold counts only the others
+
+After the fourth reader, [flyingrobots/parley#100](https://github.com/flyingrobots/parley/issues/100)
+changed the section to `folded: {others, records}`: both numbers exclude the run the section is
+attached to, so a section reads as "this run, plus `others` like it, whose `records` records are not
+named", and a run that stands alone has no `folded`. The count a reader states from the lines alone
+is then one per section plus its `others`, with no question of whether a count includes its own run.
+
+This is a measurement, not a fifth cold reader. The same 50 receipts were copied byte for byte into
+a fresh directory for each read, and each lens line was read back from the read's own receipt, with
+the library at flyingrobots/parley#100's branch. "Stated runs" is that sum:
+
+| Read | Sections | Stated runs | `folded.records` stated | `loss` |
+| --- | ---: | ---: | ---: | --- |
+| `what-ran`, default budget | 11 | 31 | 181 | `excluded` 488, `folded` 345 |
+| `what-failed`, default budget | 9 | 24 | 141 | `excluded` 488, `folded` 345 |
+| `what-changed`, default budget | 8 | 13 | 40 | `excluded` 488, `folded` 345 |
+| `how-it-decided`, default budget | 6 | 17 | 64 | `excluded` 488, `folded` 345 |
+| `everything`, default budget | 4 | 10 | 24 | `excluded` 488, `folded` 345 |
+| `everything`, `--records 1000` | 17 | **50** | 345 | `excluded` 345, `folded` 345 |
+
+The read that names every run states the window's 50 runs, and its sections' `folded.records`
+sum to `loss.folded`. The stated runs under the default budget equal the "runs they stand for"
+of [folding repeated runs](#folding-repeated-runs), counted the new way. A digest that cuts
+representatives states fewer runs than the window holds, and the gap shows in the line: the
+sections' `folded.records` fall short of `loss.folded` by the records of the groups it cut. The
+rename costs two bytes a folded section, less one for each count that drops a digit: the
+`what-ran` line went from 6,991 to 6,998 bytes, and the read of every run from 21,409 to 21,421.
 
 ## How the exercise departed from its rules
 

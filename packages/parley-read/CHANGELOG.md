@@ -19,7 +19,9 @@ its manifest so it cannot be published by accident.
 - **Runs of one invocation with one result are named once** (flyingrobots/parley#79). Before the
   bound is applied, `digestFor` folds the window's runs whose `inv`, outcome, `reason`, `end`
   status and error, warning and startup-failure codes are all equal into the most recent of
-  them. That run's section carries `folded: {runs, records}`, and the lens's `loss` carries
+  them. That run's section carries `folded: {others, records}`, both counting the other runs only, so
+  the section reads as "this run, plus `others` like it" (flyingrobots/parley#100; `RunFold.others`
+  replaced `RunFold.runs`, which included the representative), and the lens's `loss` carries
   `folded`, how many of `excluded` the fold left out. A run with no `inv`, or a redacted run,
   never folds, and nothing folds when `digestFor` is given no outcomes. New exports: `foldRuns`
   and the types `Folding` and `RunFold`. `Digested` and `QueryAnswer.counts` gain `folded`,

@@ -124,8 +124,10 @@ the view, and results computed under different budgets are not comparable. It al
   rather than cutting a string
   ([flyingrobots/parley#83](https://github.com/flyingrobots/parley/issues/83)). Runs that are one
   invocation with one result — an equal `inv` and an equal outcome, status and error and warning
-  codes — are named once, by the most recent of them, whose section says `folded: {runs,
-  records}` ([flyingrobots/parley#79](https://github.com/flyingrobots/parley/issues/79));
+  codes — are named once, by the most recent of them, whose section says `folded: {others,
+  records}`, both counting the other runs only
+  ([flyingrobots/parley#79](https://github.com/flyingrobots/parley/issues/79),
+  [flyingrobots/parley#100](https://github.com/flyingrobots/parley/issues/100));
 - **a loss bound**, `loss.bound`, with the count of what was left out beside it, and
   `loss.folded`, how many of those a fold rather than the budget left out.
 

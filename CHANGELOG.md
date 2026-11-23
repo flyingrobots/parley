@@ -72,7 +72,21 @@ rather than moving its version.
   also requires `loss.folded` to be 0 beside `bound: "none"`. Both fields are optional, so every
   `parley.lens` line written under the earlier draft still validates; parley-read always writes
   `loss.folded`, 0 included. The decision is under *Decided*. The shipped copies in both packages
-  were re-synced, which moves no version.
+  were re-synced, which moves no version. `runs[].folded` was since renamed to
+  `{others, records}` (flyingrobots/parley#100, below).
+- `parley.lens` 1.0.0 (draft), **`runs[].folded` is `{others, records}`**, replacing `{runs,
+  records}` (flyingrobots/parley#100). `others` is an integer of at least 1, `records` at least
+  0, and both exclude the representative: the section reads as "this run, plus `others` like it,
+  whose `records` records are not named", so it stands for `others + 1` runs where `runs` said the
+  same number with the representative included. A run that stands alone has no `folded`, as
+  before. The fourth cold reader could not tell whether `runs` included its own run
+  (`docs/topics/reader/cold-resume.md`), and two numbers on different bases in one object was the
+  cause, so both now count the others only. `others` is required, so a line in the old shape no
+  longer validates; the draft has not been released, so the change is made in place. `loss.folded`
+  is unchanged. The decision is on the issue: a renamed field that still counted the
+  representative, and a top-level run count, were rejected. The shipped copies in all three
+  packages were re-synced, which moves no version. On footprint's 50 receipts, a read naming every
+  run states 17 sections whose `1 + others` sum to the window's 50 runs.
 - `parley.lens` 1.0.0 (draft): a run section gains an optional **`resolved`**, an object, and
   `dropped` gains `resolved` in its enum, with `maxItems` raised from 4 to 5
   (flyingrobots/parley#90). `resolved` is the head's `resolved` (spec §5), copied whole and already
@@ -118,8 +132,9 @@ rather than moving its version.
     window is latest, ties to the greater run id.
   - *How the lens says so.* On the representative's run section, `folded: {runs, records}`, where
     `runs` counts the group, the representative included, so a digest over N identical runs
-    states N. The folded runs' ids are **not** listed, to keep the line small. A narrower read, or
-    a load of the window, finds them.
+    states N. (Superseded by flyingrobots/parley#100: the section now says `{others, records}`,
+    both excluding the representative, so it states N − 1 others.) The folded runs' ids are
+    **not** listed, to keep the line small. A narrower read, or a load of the window, finds them.
   - *How the loss tells fold from budget.* `loss.excluded` still counts every record of the window
     the digest does not name, the folded ones included, and a new `loss.folded` says how many of
     those the fold left out. `excluded − folded` is what the budget cut. `loss.folded` depends on

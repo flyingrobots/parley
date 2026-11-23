@@ -137,8 +137,8 @@ export const RUN_SECTION_BYTES = 512;
  * - `reason`: present exactly when `outcome` is `undetermined`.
  * - `head`: `not_in_window` when the window does not hold the run's head; absent when it does.
  * - `folded`: present on a run that stands for others of one invocation with one result
- *   (`fold.ts`): how many runs it stands for, itself included, and how many of their records the
- *   fold left out. Never dropped.
+ *   (`fold.ts`): how many other runs it stands for and how many of their records the fold left
+ *   out, both excluding this run (flyingrobots/parley#100). Never dropped.
  * - `dropped`: the fields left out to fit `RUN_SECTION_BYTES`, in the order they were dropped.
  */
 export interface RunSection {

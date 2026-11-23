@@ -2963,8 +2963,8 @@ describe("RD-90 runs of one invocation with one result are folded", () => {
     const groups = [4, 4, 6, 3, 3, 10, 10];
     const records: LoadedRecord[] = [];
     let n = 0;
-    groups.forEach((size, g) => { for (let i = 0; i < size; i++, n++) records.push(...invRun(runId(n), T0 + n * 10, `inv_group${g}`)); });
     for (let i = 0; i < 10; i++, n++) records.push(...invRun(runId(n), T0 + n * 10, `inv_alone${i}`));
+    groups.forEach((size, g) => { for (let i = 0; i < size; i++, n++) records.push(...invRun(runId(n), T0 + n * 10, `inv_group${g}`)); });
     expect(n).toBe(50);
     return { records, groups };
   }
@@ -2982,19 +2982,20 @@ describe("RD-90 runs of one invocation with one result are folded", () => {
 
   test("a cut representative takes its others' count with it, and the loss shows the gap", () => {
     const { records } = coldResumeShape();
-    // The last group of ten is runs 30 to 39, its representative run 39. The ranking is in time
-    // order under `everything`, so a budget that stops before run 39's records cuts it, and every
-    // run after it, so the ten runs alone are named and the groups' are cut from the end.
+    // The last group of ten is runs 40 to 49, the latest in the window, so its representative is
+    // run 49. `everything` ranks in time order, so a budget that stops just before run 49's
+    // records cuts that one section and nothing else.
     const whole = digestOf(records, { records: 1000 }).digested;
     const order = whole.digest.records.map((e) => e.run);
-    const before = order.indexOf(runId(39));
+    const before = order.indexOf(runId(49));
     const cut = digestOf(records, { records: before }).digested;
     const sections = digestLineSections(cut);
-    expect(sections.some((r) => r.run === runId(39))).toBe(false);
+    expect(sections.some((r) => r.run === runId(49))).toBe(false);
     const named = new Set(sections.map((r) => r.run));
     const lostGroups = digestLineSections(whole).filter((r) => !named.has(r.run));
-    expect(lostGroups.some((r) => r.run === runId(39))).toBe(true);
-    expect(statedRuns(sections)).toBe(50 - statedRuns(lostGroups));
+    expect(lostGroups.some((r) => r.run === runId(49))).toBe(true);
+    expect(lostGroups.length).toBe(1);
+    expect(statedRuns(sections)).toBe(50 - 10);
     // The fold does not depend on the budget, so loss.folded still counts the cut groups' others.
     expect(cut.digest.loss.folded).toBe(whole.digest.loss.folded);
     const statedRecords = sections.reduce((n, r) => n + (r.folded?.records ?? 0), 0);
@@ -3029,7 +3030,7 @@ describe("RD-90 runs of one invocation with one result are folded", () => {
     const held = lens.record as unknown as { runs: Record<string, unknown>[] };
     expect(held.runs.length).toBe(1);
     expect(held.runs[0]!.run).toBe(runs[2]!.run);
-    expect(foldOf(held.runs, runs[2]!.run)).toEqual({ others: 2, records: 6 });
+    expect(foldOf(held.runs, runs[2]!.run)).toEqual({ others: 2, records: [...byId.values()].filter((r) => r.run === runs[0]!.run || r.run === runs[1]!.run).length });
   }, 60_000);
 });
 

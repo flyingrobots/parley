@@ -363,9 +363,58 @@ describe("schemas/", () => {
     snap.properties._schema.properties.version.const = "1.9.0";
     writeFileSync(join(dir, "released", "parley.error", "1.9.0.schema.json"), JSON.stringify(snap));
     expect([...loadSchemas(dir).byKey.keys()].sort()).toEqual(["parley.error@1.9.0", "parley.error@2.0.0"]);
-    writeFileSync(join(dir, "released", "parley.error", "2.0.0.schema.json"), JSON.stringify(draft));
-    expect(() => loadSchemas(dir)).toThrow(/both claim parley.error@2.0.0/);
+    const changed = structuredClone(draft);
+    changed.description = `${changed.description} (changed)`;
+    writeFileSync(join(dir, "released", "parley.error", "2.0.0.schema.json"), JSON.stringify(changed));
+    expect(() => loadSchemas(dir)).toThrow(/parley.error@2.0.0/);
     rmSync(dir, { recursive: true, force: true });
+  });
+
+  // REL-1 (flyingrobots/parley#85): a released version is immutable (§4.5). A top-level file may
+  // carry a released pair only with the snapshot's exact bytes; any other change needs a version.
+  test("a top-level file may carry a released pair with the snapshot's exact bytes", () => {
+    const dir = mkdtempSync(join(tmpdir(), "parley-schemas-"));
+    const text = readFileSync("schemas/parley.error.schema.json", "utf8");
+    writeFileSync(join(dir, "parley.error.schema.json"), text);
+    mkdirSync(join(dir, "released", "parley.error"), { recursive: true });
+    writeFileSync(join(dir, "released", "parley.error", "2.0.0.schema.json"), text);
+    expect([...loadSchemas(dir).byKey.keys()]).toEqual(["parley.error@2.0.0"]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("a top-level file that changes a released pair is refused", () => {
+    const dir = mkdtempSync(join(tmpdir(), "parley-schemas-"));
+    const text = readFileSync("schemas/parley.error.schema.json", "utf8");
+    mkdirSync(join(dir, "released", "parley.error"), { recursive: true });
+    writeFileSync(join(dir, "released", "parley.error", "2.0.0.schema.json"), text);
+    writeFileSync(join(dir, "parley.error.schema.json"), text.replace("\n}", " \n}"));
+    expect(() => loadSchemas(dir)).toThrow(/parley.error@2.0.0.*immutable/);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const changelog = readFileSync("CHANGELOG.md", "utf8");
+  const unreleased = /^## \[Unreleased\]\n([\s\S]*?)(?=^## \[)/m.exec(changelog)?.[1] ?? "";
+  const dated = changelog.split(/^(?=## \[)/m).filter((e) => /^## \[\d+\.\d+\.\d+\] — \d{4}-\d{2}-\d{2}/.test(e)).join("\n");
+  const named = (entry: string, id: string, version: string) => new RegExp("`" + id.replace(/\./g, "\\.") + "` " + version.replace(/\./g, "\\.") + "\\b").test(entry);
+
+  test("every top-level schema is released byte for byte or is a draft under Unreleased", () => {
+    for (const f of files.filter((x) => !x.startsWith("released/"))) {
+      const id = idOf(f), version = String(load(f)._schema?.version ?? load(f).properties._schema.properties.version.const);
+      const snap = `schemas/released/${id}/${version}.schema.json`;
+      let snapText: string | undefined;
+      try { snapText = readFileSync(snap, "utf8"); } catch { snapText = undefined; }
+      if (snapText !== undefined) expect(readFileSync(`schemas/${f}`, "utf8"), f).toBe(snapText);
+      else expect(named(unreleased, id, version), `${id} ${version} has no snapshot, so it is a draft and must be named under Unreleased`).toBe(true);
+    }
+  });
+
+  test("every released snapshot is named by a dated release entry", () => {
+    const snaps = files.filter((x) => x.startsWith("released/"));
+    for (const f of snaps) {
+      const id = idOf(f), version = versionOf(f)!;
+      expect(named(dated, id, version), `${id} ${version} is snapshotted but no dated entry in CHANGELOG.md names it`).toBe(true);
+      expect(named(unreleased, id, version), `${id} ${version} is released and cannot be named under Unreleased`).toBe(false);
+    }
   });
 
   test("every schema is exercised by a validated example in the repository", () => {

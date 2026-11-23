@@ -2557,7 +2557,7 @@ describe("RD-73 a read that states no ms has no deadline", () => {
 // afterwards.
 
 /** The keys a run section may carry, and no others. */
-const SECTION_KEYS = new Set(["run", "tool", "v", "argv", "inv", "outcome", "reason", "head", "folded", "dropped"]);
+const SECTION_KEYS = new Set(["run", "tool", "v", "argv", "resolved", "inv", "outcome", "reason", "head", "folded", "dropped"]);
 
 /**
  * Assert the lens's `runs` say what the loaded window says and nothing else: one section per run
@@ -2968,4 +2968,144 @@ describe("RD-90 runs of one invocation with one result are folded", () => {
     expect(held.runs[0]!.run).toBe(runs[2]!.run);
     expect((foldOf(held.runs, runs[2]!.run) as { runs: number }).runs).toBe(3);
   }, 60_000);
+});
+
+// ---- RD-100 a run section carries the head's resolved ----------------------------------------
+//
+// flyingrobots/parley#90: after flyingrobots/parley#83 the cold reader still opened one head per
+// burst, each for `resolved.base_commit` and `resolved.head_commit`: `argv` says `HEAD~1..HEAD`,
+// and only `resolved` says which two commits that was. A section now carries `resolved` whole,
+// read off the head and never chosen by key, so no tool's field names live in the reader. It is
+// the first field dropped to fit the section's bound.
+
+describe("RD-100 a run section carries the head's resolved", () => {
+  test("a run section carries the resolved interpretation off its head", async () => {
+    const { dir, state, env } = scratch();
+    writeFileSync(join(dir, "a.txt"), "hello");
+    const runs = [realRun(dir, state)];
+    symlinkSync(join(dir, "nothing-here"), join(dir, "dangling"));
+    runs.push(realRun(dir, state));
+    expect(runs.map((r) => r.status)).toEqual([0, 2]);
+    const answer = answered(await queryReceipts(
+      { asker: { tool: "t", task: "flyingrobots/parley#90" }, view: "what-ran", window: { from: 0, to: Date.now() } },
+      { cwd: dir, env },
+    ));
+    const lens = lensRecord(dir, env, answer.run);
+    expect(lens.validation.state).toBe("validated");
+    const held = lens.record as unknown as { runs: Record<string, unknown>[] };
+    const byId = loadedById(dir, env);
+    expect(held.runs.length).toBe(2);
+    for (const section of held.runs) {
+      const head = byId.get(`${section.run}:1`)!;
+      expect(head.event).toBe("receipt.head");
+      expect(section.resolved).toEqual(head.record.resolved as Record<string, unknown>);
+    }
+  }, 60_000);
+
+  test("a run section's resolved cannot drift from the head", async () => {
+    for (const view of VIEWS) {
+      const { dir, env } = scratch();
+      const receipts = repoReceipts(dir);
+      writeReceipt(receipts, runId(1), [
+        { ...head(runId(1), { inv: "inv_one", resolved: { command: "count", base_commit: "fb09508", depth: 2, deep: { list: [1, 2] } } }), t: T0 - 3 * DAY },
+        { ...step(runId(1), 2), t: T0 - 3 * DAY + 1 },
+        { ...end(runId(1), 3, join(receipts, `${runId(1)}.jsonl`)), t: T0 - 3 * DAY + 2 },
+      ]);
+      richReceipt(receipts, runId(2), T0 - 2 * DAY, "warned");
+      writeReceipt(receipts, runId(3), [{ ...head(runId(3), { resolved: { command: "x".repeat(600) } }), t: T0 - DAY }]);
+      const answer = answered(await queryReceipts({ asker: { tool: "t" }, view, window: SEALED, budget: { records: 12 } }, { cwd: dir, env }));
+      const lens = lensRecord(dir, env, answer.run);
+      expect(lens.validation.state).toBe("validated");
+      const held = lens.record as unknown as { records: Record<string, unknown>[]; runs: Record<string, unknown>[] };
+      const byId = loadedById(dir, env);
+      expectSectionsMatch(held, byId, answer.ranking.outcomes);
+      for (const section of held.runs) {
+        const resolved = byId.get(`${section.run}:1`)!.record.resolved;
+        if ("resolved" in section) expect(section.resolved).toEqual(resolved as Record<string, unknown>);
+        else expect(section.dropped as string[]).toContain("resolved");
+      }
+      const by = Object.fromEntries(held.runs.map((r) => [r.run as string, r]));
+      if (by[runId(1)]) expect(by[runId(1)]!.resolved).toEqual({ command: "count", base_commit: "fb09508", depth: 2, deep: { list: [1, 2] } });
+      if (by[runId(3)]) expect(by[runId(3)]!.dropped).toEqual(["resolved"]);
+    }
+  });
+
+  test("a resolved larger than the section is dropped whole, before argv", () => {
+    const big = runId(1);
+    const bigger = runId(2);
+    const resolved = { command: "count", paths: Array.from({ length: 1000 }, (_, i) => `src/file-${i}.ts`) };
+    const argv = ["t", ...Array.from({ length: 1000 }, (_, i) => `--flag-${i}`)];
+    const records = [
+      loaded(big, 1, "receipt.head", T0, { tool: "t", v: "1.2.3", argv: ["t", "count"], resolved, inv: "inv_small" }),
+      loaded(big, 2, "end", T0 + 1, { status: 0 }),
+      loaded(bigger, 1, "receipt.head", T0 + 2, { tool: "t", v: "1.2.3", argv, resolved, inv: "inv_other" }),
+    ];
+    expect(JSON.stringify(resolved).length).toBeGreaterThan(10_000);
+    for (const budget of [{ records: 100 }, { records: 100, bytes: 1024 }]) {
+      const { digested, envelope } = digestOf(records, budget);
+      const by = Object.fromEntries(digested.digest.runs.map((r) => [r.run, r]));
+      expect(by[big]).toEqual({ run: big, tool: "t", v: "1.2.3", argv: ["t", "count"], inv: "inv_small", outcome: "succeeded", dropped: ["resolved"] });
+      expect(by[bigger]).toEqual({ run: bigger, tool: "t", v: "1.2.3", inv: "inv_other", outcome: "undetermined", reason: "no_end_in_window", dropped: ["resolved", "argv"] });
+      for (const section of digested.digest.runs) expect(Buffer.byteLength(JSON.stringify(section), "utf8")).toBeLessThanOrEqual(RUN_SECTION_BYTES);
+      if (budget.bytes !== undefined) expect(digested.bytes).toBeLessThanOrEqual(budget.bytes);
+      expect(validator().validate(JSON.parse(digestLine(digested.digest, envelope))).state).toBe("validated");
+    }
+  });
+
+  test("a redacted value in resolved stays redacted in the section", async () => {
+    const { dir, env } = scratch();
+    const secret = await writerRun(dir, env, ["count", "--token", "s3cret"], (run) => {
+      run.result({ event: "result", value: 3 }, { id: "t.count", version: "1.0.0" });
+    });
+    const byId = loadedById(dir, env);
+    const headResolved = byId.get(`${secret.run}:1`)!.record.resolved as Record<string, unknown>;
+    expect(JSON.stringify(headResolved)).toContain("[redacted]");
+    const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "what-ran", window: { from: 0, to: Date.now() } }, { cwd: dir, env }));
+    const section = answer.digest.runs.find((r) => r.run === secret.run)!;
+    expect(section.resolved).toEqual(headResolved);
+    const line = readFileSync(answer.receipt, "utf8").split("\n").find((l) => l.includes('"event":"lens"'))!;
+    expect(line).toContain("[redacted]");
+    expect(line).not.toContain("s3cret");
+  });
+
+  test("only an object resolved is carried, and only off a head in the window", () => {
+    const records = [
+      loaded(runId(1), 1, "receipt.head", T0, { tool: "t", v: "1", argv: ["t"], resolved: "count" }),
+      loaded(runId(2), 1, "receipt.head", T0 + 1, { tool: "t", v: "1", argv: ["t"], resolved: ["count"] }),
+      loaded(runId(3), 1, "receipt.head", T0 + 2, { tool: "t", v: "1", argv: ["t"], resolved: null }),
+      // The head is before the window: only receipt.inputs and the end are in it.
+      loaded(runId(4), 3, "receipt.inputs", T0 + 3, { inputs: [], inv: "inv_late" }),
+      loaded(runId(4), 4, "end", T0 + 4, { status: 0 }),
+    ];
+    const { digested } = digestOf(records);
+    for (const section of digested.digest.runs) {
+      expect("resolved" in section).toBe(false);
+      expect("dropped" in section).toBe(false);
+    }
+    expect(digested.digest.runs.find((r) => r.run === runId(4))!.head).toBe("not_in_window");
+  });
+
+  test("the byte search is exact with resolved in the sections", () => {
+    const records: LoadedRecord[] = [];
+    for (let r = 0; r < 6; r++) {
+      const run = runId(r);
+      records.push(loaded(run, 1, "receipt.head", T0 + r * 10, { tool: "t", v: "1", argv: ["t"], resolved: { command: "t", base: "y".repeat(r * 40) }, inv: `inv_${r}` }));
+      records.push(loaded(run, 2, "warning", T0 + r * 10 + 1, { code: "w.x", problem: "p" }));
+      if (r % 2 === 0) records.push(loaded(run, 3, "end", T0 + r * 10 + 2, { status: r === 2 ? 1 : 0 }));
+    }
+    const whole = digestOf(records).digested;
+    expect(whole.excluded).toBe(0);
+    expect(whole.digest.runs.filter((s) => "resolved" in s).length).toBeGreaterThan(0);
+    for (let bytes = 1; bytes <= whole.bytes; bytes++) {
+      const { digested, envelope, ranking } = digestOf(records, { records: 100, bytes });
+      const kept = digested.digest.records.length;
+      if (digested.fits) expect(digested.bytes).toBeLessThanOrEqual(bytes);
+      if (kept < records.length && digested.fits) {
+        const plan = planQuery({ asker: { tool: "t", cwd: "/w" }, view: "everything", window: WIDE, budget: { records: kept + 1 } });
+        if (plan.refused) throw new Error("the plan was refused");
+        const more = digestFor(plan.query, { run: runId(99), seq: 1 }, ranking.records, envelope, ranking.outcomes);
+        expect(digestBytes({ ...more.digest, budget: digested.digest.budget }, envelope)).toBeGreaterThan(bytes);
+      }
+    }
+  });
 });

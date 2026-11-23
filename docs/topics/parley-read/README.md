@@ -5,7 +5,7 @@ receipt bundles a repository has accumulated and returns every run's records, un
 [specification](../../../spec/parley-v0.2.md) binds a reader to, and it answers a read over those
 records — refused unless it states who it is for and what it wants, recorded as a run of its own,
 ordered by the purpose it states, and bounded by the budget it states, with a digest that says
-what the bound left out. This page is the reference for what the package does on `main`; the
+what the bound left out — and it opens the records a digest names, by `(run, seq)`, in full. This page is the reference for what the package does on `main`; the
 package [README](../../../packages/parley-read/README.md) is the front door with a captured load,
 a captured read, a captured ranking and a captured digest, and the [test plan](test-plan.md)
 beside this page is the contract ledger.
@@ -19,6 +19,8 @@ suite and `bun run typecheck` checks it strictly, over `src`, `scripts` and `tes
 | --- | --- |
 | `loadReceipts(opts)` | Every run in both receipt locations for a working directory, as bundles; `opts` takes `cwd`, `env`, `home`, `sidecars`, a `validate` validator and `history`, the stream segments to read beside the receipts |
 | `queryReceipts(request, opts)` | A read: refused without an asker, a view and a window, else recorded as a `parley.query` event through the writer and answered with a **digest** — the window's records ordered by the view, cut at the budget, and a `parley.lens` record saying what the cut left out; `opts` takes the loader's options plus `tool`, `stdout`, `stderr`, `session` and `now` |
+| `openRecords(request, opts)` | A drill-down: refused without an asker, a view, a window and at least one `(run, seq)`, else recorded as a `parley.query` event naming the ids and answered with **one outcome per id** — the record in full, a sidecar's contents included, and the bundle's replay ruling; `opts` as for `queryReceipts` |
+| `planOpen(request)`, `openOne(id, bundles)` | The drill-down's refusal rules as a pure function, and one id resolved against loaded bundles, reading nothing further |
 | `planQuery(request)` | The refusal rules and the budget default, as a pure function: it reads nothing, writes nothing and records nothing |
 | `queryRecord(query)` | The `parley.query` payload for an accepted read, without the envelope the writer owns |
 | `rankRecords(query, records)` | The ranking, as a pure function from an accepted query and records to the same records in one stated order |
@@ -392,12 +394,68 @@ state honestly.
   `count-only` is the other value, and it says the count is all that is known: one withheld record
   can matter more than fifty, so a cardinality cannot bound what a view loses even in principle.
 - The answer's `records`, and the ranking it carries, **stop at the bound**. What was excluded is
-  not returned by another route; fetching it is
-  [flyingrobots/parley#51](https://github.com/flyingrobots/parley/issues/51).
+  not returned by another route and is named nowhere, so a drill-down cannot open it either: a
+  caller reaches it by reading again under a wider budget, which the count tells them to do.
 - `counts.inWindow`, and the ranking's per-run outcomes and tier census, still describe the
   **whole window** the digest was drawn from. That is the asymmetry on purpose: a caller can see
   the digest is not the whole without being handed what it excluded, and a run's outcome stays
   established from the window rather than from a prefix of it (§1.2a).
+
+## Opening records by identity
+
+A digest names records and holds none of them: projecting down into a result is cheap, and
+expanding a result back up may be impossible within a budget, so the way back is stored as
+`(run, seq)` pairs rather than recomputed. `openRecords` is that way back
+([flyingrobots/parley#51](https://github.com/flyingrobots/parley/issues/51)). It takes the pairs a
+`parley.lens` names, in any order and any number, and answers with each record in full.
+
+### It is a recorded read
+
+Opening records reads history, so it is held to the same rules as a query
+([flyingrobots/parley#48](https://github.com/flyingrobots/parley/issues/48)): it states an
+`asker`, a `view` and a `window`, is refused without them under the query's own codes, and is
+recorded through the writer as a run of its own. What it records is a **`parley.query` 1.0.0 event
+with `records`** naming the ids asked, in the order asked — the same message a read records, so a
+later reader sees which records were opened as well as which questions were asked — followed by a
+`receipt.step` stating how many ids opened and how many did not.
+
+| It states | Or else |
+| --- | --- |
+| `asker`, `view`, `window`, `note` | Refused exactly as a query is: `query.asker_unnamed`, `query.view_missing`, `query.window_missing` and the rest |
+| `records` — at least one `{run, seq}`, `run` non-empty, `seq` a non-negative integer | Refused `open.records_missing` for none, `open.records_invalid` for one that is malformed |
+
+A refused drill-down writes nothing, like a refused read. The **view and window select nothing**:
+an id is opened by identity whatever its `t`, and the view is recorded as the purpose the records
+were opened for. `budget` is not taken from the caller; the recorded budget is `{"records": n}` for
+`n` ids asked, which is the bound the ids already are. A drill-down emits no `parley.lens`: it
+answers with records, not a digest, and has no loss to state.
+
+### One outcome per id
+
+Every id asked gets exactly one outcome, in the order asked, and an id asked twice is answered
+twice. Nothing about one id can lose the others, and nothing throws:
+
+| Outcome | Means | Carries |
+| --- | --- | --- |
+| `opened` | The record is there | `record` in full; `sidecar` when the record was restored from one; `held`, the stored record in full, when the id names the `sidecar` event itself |
+| `sidecar_unavailable` | The id is a `sidecar` event or the record one holds, and the stored bytes could not be established: `missing`, `digest_mismatch`, `bytes_mismatch`, `escapes_bundle`, `unparseable`, `unreadable`, or `unchecked` when resolution was off | `record` is the pointer and only the pointer, `sidecar` with the declared and actual digests, `problem` and `remedy`. The contents are never claimed |
+| `run_not_found` | No receipt in either location holds that run | `problem` and `remedy` |
+| `seq_not_found` | The run is there and holds no record at that `seq` | `problem`, `remedy` and the bundle's ruling |
+
+The sidecar's stored bytes are checked by the loader against the `bytes` and `sha256` the receipt
+declared before the record is restored (§5); the drill-down reports that resolution rather than
+reading the file a second time.
+
+**Every id whose run resolved carries its bundle's ruling** — `terminated`, `status`, `redacted`
+and `replay` — exactly as [the loader](#replay-availability) established it. A record whose bundle
+is unavailable for replay still opens: the `error` of a failed run is often the record a reader
+most needs, and refusing to show it because the run cannot be replayed would confuse two different
+questions. The ruling travels with it instead, so the reader cannot mistake a record from a run
+that never terminated for one from a run that ended well.
+
+A drill-down does not answer itself — its own bundle is not among those an id resolves to — and
+the record of it is history like any other, which the next drill-down can open by its
+`(run, seq)`.
 
 ## How the purpose orders the answer
 
@@ -509,9 +567,9 @@ still ranks above a succeeded run's. `what-failed` is unaffected: every warning 
 - Project. A read cuts its answer at the budget and says what it cut, but the records it does name
   it returns whole: no view reduces a record to fewer fields
   ([flyingrobots/parley#59](https://github.com/flyingrobots/parley/issues/59)).
-- Hand back what the bound excluded. The digest states the count and stores the way back; a call
-  that asks for those records by identity is
-  [flyingrobots/parley#51](https://github.com/flyingrobots/parley/issues/51).
+- Hand back what the bound excluded. The digest states the count and names only the records it
+  kept, so the [drill-down](#opening-records-by-identity) opens those and nothing else; the excluded
+  tail is reached by a wider read.
 - Bound a read in time, or decline on budget grounds. `budget.ms` is recorded and applied to
   nothing, and "not within your budget, and here is the budget that would do it" is an answer a
   reader should be able to give that `parley.lens` 1.0.0 cannot express

@@ -10,7 +10,9 @@ answer it will accept, is refused when it cannot, and is itself recorded as a ru
 (§9) — so the next read can see what was asked. The shape it asks for **orders** the answer: §9's
 purpose is the ranking function, and it never removes a record. The size it will accept **bounds**
 the answer, and the read answers with a digest that says what the bound left out, so a later
-reader cannot mistake a digest for the whole.
+reader cannot mistake a digest for the whole. A drill-down opens the records a digest names, by
+`(run, seq)`, in full — a sidecar's contents included — with one outcome per id, and it is recorded
+as a read too.
 
 The rules it keeps are the ones the specification binds a *reader* to — §1.4 buffering and
 quarantine, §5.4's unterminated tail, §1.3's `(run, seq)`, §4.5 and §4.6 on exact-pair resolution,
@@ -241,8 +243,8 @@ holds by `(run, seq)` — the way back a drill-down needs — and the loss:
 `loss.excluded` is always there, zero included — an absent count and a count of zero are different
 claims — and `loss.bound` is `none` only beside a count of 0, which the schema refuses to pair any
 other way. So a digest that left something out says so structurally rather than in prose. What it
-excluded is not returned by another route; fetching it is
-[flyingrobots/parley#51](https://github.com/flyingrobots/parley/issues/51). `counts.inWindow` and
+excluded is not returned by another route and is named by no id, so it is reached by reading again
+under a wider budget, not by a drill-down. `counts.inWindow` and
 the ranking's tier census still describe the whole window the digest was drawn from, so the caller
 can see it is not the whole without being handed what it cut.
 
@@ -398,7 +400,34 @@ That line is 664 bytes. Four things in it are the whole feature:
 - **It cannot read as complete.** `loss.bound` is `count-only`; `none` is only valid beside a
   count of 0, and the schema refuses the other pairing.
 - **It is the way back.** Each named record is a `(run, seq)` pair, so a drill-down fetches records
-  rather than re-deriving them from a result (flyingrobots/parley#51).
+  rather than re-deriving them from a result — see [opening what a digest names](#opening-what-a-digest-names).
+
+## Opening what a digest names
+
+`openRecords` takes the `(run, seq)` pairs a lens carries and answers with one outcome per id, in
+the order asked:
+
+```ts
+const read = await queryReceipts({ asker: { tool: "claude-code" }, view: "what-failed", window }, { cwd });
+if (read.refused) throw new Error(read.refusals.map((r) => r.code).join(", "));
+const opened = await openRecords(
+  { asker: { tool: "claude-code" }, view: read.view, window: read.window, records: read.digest.records },
+  { cwd },
+);
+if (opened.refused) throw new Error(opened.refusals.map((r) => r.code).join(", "));
+for (const o of opened.opened) console.log(o.outcome, o.record?.record, o.bundle?.replay);
+```
+
+| Outcome | Means |
+| --- | --- |
+| `opened` | The record, in full. A record stored in a sidecar comes back with its contents, checked against the declared `sha256`; opening the `sidecar` event itself brings the record it holds as `held` |
+| `sidecar_unavailable` | The sidecar's stored bytes are missing, mismatched, unreadable or unchecked: the pointer is returned and the contents are not claimed |
+| `run_not_found`, `seq_not_found` | Which half of the id did not resolve, with a remedy |
+
+Every id whose run resolved carries the loader's replay ruling, so the `error` of a failed run
+opens and says its bundle is unavailable for replay. A drill-down is recorded as a `parley.query`
+carrying `records`, so the next reader can see what was opened; it is refused without an asker, a
+view, a window and at least one id, and then writes nothing.
 
 ## Surface
 
@@ -406,6 +435,7 @@ That line is 664 bytes. Four things in it are the whole feature:
 | --- | --- |
 | `loadReceipts(opts)` | Every run in both receipt locations for a working directory, as bundles |
 | `queryReceipts(request, opts)` | A read: refused without an asker, a view and a window, else recorded as a `parley.query` event and answered with a `parley.lens` digest — the window's records ordered by the view, cut at the budget, and the count the cut left out |
+| `openRecords(request, opts)`, `planOpen(request)`, `openOne(id, bundles)` | The drill-down: records by `(run, seq)`, one outcome per id, recorded as a `parley.query` carrying `records`; its refusal rules as a pure function; one id resolved against loaded bundles |
 | `planQuery(request)`, `queryRecord(query)` | The refusal rules and the recorded payload, without any reading or writing |
 | `rankRecords(query, records)` | The view's order over records, pure: the same records reordered, never a subset |
 | `digestFor(query, answers, ranked, envelope)` | The bound over that order, pure: the digest's payload, the records it names, the count it excluded and the bytes its line takes |
@@ -443,7 +473,7 @@ secret, whether its `inv` matches — is the caller's to decide, and this reader
 - Project. The records a digest names come back whole; no view reduces one to fewer fields
   (flyingrobots/parley#59).
 - Hand back what the bound excluded, or decline on budget grounds. The digest states the count and
-  stores the way back; fetching those records is flyingrobots/parley#51, and "not within your
+  names only what it kept, so the drill-down opens those; the excluded tail is a wider read, and "not within your
   budget, and here is the budget that would do it" is something `parley.lens` 1.0.0 cannot say
   (flyingrobots/parley#71).
 - Apply a transform at read time. It prefers the least-projected copy it can see and names the

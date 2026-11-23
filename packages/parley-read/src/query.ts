@@ -23,8 +23,9 @@
 //      the window. The rules are in `rank.ts`; the over-filtering §9 warns about is impossible
 //      here because nothing is dropped at any tier.
 //   - **It does not fetch what the digest left out.** The digest below bounds the answer to the
-//      budget and names what it dropped as a count; a call that asks for those records by
-//      identity is flyingrobots/parley#51, and the digest stores the way back for it.
+//      budget and names what it dropped as a count, and names nothing else: the way to those
+//      records is a wider read. Opening the records a digest *does* name, by identity, is
+//      `openRecords` in `open.ts` (flyingrobots/parley#51).
 //
 // What it **does** do with the budget is the digest (flyingrobots/parley#50): the first response
 // is a `parley.lens` record, bounded by `budget.records` and by `budget.bytes` when the query
@@ -146,8 +147,8 @@ export interface QueryAnswer {
    * The records the digest names, in full: the window ordered by the view — the failure surface
    * of the runs that failed first when the view implies a change, then the view's own surface, then `(t, run, seq)`
    * ascending — and cut at the budget. Never more than `budget.records` of them, and fewer when a
-   * stated `budget.bytes` cuts first. What the bound left out is `counts.excluded`, and fetching
-   * it is flyingrobots/parley#51.
+   * stated `budget.bytes` cuts first. What the bound left out is `counts.excluded`; it is named
+   * nowhere, so reaching it is a wider read, not a drill-down.
    */
   readonly records: readonly LoadedRecord[];
   /** The digest this read answered with, exactly as the `parley.lens` record carries it. */
@@ -202,10 +203,11 @@ export interface QueryOptions extends LoadOptions {
   readonly now?: () => number;
 }
 
-const READER = { name: "parley-read", version: "0.1.0" } as const;
+/** The reading program's default identity; the drill-down (`open.ts`) records under the same one. */
+export const READER = { name: "parley-read", version: "0.1.0" } as const;
 
 /** Collects the read's own lines and forwards them to a caller's sink when there is one. */
-class Tee implements Sink {
+export class Tee implements Sink {
   readonly lines: string[] = [];
   constructor(private readonly to?: Sink) {}
   write(line: string): void {
@@ -381,7 +383,8 @@ function inWindow(record: LoadedRecord, window: QueryWindow): boolean {
  * through the writer naming the asker, the view, the window, the budget applied and the records
  * the digest holds, and reporting the rest of the ranking as a count. Nothing is dropped by the
  * ranking itself — it reorders and never filters — so the count is exactly the tail of one total
- * order, and fetching that tail is flyingrobots/parley#51.
+ * order. The tail is named nowhere, so a caller reaches it by reading again under a wider budget;
+ * `openRecords` opens what the digest does name (flyingrobots/parley#51).
  */
 export async function queryReceipts(request: QueryRequest, opts: QueryOptions = {}): Promise<QueryOutcome> {
   const cwd = resolve(opts.cwd ?? process.cwd());

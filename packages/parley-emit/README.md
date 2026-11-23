@@ -90,11 +90,19 @@ conforming (`bun run doctor --stdout ... --stderr ... --receipt ...`).
 ## Arguments and flags
 
 `main` takes `argv` as `[tool.name, ...process.argv.slice(2)]`: the first element names the tool
-and is echoed in the head's `argv`. The command is the first positional argument that names one
-of the tool's own commands; a tool with one command needs none. The writer's flags, `--human`,
-`--humanize`, `--dry-run`, `--schema`, `--help` and `-h`, are recognised anywhere and removed
-from the arguments the handler sees. `PARLEY_SESSION` in the environment, or the `session`
-option, is carried as `session` on the bootstrap line and head; the writer never invents one.
+and is echoed in the head's `argv`.
+
+The writer's own flags, `--human`, `--humanize`, `--dry-run`, `--schema`, `--help` and `-h`, are
+recognised anywhere and set aside. **The first argument that remains is the command**, and only
+that one argument is removed: every other argument reaches `resolved`, `inputs` and the handler in
+order, a later one with a command's text included, so `edit --reason edit` gives the tool
+`["--reason", "edit"]`. In a tool with more than one command, a first argument that names none is
+`startup.unknown_command`, exit 3, even when a later argument names one: the writer cannot know
+which of the tool's flags take a value, so it never looks past the first position. A tool with
+one command may omit its name, and then nothing is removed. The Python writer follows the
+same rule (flyingrobots/parley#101); the spec does not say how a command is selected.
+
+`PARLEY_SESSION` in the environment, or the `session` option, is carried as `session` on the bootstrap line and head; the writer never invents one.
 
 The bootstrap line is the boundary for a usage error (spec §3.2, flyingrobots/parley#91), and a
 tool documents which side of it it checks on. A `resolved` or `inputs` callback runs before it:

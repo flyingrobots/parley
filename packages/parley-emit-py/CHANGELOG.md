@@ -33,3 +33,14 @@ package registry. A copy is pinned by the SHA-256 `--vendor-info` prints.
   `resolved` callback, before the bootstrap line, so a usage error is `startup.arguments_invalid`,
   exit 3, with no receipt (flyingrobots/parley#91); a `unittest` suite and a Bun
   test that runs it with the TypeScript oracles, so `bun test` covers this writer.
+
+### Fixed
+
+- **The command is chosen by position, and only that one argument is removed**
+  (flyingrobots/parley#101). `main` used to remove every argument equal to the command's name and
+  take the first argument anywhere that named a command, so a flag value equal to a command name
+  was lost (`edit --reason edit` gave the tool `["--reason"]`, and its parser then failed) or chosen
+  as the command (`--reason plan edit` ran `plan`). Now, once the writer's flags are set aside, the
+  first remaining argument is the command; in a tool with more than one, a first argument that
+  names none is `startup.unknown_command`, exit 3. The TypeScript writer follows the same rule.
+  A vendored copy carries the defect until it is re-vendored; `--vendor-info` names the new digest.

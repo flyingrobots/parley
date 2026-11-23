@@ -107,7 +107,7 @@ and `count files --human` printed `2 file(s)` and nothing else, exit 0.
 | Name | Job |
 | --- | --- |
 | `define_tool(name=, version=, commands=, retention=, sources=None, human=None)` | Checks the declaration: a non-empty name and version, at least one command, an intent and the four effects per command, a SemVer version on every emitted and error type, a positive retention count. `commands` maps a name to `{intent, effects, secrets?, emits: [{id, version, schema?}], errors?}` |
-| `main(tool, argv, handler, *, cwd, env, home, stdout, stderr, session, now, inputs, resolved)` | Runs one invocation and returns the exit status. `argv` is `[tool.name, *sys.argv[1:]]`; `handler(run, args)` is called with the arguments that are neither the command name nor a writer flag. Nothing raised inside escapes as a traceback |
+| `main(tool, argv, handler, *, cwd, env, home, stdout, stderr, session, now, inputs, resolved)` | Runs one invocation and returns the exit status. `argv` is `[tool.name, *sys.argv[1:]]`; `handler(run, args)` is called with the arguments that remain once the writer's flags and the command, the first argument, are set aside (see [Arguments and flags](#arguments-and-flags)). Nothing raised inside escapes as a traceback |
 | `Run` | `result(record, schema, receipt_extra=None)`, `page(cursor, has_more, record=None, receipt_extra=None)`, `step(decision, because, detail=...)`, `warning(code, problem, **fields)`, `error(code, problem, receipt_extra=None, **fields)`, `input(path, data)`, `finalise_inputs()`, `end(status=None)`; `id`, `cwd`, `receipt_path`, `receipt_dir`, `dry_run`, `ended`, `status`, `sink_failed`. A schema is `("id", "version")` or `{"id": ..., "version": ...}`; diagnostic fields are `remedy`, `remedy_target`, `measured`, `limit`, `retryable` and `detail` |
 | `check_record(value, schema)`, `validate_line(line, extra=None)`, `schema_subset_gap(schema)` | The bounded JSON Schema checker (below) |
 | `SCHEMAS`, `SCHEMA_SOURCE`, `schema_for(pair)`, `schema_text_digests()` | The embedded drafts and their pins |
@@ -136,10 +136,15 @@ and `count files --human` printed `2 file(s)` and nothing else, exit 0.
 
 ## Arguments and flags
 
-The command is the first positional argument that names one of the tool's commands; a tool with
-one command needs none. The writer's flags, `--human`, `--humanize`, `--dry-run`, `--schema`,
-`--help` and `-h`, are recognised anywhere and removed from the arguments the handler sees. No
-command named, in a tool with more than one, is `startup.unknown_command`, exit 3.
+The writer's own flags, `--human`, `--humanize`, `--dry-run`, `--schema`, `--help` and `-h`, are
+recognised anywhere and set aside. **The first argument that remains is the command**, and only
+that one argument is removed: every other argument reaches `resolved`, `inputs` and the handler in
+order, a later one with a command's text included, so `edit --reason edit` gives the tool
+`["--reason", "edit"]`. In a tool with more than one command, a first argument that names none is
+`startup.unknown_command`, exit 3, even when a later argument names one: the writer cannot know
+which of the tool's flags take a value, so it never looks past the first position. A tool with
+one command may omit its name, and then nothing is removed. The TypeScript writer follows the
+same rule (flyingrobots/parley#101); the spec does not say how a command is selected.
 `PARLEY_SESSION`, or the `session` argument, is carried as `session`; the writer never invents one.
 
 The bootstrap line is the boundary for a usage error, as decided on flyingrobots/parley#91: where

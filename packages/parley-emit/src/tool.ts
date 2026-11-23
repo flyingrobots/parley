@@ -350,12 +350,18 @@ function headTool(path: string): string | null {
   } catch { return null; } finally { if (fd !== null) closeSync(fd); }
 }
 
-/** §5.1: delete the oldest completed bundles of this tool beyond `count` in this location (another tool's receipts are never counted or deleted); never a receipt still in flight; never on a dry run; recorded as a decision. */
-function retain(run: Run, receiptDir: string, count: number, dryRun: boolean, at: number): void {
+/**
+ * §5.1: delete the oldest completed bundles of this tool beyond `count` in this location (another
+ * tool's receipts are never counted or deleted); never a receipt still in flight; never on a dry
+ * run; recorded as a decision. Exported for the package's own tests, not from the index:
+ * `afterScan` runs between the listing and the decisions, where another run can append.
+ */
+export function retain(run: Run, receiptDir: string, count: number, dryRun: boolean, at: number, afterScan?: () => void): void {
   let files: { name: string; mtime: number }[];
   try {
     files = readdirSync(receiptDir).filter((f) => f.endsWith(".jsonl") && headTool(join(receiptDir, f)) === run.tool).map((name) => ({ name, mtime: statSync(join(receiptDir, name)).mtimeMs }));
   } catch { return; }
+  afterScan?.();
   const excess = files.length - count;
   if (excess <= 0) return;
   const candidates = files.filter((f) => f.name !== `${run.id}.jsonl`).sort((a, b) => a.mtime - b.mtime || a.name.localeCompare(b.name));

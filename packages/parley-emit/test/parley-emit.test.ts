@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, writeFileSync, statSync } from "node:fs";
+import { appendFileSync, chmodSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, utimesSync, writeFileSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -8,6 +8,7 @@ import addFormats from "ajv-formats";
 import { doctor } from "../../../scripts/doctor.ts";
 import { checkRecord, defineTool, main, schemaSubsetGap, SCHEMA_SOURCE, SCHEMAS, transformDigest, ulid, writeWholeLine, historyDays, declaredProjection, findSuspectedSecret, isHistoryRefusal, refuse, refuseSuspectedSecrets, SECRET_PATTERNS, HISTORY_DEFAULT_DAYS, HISTORY_MAX_DAYS, type HistoryTransform, type MainOptions, type Run, type Sink, type ToolSpec } from "../src/index.ts";
 import { inspectSegment } from "../../../scripts/doctor.ts";
+import { retain } from "../src/tool.ts";
 
 const SCHEMAS_DIR = resolve(import.meta.dir, "../../../schemas");
 
@@ -151,6 +152,26 @@ describe("PE-2 inv", () => {
     const a = await runCount(dir, env, ["count", "--token", "s3cret-one"], body);
     const b = await runCount(dir, env, ["count", "--token", "s3cret-two"], body);
     expect(a.stdout.objs[0]!.inv).toBe(b.stdout.objs[0]!.inv);
+  });
+
+  test("an input the handler could not read is recorded unread, even when it appears later", async () => {
+    // PE-2g (flyingrobots/parley#110): the writer must not hash bytes the program never saw.
+    const { dir, env } = scratch();
+    const refused: string[] = [];
+    const r = await runCount(dir, env, ["count"], (run) => {
+      run.inputUnreadable("dag.json");
+      writeFileSync(join(run.cwd, "dag.json"), "{}");
+      try { run.inputUnreadable("typo.json"); } catch { refused.push("undeclared"); }
+      run.finaliseInputs();
+      try { run.inputUnreadable("dag.json"); } catch { refused.push("settled"); }
+      run.error({ code: "dag_spec.unreadable", problem: "could not read dag.json" });
+    }, {}, [{ path: "dag.json" }]);
+    expect(r.status).toBe(2);
+    const inputs = r.receiptLines.find((o) => o.event === "receipt.inputs") as { inputs: unknown[]; inv?: string };
+    expect(inputs.inputs).toEqual([{ path: "dag.json", error: "input.unreadable" }]);
+    expect([...r.stdout.objs, ...r.receiptLines].some((o) => "inv" in o)).toBe(false);
+    expect(refused).toEqual(["undeclared", "settled"]);
+    expect(r.violations).toEqual([]);
   });
 });
 
@@ -413,6 +434,27 @@ describe("PE-6 repository hygiene", () => {
     for (const r of rs) expect(r.violations).toEqual([]);
     expect(readFileSync(join(dir, ".parley", ".gitignore"), "utf8").split("\n")).toContain("*");
   });
+
+  test("a negation that can re-include receipts/ sends the receipt to the fallback", async () => {
+    // PE-6e (flyingrobots/parley#109): with `*`, nothing under receipts/ can be staged unless a
+    // negation re-includes the directory itself; a writer that cannot tell treats it as one.
+    for (const text of ["*\n!receipts/\n!receipts/**\n", "*\n!rec*\n", "*\n!*/\n", "*\n!**/receipts\n", "*\n!receipts/**\n", "*\n!/Receipts/\n", "*\n!r[e]ceipts\n"]) {
+      const { dir, env, state } = scratch();
+      mkdirSync(join(dir, ".parley")); writeFileSync(join(dir, ".parley", ".gitignore"), text);
+      const r = await runCount(dir, env, ["count"], () => {});
+      expect(readFileSync(join(dir, ".parley", ".gitignore"), "utf8")).toBe(text);
+      expect([text, r.path!.startsWith(join(state, "parley"))]).toEqual([text, true]);
+      const warning = r.stderr.objs.find((o) => o.code === "receipt.relocated") as { problem: string } | undefined;
+      expect(warning?.problem).toContain("negation");
+      expect(r.violations).toEqual([]);
+    }
+    for (const text of ["*\n!keep\n", "*\n# !receipts/\n", "*\n\\!receipts\n", "*\n"]) {
+      const { dir, env } = scratch();
+      mkdirSync(join(dir, ".parley")); writeFileSync(join(dir, ".parley", ".gitignore"), text);
+      const r = await runCount(dir, env, ["count"], () => {});
+      expect([text, r.path!.startsWith(join(dir, ".parley"))]).toEqual([text, true]);
+    }
+  });
 });
 
 describe("PE-7 redaction", () => {
@@ -571,6 +613,24 @@ describe("PE-10 discovery", () => {
     const ids = s.stdout.objs.filter((o) => o.event === "schema").map((o) => `${o.id}@${o.version}`);
     expect(ids).toEqual(["t.count@1.0.0", "parley.error@2.0.0", "parley.startup.failed@1.0.0"]);
     expect(check(dir, s).violations).toEqual([]);
+  });
+
+  test("a schema document is published as declared, even when a secret value occurs in it", async () => {
+    // PE-10d (flyingrobots/parley#111): a static schema document is not run data; scrubbing a
+    // coincidental match would advertise a pair whose document it no longer is.
+    const { dir, env } = scratch();
+    const s = streams();
+    const spec = tool({ commands: { count: { intent: "Count each object under the working directory", effects: { reads: ["<cwd>/**"], writes: [], network: false, idempotent: true }, secrets: ["T_TOKEN"], emits: [{ id: "t.count", version: "1.0.0", schema: RESULT }] } } });
+    expect(await main(spec, ["t", "count", "--help"], async () => {}, { cwd: dir, env: { ...env, T_TOKEN: "object" }, ...s })).toBe(0);
+    const docs = new Map(s.stdout.objs.filter((o) => o.event === "schema").map((o) => [o.id as string, o.schema]));
+    expect(docs.get("t.count")).toEqual(RESULT);
+    expect(docs.get("parley.error")).toEqual(SCHEMAS.find((x) => x.id === "parley.error" && x.version === "2.0.0")!.schema);
+    expect((s.stdout.objs.find((o) => o.event === "command") as { intent: string }).intent).toBe("Count each [redacted] under the working directory");
+    const c = check(dir, s);
+    const schemaSeqs = new Set(c.receiptLines.filter((o) => o.event === "schema").map((o) => o.seq));
+    expect(c.receiptLines.some((o) => o.event === "redaction" && schemaSeqs.has(o.in))).toBe(false);
+    expect(s.stdout.objs.at(-1)!.redacted).toBe(true);
+    expect(c.violations).toEqual([]);
   });
 });
 
@@ -803,6 +863,25 @@ describe("PE-16 retention and in-flight runs (F-5)", () => {
     await runCount(dir, env, ["count"], () => {}, { retention: { count: 1 } });
     expect(existsSync(big.path!)).toBe(false);
     expect(existsSync(sidecarDir)).toBe(false);
+  });
+
+  test("retention re-reads a receipt's age at the decision and spares one that moved", async () => {
+    // PE-16c (flyingrobots/parley#112): an incomplete receipt silent for two days whose owner
+    // appends after the scan must not be judged by the scan's mtime.
+    const { dir, env } = scratch();
+    await runCount(dir, env, ["count"], () => {});
+    const rdir = join(dir, ".parley", "receipts");
+    const id = ulid(5);
+    const stale = join(rdir, `${id}.jsonl`);
+    writeFileSync(stale, JSON.stringify({ event: "receipt.head", t: 1, seq: 1, run: id, tool: "t", v: "0.0.1", argv: [], resolved: {}, inputs: [], _schema: { id: "parley.receipt.head", version: "2.0.0" } }) + "\n");
+    const twoDays = (Date.now() - 2 * 86_400_000) / 1000;
+    utimesSync(stale, twoDays, twoDays);
+    await runCount(dir, env, ["count"], (run) => {
+      retain(run, run.receiptDir, 1, false, Date.now(), () => {
+        appendFileSync(stale, JSON.stringify({ event: "receipt.step", t: 2, seq: 2, run: id, decision: "resumed", because: "its owner woke", _schema: { id: "parley.receipt.step", version: "1.0.0" } }) + "\n");
+      });
+    });
+    expect(existsSync(stale)).toBe(true);
   });
 });
 

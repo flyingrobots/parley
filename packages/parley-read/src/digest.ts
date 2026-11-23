@@ -18,9 +18,12 @@
 // most that many records. `budget.bytes` is optional and bounds the line: when it is stated, the
 // `parley.lens` line the read writes — serialised JSON plus its newline, measured in UTF-8 bytes
 // — is at most that many bytes, and records are dropped from the end of the ranking until it
-// fits. A `bytes` budget too small even for a digest naming no records leaves it naming none: the
-// envelope and the lens's own fields are not negotiable, because a lens that dropped them would
-// no longer say what it is. `budget.ms` bounds nothing here, and the reader's page says so.
+// fits. The envelope and the lens's own fields are not negotiable, because a lens that dropped
+// them would no longer say what it is, so a `bytes` budget too small even for a digest naming no
+// records cannot be met at all: `digestFor` reports that as `fits: false`, and the read declines
+// rather than write a line over the bound, naming the smallest budget that would hold one
+// (`sufficientBytes`, flyingrobots/parley#71). `budget.ms` is a deadline on the read as a whole,
+// not on the digest, and is applied in `query.ts`.
 //
 // **What the bound cuts is the tail of the ranking**, never a record chosen some other way. The
 // order is `rankRecords`'s total order (flyingrobots/parley#49), which reorders and never filters,
@@ -112,6 +115,11 @@ export interface Digested {
   readonly excluded: number;
   /** The digest's line in UTF-8 bytes, its newline included, as the writer will write it. */
   readonly bytes: number;
+  /**
+   * Whether the line is within `budget.bytes`. Always true when no byte bound is stated; false only
+   * when even a digest naming no records is over it, which the read declines rather than writes.
+   */
+  readonly fits: boolean;
 }
 
 /**
@@ -168,6 +176,45 @@ export function digestBytes(digest: Digest, envelope: LineEnvelope): number {
  * grows as the prefix does: one more record adds its entry, at least its `(run, seq)` pair, while
  * the excluded count beside it can shrink by at most one digit.
  */
+/** The digest naming the first `keep` of `entries` out of a ranking `total` records long. */
+function buildDigest(query: AcceptedQuery, answers: RecordRef, entries: readonly LensEntry[], total: number, keep: number): Digest {
+  const excluded = total - keep;
+  return {
+    event: "lens",
+    query: answers,
+    asker: query.asker,
+    view: query.view,
+    budget: query.budget,
+    window: query.window,
+    // `none` is a claim that nothing was left out, so it is only ever paired with 0; the schema
+    // refuses `none` beside a non-zero count (flyingrobots/parley#46).
+    loss: { bound: excluded === 0 ? "none" : "count-only", excluded },
+    records: entries.slice(0, keep),
+  };
+}
+
+/**
+ * The smallest `budget.bytes` under which this query's digest, over a ranking `total` records
+ * long, can be written at all: the line of a digest naming no records, with that very number as
+ * its stated `bytes`. Pure.
+ *
+ * The digest carries the budget it was bounded by, so the size depends on the digits of the bound
+ * itself. The search starts from 1 and takes the size the line would have under the current
+ * candidate, until a candidate holds its own line. Each step is a size some smaller candidate
+ * already needed, so no smaller bound can fit and the first fixed point is the least one; the size
+ * only grows with the digits of the bound, so it stops within a few steps.
+ *
+ * The answer is exact for a read of the same question over the same ranking, measured against the
+ * same envelope: `digestFor` under it names no records and fits, and one byte less does not.
+ */
+export function sufficientBytes(query: AcceptedQuery, answers: RecordRef, total: number, envelope: LineEnvelope): number {
+  const size = (bytes: number) =>
+    digestBytes(buildDigest({ ...query, budget: { ...query.budget, bytes } }, answers, [], total, 0), envelope);
+  let bytes = 1;
+  for (let next = size(bytes); next > bytes; next = size(bytes)) bytes = next;
+  return bytes;
+}
+
 export function digestFor(
   query: AcceptedQuery,
   answers: RecordRef,
@@ -177,28 +224,14 @@ export function digestFor(
 ): Digested {
   // Built once, so every candidate prefix the byte search measures is cut from the same entries.
   const entries = ranked.map((record) => lensEntry(record, outcomes));
-  const build = (keep: number): Digest => {
-    const excluded = ranked.length - keep;
-    return {
-      event: "lens",
-      query: answers,
-      asker: query.asker,
-      view: query.view,
-      budget: query.budget,
-      window: query.window,
-      // `none` is a claim that nothing was left out, so it is only ever paired with 0; the schema
-      // refuses `none` beside a non-zero count (flyingrobots/parley#46).
-      loss: { bound: excluded === 0 ? "none" : "count-only", excluded },
-      records: entries.slice(0, keep),
-    };
-  };
+  const build = (keep: number): Digest => buildDigest(query, answers, entries, ranked.length, keep);
 
   let keep = Math.min(ranked.length, query.budget.records);
   const bytes = query.budget.bytes;
   if (bytes !== undefined && digestBytes(build(keep), envelope) > bytes) {
     // The largest prefix whose line fits. `lo` is a length that is kept rather than one known to
-    // fit: a budget too small even for an empty digest leaves 0, which names no records and says
-    // so, rather than writing a line that breaks the bound the caller stated.
+    // fit: a budget too small even for an empty digest leaves 0, and `fits` below says the bound
+    // could not be met, so the read declines instead of writing the line.
     let lo = 0;
     let hi = keep;
     while (lo < hi) {
@@ -210,10 +243,12 @@ export function digestFor(
   }
 
   const digest = build(keep);
+  const size = digestBytes(digest, envelope);
   return {
     digest,
     records: ranked.slice(0, keep),
     excluded: ranked.length - keep,
-    bytes: digestBytes(digest, envelope),
+    bytes: size,
+    fits: bytes === undefined || size <= bytes,
   };
 }

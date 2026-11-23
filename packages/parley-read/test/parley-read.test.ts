@@ -2290,8 +2290,12 @@ function declined(outcome: QueryOutcome): QueryDeclined {
   return outcome;
 }
 
-const stepsOf = (outcome: { lines: readonly Record<string, unknown>[] }) =>
-  outcome.lines.filter((l) => l.event === "receipt.step").map((l) => l.decision as string);
+/** The decisions a read's `receipt.step` records state, read back from its receipt: steps go to the receipt only (§6.1). */
+function stepsOf(dir: string, env: Record<string, string>, run: string): string[] {
+  const own = loadReceipts({ cwd: dir, env }).bundles.find((b) => b.run === run);
+  if (!own) throw new Error(`the read's own bundle ${run} is not in the load`);
+  return own.records.filter((r) => r.event === "receipt.step").map((r) => (r.record as Record<string, unknown>).decision as string);
+}
 
 describe("RD-70 budget.ms is a deadline for the whole read, checked between phases", () => {
   test("an ms deadline met exactly answers", async () => {
@@ -2321,7 +2325,10 @@ describe("RD-70 budget.ms is a deadline for the whole read, checked between phas
     // what would have sufficed.
     expect(out.decline.atLeast).toEqual({ ms: 80 });
     expect(out.decline.sufficient).toEqual({});
-    expect(stepsOf(out).some((d) => d.startsWith("ranked"))).toBe(false);
+    const steps = stepsOf(dir, env, out.run);
+    expect(steps.some((d) => d.startsWith("recorded the read"))).toBe(true);
+    expect(steps.some((d) => d.startsWith("ranked"))).toBe(false);
+    expect(steps.some((d) => d.startsWith("declined the read"))).toBe(true);
     expect(out.lines.some((l) => l.event === "lens")).toBe(false);
   });
 
@@ -2335,7 +2342,7 @@ describe("RD-70 budget.ms is a deadline for the whole read, checked between phas
     expect(out.decline.phase).toBe("rank");
     expect(out.decline.measured).toEqual({ ms: 51 });
     expect(out.decline.atLeast).toEqual({ ms: 51 });
-    expect(stepsOf(out).some((d) => d.startsWith("ranked"))).toBe(true);
+    expect(stepsOf(dir, env, out.run).some((d) => d.startsWith("ranked"))).toBe(true);
     expect(out.lines.some((l) => l.event === "lens")).toBe(false);
   });
 

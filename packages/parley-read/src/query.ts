@@ -32,9 +32,21 @@
 // states one, carrying the asker, the view, the window and the budget applied, and reporting the
 // records the ranking placed beyond the bound as a count — zero included, never absent. `digest.ts`
 // holds the bound and `docs/topics/parley-read/README.md` states it.
+//
+// And it **declines** a read that cannot be answered within its budget (flyingrobots/parley#71).
+// `budget.ms` is a deadline for the whole read, measured on the read's own clock from the call and
+// checked between phases: after the load, after the ranking, and before the digest is written. A
+// read past it at a check stops there. No read answers from a partial load, because a digest drawn
+// from part of the history would carry an excluded count of records it never saw. A `bytes` budget
+// too small even for a digest naming no records cannot be met either. In both cases the read is
+// still a recorded run — the `parley.query` is already in its receipt — and it ends with one
+// `parley.error`, code `query.over_budget`, stating the budget given, what was measured, and the
+// budget that would have sufficed where that is known, then closes with status 2. A decline is not
+// a refusal: a refusal is pure and pre-load, about a question nobody could state; a decline is a
+// verdict about real history, and only a read that ran can give one.
 import { resolve } from "node:path";
-import { defineTool, main, type Sink } from "@flyingrobots/parley-emit";
-import { LENS_SCHEMA, digestFor, type Digest } from "./digest.ts";
+import { defineTool, main, type Run, type Sink } from "@flyingrobots/parley-emit";
+import { LENS_SCHEMA, digestFor, sufficientBytes, type Digest } from "./digest.ts";
 import { loadReceipts, type Load, type LoadOptions, type LoadedRecord } from "./load.ts";
 import { repoReceiptDir, stateReceiptDir } from "./locate.ts";
 import { rankRecords, type Ranking } from "./rank.ts";
@@ -130,6 +142,7 @@ export type QueryPlan = { readonly refused: false; readonly query: AcceptedQuery
 
 export interface QueryAnswer {
   readonly refused: false;
+  readonly declined: false;
   /** The read's own run (§2.1): the run the query record belongs to, never a run being read. */
   readonly run: string;
   /** The receipt the read wrote, which is where the recorded query lives. */
@@ -186,7 +199,138 @@ export interface QueryAnswer {
   readonly status: number;
 }
 
-export type QueryOutcome = QueryAnswer | QueryRefused;
+/** The phase a deadline check follows. `open` is the drill-down's, after the ids are resolved. */
+export type BudgetPhase = "load" | "rank" | "digest" | "open";
+
+/** The one code a read declines with. Its `measured` and `limit` are the bound that declined. */
+export const OVER_BUDGET = "query.over_budget" as const;
+
+/**
+ * Why a read that ran could not answer within its budget, as the `parley.error` it reported states
+ * it (the error's `detail` carries `bound`, `phase`, `given`, `measured`, `sufficient` and
+ * `at_least` in snake case).
+ *
+ * - `bound` is the bound that declined: `ms` when the deadline passed, else `bytes`.
+ * - `measured` holds what was measured against each bound that could not be met: the elapsed
+ *   milliseconds, rounded up, and the size of the smallest digest in bytes.
+ * - `sufficient` holds a budget known to be enough for this read over this history: the elapsed
+ *   time when the check that failed was the last one (nothing but writing was left), and the
+ *   smallest digest's size, which is exact.
+ * - `atLeast` holds a budget known to be needed but not known to be enough: the elapsed time when
+ *   the read stopped with phases still to run, which would have cost more.
+ */
+export interface BudgetDecline {
+  readonly code: typeof OVER_BUDGET;
+  readonly bound: "ms" | "bytes";
+  readonly phase: BudgetPhase;
+  readonly problem: string;
+  readonly remedy: string;
+  /** The budget the read was given, exactly as it was recorded. */
+  readonly given: Budget;
+  readonly measured: { readonly ms?: number; readonly bytes?: number };
+  readonly sufficient: { readonly ms?: number; readonly bytes?: number };
+  readonly atLeast: { readonly ms?: number };
+}
+
+/** A read that ran, was recorded, and declined on budget grounds. It wrote no digest. */
+export interface QueryDeclined {
+  readonly refused: false;
+  readonly declined: true;
+  readonly run: string;
+  readonly receipt: string;
+  readonly query: { readonly run: string; readonly seq: number };
+  readonly asker: Asker;
+  readonly view: View;
+  readonly budget: Budget;
+  readonly budgetDefaulted: boolean;
+  readonly window: QueryWindow;
+  readonly note?: string;
+  readonly decline: BudgetDecline;
+  /** The load the read made before it declined; a read always loads whole or not at all. */
+  readonly load: Load;
+  readonly lines: readonly Record<string, unknown>[];
+  /** 2: the run reported a structured error (§3.4). */
+  readonly status: number;
+}
+
+export type QueryOutcome = QueryAnswer | QueryDeclined | QueryRefused;
+
+/**
+ * A read's deadline, on the read's own clock, from the reading taken when the read was called; `check`
+ * measures the elapsed time at a phase boundary and reports whether `budget.ms` has passed. The
+ * deadline is inclusive: elapsed time equal to `ms` is within it. With no `ms`, nothing passes.
+ */
+export class Deadline {
+  /** `start` is a reading of `clock` already taken, so a caller can start the deadline before it knows `ms`. */
+  constructor(readonly ms: number | undefined, private readonly clock: () => number, private readonly start: number = clock()) {}
+  check(): { readonly elapsed: number; readonly passed: boolean } {
+    const raw = this.clock() - this.start;
+    // Reported in whole milliseconds, rounded up, so the figure stated is never less than the time
+    // spent and is a valid `budget.ms` (a positive integer) to hand back.
+    const elapsed = Math.max(1, Math.ceil(raw));
+    return { elapsed, passed: this.ms !== undefined && raw > this.ms };
+  }
+}
+
+/** The default clock: monotonic, so a wall-clock adjustment mid-read moves no deadline. */
+export const MONOTONIC = (): number => performance.now();
+
+const AFTER: Record<BudgetPhase, string> = {
+  load: "the load",
+  rank: "the ranking",
+  digest: "the ranking, before the digest was written",
+  open: "the ids were opened",
+};
+
+/**
+ * Build the decline for a deadline that passed and/or a byte bound that could not be met, report it
+ * on the run as a step and a `query.over_budget` error, and return it. `last` is whether the check
+ * was the read's last, which is what makes the elapsed time sufficient rather than a lower bound.
+ */
+export function declineOnRun(
+  run: Run,
+  budget: Budget,
+  phase: BudgetPhase,
+  last: boolean,
+  over: { readonly elapsed?: number; readonly bytes?: number },
+): BudgetDecline {
+  const bound: "ms" | "bytes" = over.elapsed !== undefined ? "ms" : "bytes";
+  const measured = { ...(over.elapsed === undefined ? {} : { ms: over.elapsed }), ...(over.bytes === undefined ? {} : { bytes: over.bytes }) };
+  const sufficient = {
+    ...(over.elapsed !== undefined && last ? { ms: over.elapsed } : {}),
+    ...(over.bytes === undefined ? {} : { bytes: over.bytes }),
+  };
+  const atLeast = over.elapsed !== undefined && !last ? { ms: over.elapsed } : {};
+  const problems: string[] = [];
+  const remedies: string[] = [];
+  if (over.elapsed !== undefined) {
+    problems.push(`the read passed its ${budget.ms} ms deadline: ${over.elapsed} ms had elapsed by the end of ${AFTER[phase]}`);
+    remedies.push(last
+      ? `state budget.ms of ${over.elapsed} or more: by then everything but writing the answer was done`
+      : `state budget.ms above ${over.elapsed}: the read stopped with work still to do, so it needs more than that; the load reads every receipt in both locations whatever the window, so a narrower window does not shorten it`);
+  }
+  if (over.bytes !== undefined) {
+    problems.push(`budget.bytes of ${budget.bytes} cannot hold even a digest naming no records, whose line is ${over.bytes} bytes`);
+    remedies.push(`state budget.bytes of ${over.bytes} or more for a digest naming no records; each record it names adds its entry on top`);
+  }
+  const problem = problems.join("; and ");
+  const remedy = remedies.join("; and ");
+  run.step(
+    `declined the read: ${problem}`,
+    "flyingrobots/parley#71: a read that cannot answer within its budget says so and names the budget that would; it never answers from a partial load and never writes a line over a stated bound",
+    { bound, phase, given: budget, measured, sufficient, at_least: atLeast },
+  );
+  run.error({
+    code: OVER_BUDGET,
+    problem,
+    measured: bound === "ms" ? over.elapsed! : over.bytes!,
+    limit: bound === "ms" ? budget.ms! : budget.bytes!,
+    remedy,
+    retryable: true,
+    detail: { bound, phase, given: budget, measured, sufficient, at_least: atLeast },
+  });
+  return { code: OVER_BUDGET, bound, phase, problem, remedy, given: budget, measured, sufficient, atLeast };
+}
 
 export interface QueryOptions extends LoadOptions {
   /**
@@ -200,7 +344,14 @@ export interface QueryOptions extends LoadOptions {
   readonly stderr?: Sink;
   /** Carried as `session` on the read's lines; never invented (§2.1). */
   readonly session?: string;
+  /** The writer's clock, which stamps `t` on every line the read writes. */
   readonly now?: () => number;
+  /**
+   * The clock `budget.ms` is measured on, in milliseconds; only differences between its readings
+   * matter. The default is monotonic (`performance.now`). It is read once when the read is called
+   * and once at each check, so a test can script it and no case has to sleep.
+   */
+  readonly clock?: () => number;
 }
 
 /** The reading program's default identity; the drill-down (`open.ts`) records under the same one. */
@@ -387,6 +538,9 @@ function inWindow(record: LoadedRecord, window: QueryWindow): boolean {
  * `openRecords` opens what the digest does name (flyingrobots/parley#51).
  */
 export async function queryReceipts(request: QueryRequest, opts: QueryOptions = {}): Promise<QueryOutcome> {
+  // The deadline is the whole read's, so its clock starts before anything else does.
+  const clock = opts.clock ?? MONOTONIC;
+  const started = clock();
   const cwd = resolve(opts.cwd ?? process.cwd());
   // §9's inference, as flyingrobots/parley#46 settled it and flyingrobots/parley#61 decided in
   // full: `asker.cwd` comes from the process when the caller does not state it. `asker.task` is
@@ -395,6 +549,7 @@ export async function queryReceipts(request: QueryRequest, opts: QueryOptions = 
   const plan = planQuery({ ...request, asker: { ...request.asker, cwd: request.asker?.cwd ?? cwd } });
   if (plan.refused) return plan;
   const query = plan.query;
+  const deadline = new Deadline(query.budget.ms, clock, started);
 
   const env = opts.env ?? process.env;
   const stdout = new Tee(opts.stdout);
@@ -422,7 +577,7 @@ export async function queryReceipts(request: QueryRequest, opts: QueryOptions = 
     retention: { count: NO_RETENTION },
   });
 
-  let answer: Omit<QueryAnswer, "status" | "lines"> | undefined;
+  let answer: Omit<QueryAnswer, "status" | "lines"> | Omit<QueryDeclined, "status" | "lines"> | undefined;
   const status = await main(spec, [spec.name, "read"], (run) => {
     const seq = run.result(queryRecord(query), QUERY_SCHEMA);
     run.step(
@@ -432,6 +587,26 @@ export async function queryReceipts(request: QueryRequest, opts: QueryOptions = 
     );
 
     const load = loadReceipts({ cwd, env, ...(opts.home === undefined ? {} : { home: opts.home }), ...(opts.sidecars === undefined ? {} : { sidecars: opts.sidecars }), ...(opts.validate === undefined ? {} : { validate: opts.validate }), ...(opts.history === undefined ? {} : { history: opts.history }) });
+    const recorded = {
+      refused: false as const,
+      declined: true as const,
+      run: run.id,
+      receipt: run.receiptPath,
+      query: { run: run.id, seq },
+      asker: query.asker,
+      view: query.view,
+      budget: query.budget,
+      budgetDefaulted: query.budgetDefaulted,
+      window: query.window,
+      ...(query.note === undefined ? {} : { note: query.note }),
+      load,
+    };
+    const afterLoad = deadline.check();
+    if (afterLoad.passed) {
+      answer = { ...recorded, decline: declineOnRun(run, query.budget, "load", false, { elapsed: afterLoad.elapsed }) };
+      return;
+    }
+
     const all = load.bundles.flatMap((b) => b.records);
     const own = all.filter((r) => r.run === run.id);
     const others = all.filter((r) => r.run !== run.id);
@@ -450,6 +625,11 @@ export async function queryReceipts(request: QueryRequest, opts: QueryOptions = 
         view: query.view, implies_change: ranking.impliesChange, tiers: ranking.counts,
       },
     );
+    const afterRank = deadline.check();
+    if (afterRank.passed) {
+      answer = { ...recorded, decline: declineOnRun(run, query.budget, "rank", false, { elapsed: afterRank.elapsed }) };
+      return;
+    }
 
     // The digest's line is bounded in bytes before it is written, so the envelope it will be
     // written with has to be known here. `run.result` and `run.step` each take one seq in order
@@ -463,15 +643,31 @@ export async function queryReceipts(request: QueryRequest, opts: QueryOptions = 
     // line of its own in between — a history stream that fails mid-run is a `warning` — and a seq
     // that gained a digit would put the line one byte over a budget the caller stated. A stated
     // bound that holds is worth a byte.
+    const envelope = { run: run.id, seq: (ranked + 2) * 10, t: (opts.now ?? Date.now)() };
     const digested = digestFor(
       query,
       { run: run.id, seq },
       ranking.records,
-      { run: run.id, seq: (ranked + 2) * 10, t: (opts.now ?? Date.now)() },
+      envelope,
       // Each entry's outcome is the whole window's verdict on its run, not the prefix's.
       ranking.outcomes,
     );
     const records = digested.records;
+
+    // The last check: the digest is built and only writing it is left. A byte bound that even an
+    // empty digest is over is declined here too, beside the deadline when both fail, so a caller
+    // learns every bound it has to move in one read.
+    const beforeDigest = deadline.check();
+    if (beforeDigest.passed || !digested.fits) {
+      answer = {
+        ...recorded,
+        decline: declineOnRun(run, query.budget, "digest", true, {
+          ...(beforeDigest.passed ? { elapsed: beforeDigest.elapsed } : {}),
+          ...(digested.fits ? {} : { bytes: sufficientBytes(query, { run: run.id, seq }, ranking.records.length, envelope) }),
+        }),
+      };
+      return;
+    }
 
     run.step(
       digested.excluded === 0
@@ -496,6 +692,7 @@ export async function queryReceipts(request: QueryRequest, opts: QueryOptions = 
 
     answer = {
       refused: false,
+      declined: false,
       run: run.id,
       receipt: run.receiptPath,
       query: { run: run.id, seq },

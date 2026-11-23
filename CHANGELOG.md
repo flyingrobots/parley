@@ -31,6 +31,17 @@ rather than moving its version.
   for one optional field; recording the ids only in a `receipt.step`, where a reader of the query
   line could not tell a drill-down from a read. The shipped copies in both packages were
   re-synced, which moves no version.
+- `parley.lens` 1.0.0 (draft): each entry in `records` may carry a **summary** of the record it
+  names (flyingrobots/parley#77): `event` (a non-empty string), `t` (a non-negative integer) and
+  `outcome` (`failed`, `undetermined` or `succeeded`, the window's verdict on the record's run).
+  All three are optional, because a record with no usable event or `t` is named without one rather
+  than with a placeholder. Nothing required changed, so every `parley.lens` line written before
+  still validates. The decision behind it: in the cold resume
+  (`docs/topics/reader/cold-resume.md`) most drill-downs were spent learning what an entry was.
+  Rejected: summaries on a separate line, which a reader has to correlate with this one; inlining
+  whole records, which is the drill-down and breaks the byte bound. The summary is part of the line
+  `budget.bytes` bounds, so a byte budget names fewer records than before. The shipped copies in
+  both packages were re-synced, which moves no version.
 
 ### Decided
 

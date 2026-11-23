@@ -110,7 +110,12 @@ the view, and results computed under different budgets are not comparable. It al
 - **the records it was built from**, by `(run, seq)`. Stored, not recomputed: projecting records
   down into a result is cheap, and expanding a result back up into records may be impossible
   within the caller's budget. A result is built from records, never from another result, because
-  each further summarising step adds its own loss to the loss already taken;
+  each further summarising step adds its own loss to the loss already taken. Each name also
+  carries a **fixed summary** of the record: its `event`, its `t`, and the `outcome` the window
+  establishes for its run (`failed`, `undetermined` or `succeeded`), each absent when the record
+  does not carry it rather than filled in. It is what lets a reader choose what to open before
+  opening anything ([flyingrobots/parley#77](https://github.com/flyingrobots/parley/issues/77)),
+  and it is part of the line a byte budget bounds;
 - **a loss bound**, `loss.bound`, with the count of what was left out beside it.
 
 `loss.bound` is `none` when nothing in the window was left out — then `excluded` is `0`, and the
@@ -161,8 +166,8 @@ The lens of the result that answers it, naming the failed run of this specificat
  "budget":{"records":20},
  "window":{"from":1795240100000,"to":1795326500000},
  "loss":{"bound":"count-only","excluded":184},
- "records":[{"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8","seq":4},
-            {"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8","seq":9}],
+ "records":[{"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8","seq":4,"event":"error","t":1795326412352,"outcome":"failed"},
+            {"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8","seq":9,"event":"end","t":1795326412400,"outcome":"failed"}],
  "_schema":{"id":"parley.lens","version":"1.0.0"}}
 ```
 

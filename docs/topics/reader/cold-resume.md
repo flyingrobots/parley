@@ -282,7 +282,8 @@ What the run sections did not settle, by the third reader's account:
   turns that into two commits. The decision for flyingrobots/parley#83 was to carry `argv` rather
   than `resolved`, because `resolved` is larger and shaped by the tool. Those four heads are what
   that decision cost, filed as
-  [flyingrobots/parley#90](https://github.com/flyingrobots/parley/issues/90).
+  [flyingrobots/parley#90](https://github.com/flyingrobots/parley/issues/90). Fixed since: see
+  [the fourth reader](#re-run-against-resolved-in-the-run-sections), who opened no head.
 - **Paging.** A query of 400 records under `what-ran` printed more than the reader's harness would
   show inline, and it narrowed the window instead. Most of its 14 queries were that narrowing: the
   cost the earlier readers paid in drill-downs, moved into queries. Folding repeated runs,
@@ -330,6 +331,63 @@ burst's ten runs of `HEAD~1..HEAD`, six without `--human` and four with it. foot
 with and without the flag the same `inv`, so they are one invocation. The section shows the
 representative's own `argv`, which for that group happens to carry `--human`. This is
 what folding by `inv` rather than by `argv` means, as the issue chose.
+
+## Re-run against `resolved` in the run sections
+
+After [flyingrobots/parley#90](https://github.com/flyingrobots/parley/issues/90), each run section
+carries the head's `resolved` whole, and runs of one invocation are folded
+([folding repeated runs](#folding-repeated-runs)). The exercise was run a fourth time on
+2026-11-22 to see whether a reader still opened heads to learn what a run compared.
+
+| | |
+| --- | --- |
+| History | The same 50 footprint receipts, copied byte for byte into a fresh directory, SHA-256 identical to the earlier copies. No earlier reader's receipts were copied |
+| Window | The same seven days, `1794790009000` to `1795394809000`. The reader was told the time |
+| Code | `run-resolved` at `94786da`: flyingrobots/parley#79's fold and flyingrobots/parley#90's `resolved` |
+| The reader | A fresh agent with the same two instruments and the same rules (no other command, no pipe, chain or file read), asker task `flyingrobots/parley#90`, and nothing else |
+
+| | Second reader | Third reader | Fourth reader |
+| --- | --- | --- | --- |
+| Queries | 5 | 14 | 4 |
+| Drill-downs | 7 | 4 | 1 |
+| Ids opened | 49 | 9 | 5, all `opened` |
+| Heads (`seq` 1) opened | 26 | 4, all for `resolved` | **0** |
+
+These counts were checked against the reader's captures: four query captures, one drill-down
+capture, and five ids, each `opened` and none a `receipt.head`. In its own words, under "receipt
+heads opened": "None." Its four queries were one under each of `what-ran`, `what-failed`,
+`what-changed` and `how-it-decided`, the last three with a wider `--records`. No section in
+any of them dropped `resolved`.
+
+The five ids it opened, and why, in its own words:
+
+| Id | Why |
+| --- | --- |
+| `01M82Q0M72VXTQ5RHMVVC2XYHX:4` | "the `git.diff_failed` error ... for the actual cause and exit status" |
+| `01M82S0CSBFQPSP3QGQYCX276H:5` | "`graft.review_failed` ... why graft failed in burst 2 but not in the others" |
+| `01M82S0CSBFQPSP3QGQYCX276H:9` | "`graft.exports_failed` ... gave the concrete cause, `env: node` missing" |
+| `01M82PJNQXQBW5ZRRM8T0MENJ7:4` | "the last step of a run with no end ... to see where the run stopped" |
+| `01M82TGZ20GM3332VGEF7GJKP8:5` | "the result of the only non-pattern run ... for what the range contained" |
+
+Every one was opened for what a record said, never for what a run was or what it compared. It
+gave each burst's commits from the sections: for example, `HEAD~2..HEAD~1` as `db68fed..e1e9ce6` at
+14:38, and burst B's three commits, `c72d6eb`, `fb09508` and `7e9959d`, including the
+`fb09508..7e9959d` pair the third reader opened a head for. Those were read off `resolved`, which
+is the head's own record, and were not checked again against footprint's `git log`. It
+reconstructed the same three bursts and the `543477a~1..543477a` run between them, the two runs
+at 14:38 that never ended, the deliberate `no-such-ref-9f8e7d..HEAD` failure in each burst, and
+`node` missing from `PATH` at 15:21.
+
+What it could not settle, by its account:
+
+- **How many runs there were.** It added the seven `folded.runs` counts to 40 and could not tell
+  whether a count includes the run it is attached to, so it said "either 57 or about 50". It does
+  include it: the window holds 50 runs. The schema says so, but a lens line does not, and a cold
+  reader has only the line. Filed as
+  [flyingrobots/parley#100](https://github.com/flyingrobots/parley/issues/100).
+- **The folded runs' own times.** The fold names none of them, by design. A narrower window, or the
+  loader, finds them.
+- As before: why the 14:38 runs never ended, who started each burst, and why `node` was missing.
 
 ## How the exercise departed from its rules
 

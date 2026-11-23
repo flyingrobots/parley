@@ -2620,7 +2620,7 @@ describe("RD-80 a lens states each run it names once", () => {
     // third (flyingrobots/parley#79, RD-90); the failing run is not the same result and stands alone.
     const byId = loadedById(dir, env);
     expect(held.runs.map((r) => r.run)).toEqual([broke.run, third.run]);
-    expect(held.runs[1]!.folded).toEqual({ runs: 2, records: [...byId.values()].filter((r) => r.run === first.run).length });
+    expect(held.runs[1]!.folded).toEqual({ others: 1, records: [...byId.values()].filter((r) => r.run === first.run).length });
     expectSectionsMatch(held, byId, answer.ranking.outcomes);
     expect(sectionOutcomes(held.runs)[broke.run]).toBe("failed");
     // The failing run's error entry names its code, so three failures of one case read as one.
@@ -2812,6 +2812,9 @@ function invReceipt(dir: string, run: string, at: number, inv: string) {
 }
 
 const foldOf = (runs: readonly Record<string, unknown>[], run: string) => runs.find((r) => r.run === run)?.folded;
+/** The run sections as the lens line carries them, read back from the line a reader would see. */
+const digestLineSections = (d: { digest: Parameters<typeof digestLine>[0] }) =>
+  (JSON.parse(digestLine(d.digest, { run: runId(99), seq: 30, t: T0 + 10 })) as { runs: { run: string; folded?: { others: number; records: number } }[] }).runs;
 
 describe("RD-90 runs of one invocation with one result are folded", () => {
   test("five identical runs are named once and the section says five", async () => {
@@ -2826,7 +2829,7 @@ describe("RD-90 runs of one invocation with one result are folded", () => {
     expect(held.records.map((e) => `${e.run}:${e.seq}`)).toEqual([1, 2, 3, 4].map((s) => `${runId(5)}:${s}`));
     expect(held.runs.length).toBe(1);
     expect(held.runs[0]!.run).toBe(runId(5));
-    expect(held.runs[0]!.folded).toEqual({ runs: 5, records: 16 });
+    expect(held.runs[0]!.folded).toEqual({ others: 4, records: 16 });
     expect(held.loss).toEqual({ bound: "count-only", excluded: 16, folded: 16 });
     // Nothing folded away is in the answer either: not its records, not its ranking prefix.
     expect(answer.records.every((r) => r.run === runId(5))).toBe(true);
@@ -2890,7 +2893,7 @@ describe("RD-90 runs of one invocation with one result are folded", () => {
     // Twelve runs in four groups of three, interleaved in time, so the representatives come last.
     const records = Array.from({ length: 12 }, (_, i) => invRun(runId(i), T0 + i * 10, `inv_g${i % 4}`)).flat();
     const wide = digestOf(records).digested;
-    expect(wide.digest.runs.map((r) => [r.run, r.folded])).toEqual([8, 9, 10, 11].map((i) => [runId(i), { runs: 3, records: 8 }]));
+    expect(wide.digest.runs.map((r) => [r.run, r.folded])).toEqual([8, 9, 10, 11].map((i) => [runId(i), { others: 2, records: 8 }]));
     expect(wide.digest.loss).toEqual({ bound: "count-only", excluded: 32, folded: 32 });
     expect(wide.folded).toBe(32);
 
@@ -2906,7 +2909,9 @@ describe("RD-90 runs of one invocation with one result are folded", () => {
     const line = JSON.parse(digestLine(wide.digest, { run: runId(99), seq: 30, t: T0 + 10 })) as Record<string, unknown>;
     expect(validator().validate(line).state).toBe("validated");
     expect(validator().validate({ ...line, loss: { bound: "none", excluded: 0, folded: 3 } }).state).toBe("invalid");
-    expect(validator().validate({ ...line, runs: [{ run: runId(11), outcome: "succeeded", folded: { runs: 1, records: 0 } }] }).state).toBe("invalid");
+    expect(validator().validate({ ...line, runs: [{ run: runId(11), outcome: "succeeded", folded: { others: 0, records: 0 } }] }).state).toBe("invalid");
+    // The old shape, which counted the representative, is no longer a fold.
+    expect(validator().validate({ ...line, runs: [{ run: runId(11), outcome: "succeeded", folded: { runs: 3, records: 8 } }] }).state).toBe("invalid");
   });
 
   test("the byte search and the sufficient size are exact with a fold", () => {
@@ -2943,11 +2948,68 @@ describe("RD-90 runs of one invocation with one result are folded", () => {
     const started = Date.now();
     const digested = digestFor(plan.query, { run: runId(99_999), seq: 1 }, ranking.records, { run: runId(99_999), seq: 30, t: T0 }, ranking.outcomes);
     const elapsed = Date.now() - started;
-    expect(digested.digest.runs).toEqual([{ run: runId(999), tool: "t", v: "1", argv: ["t", "x"], inv: "inv_suite", outcome: "succeeded", folded: { runs: 1000, records: 3996 } }]);
+    expect(digested.digest.runs).toEqual([{ run: runId(999), tool: "t", v: "1", argv: ["t", "x"], inv: "inv_suite", outcome: "succeeded", folded: { others: 999, records: 3996 } }]);
     expect(digested.digest.records.length).toBe(4);
     expect(digested.digest.loss).toEqual({ bound: "count-only", excluded: 3996, folded: 3996 });
     expect(elapsed).toBeLessThan(500);
   }, 60_000);
+
+  // flyingrobots/parley#100: a cold reader added the counts and could not tell whether each
+  // included its own run. A section is "this run, plus `others` like it", so the count a reader
+  // states from the lines alone is one per section plus its `others`.
+  const statedRuns = (runs: readonly { folded?: { others: number } }[]) => runs.reduce((n, r) => n + 1 + (r.folded?.others ?? 0), 0);
+  /** The cold resume's window in shape: seven groups of one invocation with one result, and ten runs alone. */
+  function coldResumeShape(): { records: LoadedRecord[]; groups: number[] } {
+    const groups = [4, 4, 6, 3, 3, 10, 10];
+    const records: LoadedRecord[] = [];
+    let n = 0;
+    for (let i = 0; i < 10; i++, n++) records.push(...invRun(runId(n), T0 + n * 10, `inv_alone${i}`));
+    groups.forEach((size, g) => { for (let i = 0; i < size; i++, n++) records.push(...invRun(runId(n), T0 + n * 10, `inv_group${g}`)); });
+    expect(n).toBe(50);
+    return { records, groups };
+  }
+
+  test("the run count a cold reader states from the sections is the window's", () => {
+    const { records, groups } = coldResumeShape();
+    const { digested } = digestOf(records, { records: 1000 });
+    const sections = digestLineSections(digested);
+    expect(sections.length).toBe(17);
+    expect(statedRuns(sections)).toBe(50);
+    expect(sections.filter((r) => r.folded !== undefined).map((r) => r.folded!.others).sort((a, b) => a - b)).toEqual(groups.map((g) => g - 1).sort((a, b) => a - b));
+    for (const r of sections) if (r.folded) expect(r.folded.records).toBe(r.folded.others * 4);
+    expect(sections.filter((r) => r.folded === undefined).length).toBe(10);
+  });
+
+  test("a cut representative takes its others' count with it, and the loss shows the gap", () => {
+    const { records } = coldResumeShape();
+    // The last group of ten is runs 40 to 49, the latest in the window, so its representative is
+    // run 49. `everything` ranks in time order, so a budget that stops just before run 49's
+    // records cuts that one section and nothing else.
+    const whole = digestOf(records, { records: 1000 }).digested;
+    const order = whole.digest.records.map((e) => e.run);
+    const before = order.indexOf(runId(49));
+    const cut = digestOf(records, { records: before }).digested;
+    const sections = digestLineSections(cut);
+    expect(sections.some((r) => r.run === runId(49))).toBe(false);
+    const named = new Set(sections.map((r) => r.run));
+    const lostGroups = digestLineSections(whole).filter((r) => !named.has(r.run));
+    expect(lostGroups.some((r) => r.run === runId(49))).toBe(true);
+    expect(lostGroups.length).toBe(1);
+    expect(statedRuns(sections)).toBe(50 - 10);
+    // The fold does not depend on the budget, so loss.folded still counts the cut groups' others.
+    expect(cut.digest.loss.folded).toBe(whole.digest.loss.folded);
+    const statedRecords = sections.reduce((n, r) => n + (r.folded?.records ?? 0), 0);
+    expect(cut.digest.loss.folded - statedRecords).toBe(lostGroups.reduce((n, r) => n + (r.folded?.records ?? 0), 0));
+    expect(cut.digest.loss.folded - statedRecords).toBeGreaterThan(0);
+  });
+
+  test("a window with no fold states one run per section", () => {
+    const records = Array.from({ length: 5 }, (_, i) => invRun(runId(i), T0 + i * 10, `inv_distinct${i}`)).flat();
+    const sections = digestLineSections(digestOf(records).digested);
+    expect(sections.length).toBe(5);
+    expect(sections.some((r) => "folded" in r)).toBe(false);
+    expect(statedRuns(sections)).toBe(5);
+  });
 
   test("three real runs of one invocation fold into one", async () => {
     const { dir, state, env } = scratch();
@@ -2968,7 +3030,7 @@ describe("RD-90 runs of one invocation with one result are folded", () => {
     const held = lens.record as unknown as { runs: Record<string, unknown>[] };
     expect(held.runs.length).toBe(1);
     expect(held.runs[0]!.run).toBe(runs[2]!.run);
-    expect((foldOf(held.runs, runs[2]!.run) as { runs: number }).runs).toBe(3);
+    expect(foldOf(held.runs, runs[2]!.run)).toEqual({ others: 2, records: [...byId.values()].filter((r) => r.run === runs[0]!.run || r.run === runs[1]!.run).length });
   }, 60_000);
 });
 
@@ -3121,6 +3183,6 @@ describe("RD-100 a fold never hides a different resolved", () => {
       loaded(runId(n), 2, "end", T0 + n * 10 + 1, { status: 0 }),
     ];
     const { digested } = digestOf([...at(1, "/a"), ...at(2, "/b"), ...at(3, "/b")]);
-    expect(digested.digest.runs.map((r) => [r.run, r.folded])).toEqual([[runId(1), undefined], [runId(3), { runs: 2, records: 2 }]]);
+    expect(digested.digest.runs.map((r) => [r.run, r.folded])).toEqual([[runId(1), undefined], [runId(3), { others: 1, records: 2 }]]);
   });
 });

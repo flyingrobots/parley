@@ -70,7 +70,8 @@
 // **Runs of one invocation with one result are named once** (flyingrobots/parley#79, `fold.ts`).
 // Before the bound is applied, the runs whose `inv` and whole result are equal are folded into
 // their most recent run: the others' records are not named, the representative's section says
-// `folded: {runs, records}`, and `loss.folded` counts every record the fold left out. Those
+// `folded: {others, records}`, both counting the others only (flyingrobots/parley#100), and
+// `loss.folded` counts every record the fold left out. Those
 // records are in `loss.excluded` too, so the count still accounts for every record not named, and
 // `excluded − folded` is what the budget cut.
 import { foldRuns, type RunFold } from "./fold.ts";
@@ -136,8 +137,8 @@ export const RUN_SECTION_BYTES = 512;
  * - `reason`: present exactly when `outcome` is `undetermined`.
  * - `head`: `not_in_window` when the window does not hold the run's head; absent when it does.
  * - `folded`: present on a run that stands for others of one invocation with one result
- *   (`fold.ts`): how many runs it stands for, itself included, and how many of their records the
- *   fold left out. Never dropped.
+ *   (`fold.ts`): how many other runs it stands for and how many of their records the fold left
+ *   out, both excluding this run (flyingrobots/parley#100). Never dropped.
  * - `dropped`: the fields left out to fit `RUN_SECTION_BYTES`, in the order they were dropped.
  */
 export interface RunSection {
@@ -272,7 +273,7 @@ export function runSection(run: string, window: readonly LoadedRecord[], outcome
       ...(outcome === undefined ? {} : { outcome }),
       ...(reason === undefined ? {} : { reason }),
       ...(head === undefined ? { head: "not_in_window" as const } : {}),
-      ...(fold === undefined ? {} : { folded: { runs: fold.runs, records: fold.records } }),
+      ...(fold === undefined ? {} : { folded: { others: fold.others, records: fold.records } }),
       ...(dropped.length === 0 ? {} : { dropped: [...dropped] }),
     } as RunSection;
   };

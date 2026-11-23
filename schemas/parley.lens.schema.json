@@ -219,22 +219,22 @@
           "folded": {
             "type": "object",
             "required": [
-              "runs",
+              "others",
               "records"
             ],
             "properties": {
-              "runs": {
+              "others": {
                 "type": "integer",
-                "minimum": 2,
-                "description": "How many runs this section stands for, itself included."
+                "minimum": 1,
+                "description": "How many other runs this section stands for, this run excluded: the section reads as this run plus others like it, so it stands for others + 1 runs (flyingrobots/parley#100)."
               },
               "records": {
                 "type": "integer",
                 "minimum": 0,
-                "description": "How many records of the other runs, in the window, the fold left out of records; each is counted in loss.excluded and loss.folded."
+                "description": "How many records of those other runs, in the window, the fold left out of records, this run's own excluded; each is counted in loss.excluded and loss.folded."
               }
             },
-            "description": "Present when this run stands for other runs of the same invocation and the same result (flyingrobots/parley#79): runs with an equal inv (spec §2.2) whose outcome, reason, end status and error, warning and startup-failure codes are equal too. This run is the most recent of them, and the others' records are not named. A run with no inv, and a redacted run, never stands for another (spec §2.3). The folded runs' ids are not listed, to keep the line small: a read of a window that holds one of them without this run, or a load of the window, finds them. Never dropped to fit the section's bound."
+            "description": "Present when this run stands for other runs of the same invocation and the same result (flyingrobots/parley#79): runs with an equal inv (spec §2.2) whose outcome, reason, end status and error, warning and startup-failure codes are equal too. This run is the most recent of them, and the others' records are not named. A run with no inv, and a redacted run, never stands for another (spec §2.3). A run that stands for no other has no folded. The folded runs' ids are not listed, to keep the line small: a read of a window that holds one of them without this run, or a load of the window, finds them. Never dropped to fit the section's bound."
           },
           "dropped": {
             "type": "array",

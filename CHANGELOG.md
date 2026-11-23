@@ -42,6 +42,21 @@ rather than moving its version.
   whole records, which is the drill-down and breaks the byte bound. The summary is part of the line
   `budget.bytes` bounds, so a byte budget names fewer records than before. The shipped copies in
   both packages were re-synced, which moves no version.
+- `parley.lens` 1.0.0 (draft) gains an optional **`runs`** section, and each `records` entry
+  loses `outcome` and gains `code` (flyingrobots/parley#83). `runs` is an array with one item per
+  run the entries name: `run` (required), and, each optional, `tool`, `v` and `argv` off the run's
+  head, `inv`, the run's `outcome` (moved here from the entries), a `reason` from
+  `no_end_in_window` / `end_status_unusable` that the schema requires exactly when the outcome is
+  `undetermined`, `head: "not_in_window"`, and `dropped`, the fields left out whole to bound the
+  section. An entry's `code` is spec §6's pattern, carried on an `error` or `warning`. `outcome` is
+  no longer declared on an entry; entries were never closed to extra keys, and `runs` is
+  optional, so every `parley.lens` line written under the earlier draft still validates. The
+  decision behind it: the re-run of the cold resume opened 26 heads out of 49 ids to learn a
+  run's arguments, and could not tell from a digest why a run was `undetermined`. Stating the
+  identity once per run rather than per entry, and moving the outcome with it, is what the byte
+  budget can afford. Rejected: `argv` on every entry, which repeats one identity per record and
+  spends the budget fastest; `resolved` instead of `argv`, which is larger and tool-shaped. The
+  shipped copies in both packages were re-synced, which moves no version.
 
 - `parley.query` 1.0.0 (draft), the **description** of `records` and nothing else: it now says
   `budget.bytes`, when stated on a drill-down, bounds the records opened — whole records in the

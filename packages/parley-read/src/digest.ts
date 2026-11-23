@@ -39,6 +39,22 @@
 // summary is read off the loaded record when the digest is built, never from anywhere else, so it
 // cannot drift from the record; a field the record does not carry usably is left out rather than
 // filled in. It is part of the line, so `budget.bytes` bounds it like everything else.
+//
+// **Each run is stated once** (flyingrobots/parley#83). Which invocation a run was is the same for
+// every record of it, so it is said in the lens's `runs` section, once per run the entries name,
+// rather than on each entry: the head's `tool`, `v`, `argv` and `inv`, the run's outcome over the
+// whole window, and, when that outcome is `undetermined`, a `reason` from a closed vocabulary.
+// The outcome moved there from the entries, where a four-record run repeated it four times. An
+// entry keeps its `event` and `t`, and an `error` or `warning` entry also carries its `code`, so
+// three failures of one case read as one case without opening them. A section is read off the
+// window's own records, the same ones the ranking was given, so it cannot drift from the head it
+// summarises; a run whose head the window does not hold still gets a section, saying so.
+//
+// **A section is bounded** by `RUN_SECTION_BYTES`: when its serialised JSON is larger, whole
+// fields are dropped, `argv` first, then `inv`, then `v`, then `tool`, until it fits, and the
+// section names what it dropped in `dropped`. A string is never cut part-way, because a cut
+// argument reads as a different argument. The run's id, outcome, reason and head statement are
+// never dropped: without them the section does not say which run it is or what became of it.
 import type { LoadedRecord } from "./load.ts";
 import type { AcceptedQuery, Asker, Budget, QueryWindow, View } from "./query.ts";
 import type { Outcome } from "./rank.ts";
@@ -69,7 +85,48 @@ export interface RecordRef {
 export interface LensEntry extends RecordRef {
   readonly event?: string;
   readonly t?: number;
+  /** An `error` or `warning` record's code (spec §6); absent on any other record and on a malformed code. */
+  readonly code?: string;
+}
+
+/**
+ * Why a run's outcome is `undetermined`, from a closed set that covers every way `runOutcomes`
+ * reaches it: the window holds no `end` for the run, or it holds one whose `status` is not a
+ * number. A missing `end` is not a successful one (§1.2a); the window cannot say whether the run
+ * ended later or never did.
+ */
+export const UNDETERMINED_REASONS = ["no_end_in_window", "end_status_unusable"] as const;
+export type UndeterminedReason = (typeof UNDETERMINED_REASONS)[number];
+
+/** The fields a section may drop to fit `RUN_SECTION_BYTES`, in the order they are dropped. */
+export const DROPPABLE = ["argv", "inv", "v", "tool"] as const;
+export type Droppable = (typeof DROPPABLE)[number];
+
+/** The most UTF-8 bytes one run section's serialised JSON takes, unless its undroppable fields alone exceed it. */
+export const RUN_SECTION_BYTES = 512;
+
+/**
+ * What a lens says about one run its entries name, once. Every field but `run` is present only
+ * when it is known:
+ *
+ * - `tool`, `v`, `argv`: the run's `receipt.head` as the loader read it, when the window holds the
+ *   head; `argv` is already redacted there (§5.3).
+ * - `inv`: the head's, or else the window's `receipt.inputs` for the run (§2.2).
+ * - `outcome`: the window's verdict on the run (`rank.ts`), absent when no outcomes were given.
+ * - `reason`: present exactly when `outcome` is `undetermined`.
+ * - `head`: `not_in_window` when the window does not hold the run's head; absent when it does.
+ * - `dropped`: the fields left out to fit `RUN_SECTION_BYTES`, in the order they were dropped.
+ */
+export interface RunSection {
+  readonly run: string;
+  readonly tool?: string;
+  readonly v?: string;
+  readonly argv?: readonly string[];
+  readonly inv?: string;
   readonly outcome?: Outcome;
+  readonly reason?: UndeterminedReason;
+  readonly head?: "not_in_window";
+  readonly dropped?: readonly Droppable[];
 }
 
 /**
@@ -93,6 +150,8 @@ export interface Digest {
   readonly budget: Budget;
   readonly window: QueryWindow;
   readonly loss: Loss;
+  /** One section per run `records` names, in the order the entries first name them. */
+  readonly runs: readonly RunSection[];
   /** The records the digest names, in rank order, never more than `budget.records` of them, each with its summary. */
   readonly records: readonly LensEntry[];
 }
@@ -114,20 +173,74 @@ export interface Digested {
   readonly bytes: number;
 }
 
+/** Spec §6's code shape, the same pattern `parley.error` and `parley.warning` declare. */
+const CODE = /^[a-z0-9_]+(\.[a-z0-9_]+)+$/;
+
+const nonEmpty = (value: unknown): value is string => typeof value === "string" && value.length > 0;
+
 /**
- * The entry a digest names a record by, read off the loaded record and its run's ranked outcome.
- * The key order is fixed, `run, seq, event, t, outcome`, because the byte bound is measured
- * against the serialised line.
+ * The entry a digest names a record by, read off the loaded record. The key order is fixed,
+ * `run, seq, event, t, code`, because the byte bound is measured against the serialised line.
  */
-export function lensEntry(record: LoadedRecord, outcomes?: Readonly<Record<string, Outcome>>): LensEntry {
-  const outcome = outcomes?.[record.run];
+export function lensEntry(record: LoadedRecord): LensEntry {
+  const code = record.record.code;
+  const coded = (record.event === "error" || record.event === "warning") && typeof code === "string" && CODE.test(code);
   return {
     run: record.run,
     seq: record.seq,
-    ...(typeof record.event === "string" && record.event.length > 0 ? { event: record.event } : {}),
+    ...(nonEmpty(record.event) ? { event: record.event } : {}),
     ...(typeof record.t === "number" && Number.isInteger(record.t) && record.t >= 0 ? { t: record.t } : {}),
-    ...(outcome === undefined ? {} : { outcome }),
+    ...(coded ? { code } : {}),
   };
+}
+
+const sectionBytes = (section: RunSection) => Buffer.byteLength(JSON.stringify(section), "utf8");
+
+/**
+ * What a lens says about one run, read off the window's records for it (`window` may hold other
+ * runs' records too; `digestFor` passes only the run's own) and the window's outcomes. The key order is fixed, `run, tool, v, argv, inv,
+ * outcome, reason, head, dropped`, and the section is bounded by `RUN_SECTION_BYTES` by dropping
+ * whole fields, never by cutting a string.
+ */
+export function runSection(run: string, window: readonly LoadedRecord[], outcomes?: Readonly<Record<string, Outcome>>): RunSection {
+  const own = window.filter((r) => r.run === run);
+  const head = own.find((r) => r.event === "receipt.head");
+  const inputs = own.find((r) => r.event === "receipt.inputs" && nonEmpty(r.record.inv));
+  const argv = head?.record.argv;
+  const inv = nonEmpty(head?.record.inv) ? head.record.inv : inputs?.record.inv as string | undefined;
+  const outcome = outcomes?.[run];
+  const reason: UndeterminedReason | undefined = outcome !== "undetermined"
+    ? undefined
+    : own.some((r) => r.event === "end") ? "end_status_unusable" : "no_end_in_window";
+  const fields: Partial<Record<Droppable, unknown>> = {
+    ...(nonEmpty(head?.record.tool) ? { tool: head.record.tool } : {}),
+    ...(nonEmpty(head?.record.v) ? { v: head.record.v } : {}),
+    ...(Array.isArray(argv) && argv.every((a) => typeof a === "string") ? { argv } : {}),
+    ...(inv === undefined ? {} : { inv }),
+  };
+  const build = (dropped: readonly Droppable[]): RunSection => {
+    const kept = (k: Droppable) => (k in fields && !dropped.includes(k) ? { [k]: fields[k] } : {});
+    return {
+      run,
+      ...kept("tool"),
+      ...kept("v"),
+      ...kept("argv"),
+      ...kept("inv"),
+      ...(outcome === undefined ? {} : { outcome }),
+      ...(reason === undefined ? {} : { reason }),
+      ...(head === undefined ? { head: "not_in_window" as const } : {}),
+      ...(dropped.length === 0 ? {} : { dropped: [...dropped] }),
+    } as RunSection;
+  };
+  const dropped: Droppable[] = [];
+  let section = build(dropped);
+  for (const field of DROPPABLE) {
+    if (sectionBytes(section) <= RUN_SECTION_BYTES) break;
+    if (!(field in fields)) continue;
+    dropped.push(field);
+    section = build(dropped);
+  }
+  return section;
 }
 
 /**
@@ -161,12 +274,14 @@ export function digestBytes(digest: Digest, envelope: LineEnvelope): number {
  * Pure: it reads nothing, writes nothing, records nothing, and mutates neither its arguments nor
  * the records in them. `ranked` is the whole of the window in rank order
  * (flyingrobots/parley#49); the digest is its prefix, and `excluded` is the rest of it counted.
- * `outcomes` is the ranking's verdict per run over that whole window, and each entry carries its
- * run's; without it, no entry carries an outcome.
+ * `outcomes` is the ranking's verdict per run over that whole window, and each run section carries
+ * its run's; without it, no section carries an outcome or a reason. Each section is read off the
+ * whole window too, so a head the bound cut from the entries still identifies its run.
  *
  * The byte search is a binary search over the prefix length, which is sound because the line only
- * grows as the prefix does: one more record adds its entry, at least its `(run, seq)` pair, while
- * the excluded count beside it can shrink by at most one digit.
+ * grows as the prefix does: one more record adds its entry, at least its `(run, seq)` pair, and
+ * perhaps its run's section, while the excluded count beside it can shrink by at most one digit
+ * and `loss.bound` by the six bytes between `count-only` and `none`.
  */
 export function digestFor(
   query: AcceptedQuery,
@@ -176,9 +291,24 @@ export function digestFor(
   outcomes?: Readonly<Record<string, Outcome>>,
 ): Digested {
   // Built once, so every candidate prefix the byte search measures is cut from the same entries.
-  const entries = ranked.map((record) => lensEntry(record, outcomes));
+  const entries = ranked.map((record) => lensEntry(record));
+  // One pass over the window groups each run's records, so a section never scans the whole
+  // window for its own (RD-80h).
+  const byRun = new Map<string, LoadedRecord[]>();
+  for (const record of ranked) {
+    const own = byRun.get(record.run);
+    if (own === undefined) byRun.set(record.run, [record]);
+    else own.push(record);
+  }
+  const sections = new Map<string, RunSection>();
+  const sectionOf = (run: string) => {
+    let section = sections.get(run);
+    if (section === undefined) sections.set(run, section = runSection(run, byRun.get(run) ?? [], outcomes));
+    return section;
+  };
   const build = (keep: number): Digest => {
     const excluded = ranked.length - keep;
+    const kept = entries.slice(0, keep);
     return {
       event: "lens",
       query: answers,
@@ -189,7 +319,8 @@ export function digestFor(
       // `none` is a claim that nothing was left out, so it is only ever paired with 0; the schema
       // refuses `none` beside a non-zero count (flyingrobots/parley#46).
       loss: { bound: excluded === 0 ? "none" : "count-only", excluded },
-      records: entries.slice(0, keep),
+      runs: [...new Set(kept.map((e) => e.run))].map(sectionOf),
+      records: kept,
     };
   };
 

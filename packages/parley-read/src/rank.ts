@@ -4,8 +4,10 @@
 // should return records touching that surface, not the last fifty things in chronological order.
 // It is the ranking function, not a filter applied afterwards, and this module is only the
 // ranking function: it reorders the records it is given and returns every one of them. Over-
-// filtering is the failure mode §9 names, so nothing here can drop a record even in principle —
-// the budget, the truncation and the excluded count are flyingrobots/parley#50.
+// filtering is the failure mode §9 names, so nothing here can drop a record even in principle.
+// The budget, the truncation and the excluded count are the digest's (flyingrobots/parley#50,
+// `digest.ts`), which cuts the tail of the order this module produced and says how long that tail
+// was — a cut above a total order can state its loss, and a cut inside one cannot.
 //
 // What the purpose is as data was decided in flyingrobots/parley#46: a read states a `view`, one
 // token from a closed set of five, and `docs/topics/reader/README.md` says what each one is an
@@ -178,7 +180,11 @@ export interface Ranking {
   readonly view: View;
   /** True when the view is an answer about a change, so the failure surface and failed runs rank first. */
   readonly impliesChange: boolean;
-  /** Every record given, reordered. Never a subset: ranking reorders and never filters. */
+  /**
+   * Every record given, reordered. Never a subset as `rankRecords` returns it: ranking reorders
+   * and never filters. A read's answer carries this ranking cut at the digest's bound, which is
+   * stated on `QueryAnswer.ranking` — the cut happens above the full order, never inside it.
+   */
   readonly records: readonly LoadedRecord[];
   /** The same records in the same order, each with its key and its reasons. */
   readonly ranked: readonly Ranked[];
@@ -196,8 +202,8 @@ export interface Ranking {
 
 /**
  * The part of an accepted query the ranking reads. An `AcceptedQuery` is one; nothing else about
- * the query shapes the order, and in particular the budget does not — bounding the answer is
- * flyingrobots/parley#50, and a ranking that bounded it could not be truncated honestly later.
+ * the query shapes the order, and in particular the budget does not — the budget is the digest's
+ * bound (`digest.ts`), and a ranking that had already applied it could not say what it cut.
  */
 export type RankQuery = Pick<AcceptedQuery, "view">;
 

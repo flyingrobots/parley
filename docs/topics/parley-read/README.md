@@ -287,7 +287,18 @@ exact pair. It carries:
 A `bytes` budget too small even for a digest naming no records leaves it naming none: the envelope
 and the lens's own fields are not negotiable, because a lens that dropped them would no longer say
 what it is. The bound is applied **before** the line is written — `digestLine` reconstructs the
-line the writer will write, which a case pins against the line the writer really wrote.
+line the writer will write, which a case pins against the line the writer really wrote — and it is
+measured against a seq one digit longer than the one the digest will carry, one byte of headroom,
+so that a `warning` the writer raises in between cannot push the line over a stated bound.
+
+Two things the bound is **not**:
+
+- It is not in the schema. `parley.lens` says a digest names "never more than `budget.records`"
+  records, and JSON Schema cannot compare an array's length to a sibling value, so that is the
+  library's invariant rather than a validator's — RD-21a and RD-22b are the gate on it.
+- It is not a refusal. A read whose budget cannot hold a useful answer still answers, bounded, and
+  says what it left out; "not within your budget, and here is the budget that would do it" is
+  something `parley.lens` 1.0.0 cannot express.
 
 What the bound cuts is the **tail of the ranking**, never a record chosen some other way. The
 order ranks every record in the window and removes none of it, so "the records the digest does not

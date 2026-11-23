@@ -452,12 +452,19 @@ export async function queryReceipts(request: QueryRequest, opts: QueryOptions = 
     // written with has to be known here. `run.result` and `run.step` each take one seq in order
     // and return it, a read declares no secrets so no redaction line comes between them, and the
     // one step below sits between this ranking step and the digest: the digest's seq is therefore
-    // `ranked + 2`. RD-20c pins that arithmetic against the line the writer really wrote.
+    // `ranked + 2`, and `t` comes from the same clock the writer stamps with. RD-20c pins that
+    // reconstruction against the line the writer really wrote.
+    //
+    // The seq is measured an order of magnitude larger than that, which is one more digit and so
+    // one byte of headroom. It is not paranoia about the arithmetic above: the writer can raise a
+    // line of its own in between — a history stream that fails mid-run is a `warning` — and a seq
+    // that gained a digit would put the line one byte over a budget the caller stated. A stated
+    // bound that holds is worth a byte.
     const digested = digestFor(
       query,
       { run: run.id, seq },
       ranking.records,
-      { run: run.id, seq: ranked + 2, t: (opts.now ?? Date.now)() },
+      { run: run.id, seq: (ranked + 2) * 10, t: (opts.now ?? Date.now)() },
     );
     const records = digested.records;
 

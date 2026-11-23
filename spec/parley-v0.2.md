@@ -617,6 +617,10 @@ Receipts accumulate. A conforming program **MUST** state a retention policy and 
 enforce it by count, age or total size. Unbounded growth that nobody notices until it hurts is a
 failure mode worth designing out rather than discovering.
 
+A program's retention policy bounds the receipts that program wrote, which a receipt's head
+names (`tool`). Receipts of other programs may share the directory, a reader's record of a read
+included, and a program **MUST NOT** count them toward its policy or delete them under it.
+
 ### 5.2 Repository hygiene
 
 A program writing into `.parley/` **MUST** first ensure that `.parley/.gitignore` exists and

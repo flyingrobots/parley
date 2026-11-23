@@ -446,7 +446,7 @@ passes at a check, or when its `budget.bytes` cannot hold even a digest naming n
 | `phase` | The check the read stopped at: `load`, `rank` or `digest` (`open` for a drill-down) |
 | `given` | The budget the read was given, exactly as its `parley.query` recorded it |
 | `measured` | The elapsed milliseconds, rounded up, and the size in bytes of the smallest digest, for each bound that could not be met |
-| `sufficient` | A budget known to be enough for this read over this history. For `bytes` it is exact: the smallest digest, naming no records, fits it and fits nothing one byte smaller. For `ms` it is the elapsed time only when the read stopped at its last check, with nothing left but writing |
+| `sufficient` | A budget that would have been enough for this read over this history. For `bytes` it is exact: the smallest digest, naming no records, fits it and fits nothing one byte smaller. For `ms` it is the elapsed time, and only when the read stopped at its last check with nothing left but writing: this read would have passed every check under it. It is a measurement of one read, not a promise about the next, which takes its own time |
 | `at_least` | A budget known to be needed and not known to be enough: the elapsed time when the read stopped with phases still to run, which would have cost more |
 
 - **ends with status 2**, the status §3.4 gives a command that reported a structured error, and the

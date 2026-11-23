@@ -213,9 +213,10 @@ export const OVER_BUDGET = "query.over_budget" as const;
  * - `bound` is the bound that declined: `ms` when the deadline passed, else `bytes`.
  * - `measured` holds what was measured against each bound that could not be met: the elapsed
  *   milliseconds, rounded up, and the size of the smallest digest in bytes.
- * - `sufficient` holds a budget known to be enough for this read over this history: the elapsed
- *   time when the check that failed was the last one (nothing but writing was left), and the
- *   smallest digest's size, which is exact.
+ * - `sufficient` holds a budget that would have been enough for this read over this history: the
+ *   elapsed time when the check that failed was the last one (nothing but writing was left, so this
+ *   read would have passed every check under it; a re-read takes its own time), and the smallest
+ *   digest's size, which is exact.
  * - `atLeast` holds a budget known to be needed but not known to be enough: the elapsed time when
  *   the read stopped with phases still to run, which would have cost more.
  */

@@ -1109,6 +1109,73 @@ class TestRetention(unittest.TestCase):
             run_count(d, env, ["count"], lambda r: None, over={"retention": {"count": 1}})
         self.assertTrue(os.path.exists(stale))
 
+    # PY-13h to PY-13j (flyingrobots/parley#112): no lock. An incomplete receipt is exempt until it
+    # has gone unmodified for 24 hours; a complete one has no writer left (spec section 3.3). The
+    # decision time is injected, so no test sleeps or depends on the wall clock.
+    HOUR = 3600 * 1000
+
+    @staticmethod
+    def _plant(rdir, n, ended, mtime_ms):
+        """A receipt of tool `t`, complete or not, last modified at a whole second `mtime_ms`."""
+        rid = pe.ulid(n)
+        p = os.path.join(rdir, rid + ".jsonl")
+        head = {"event": "receipt.head", "t": 1, "seq": 1, "run": rid, "tool": "t", "v": "0.0.1", "argv": [], "resolved": {}, "inputs": [], "_schema": pe.SCHEMA_IDS["head"]}
+        end = {"event": "end", "t": 2, "seq": 2, "run": rid, "status": 0, "receipt": p, "redacted": False, "_schema": pe.SCHEMA_IDS["end"]}
+        with open(p, "w") as f:
+            f.write(json.dumps(head) + "\n" + (json.dumps(end) + "\n" if ended else ""))
+        os.utime(p, ns=(mtime_ms * 1_000_000, mtime_ms * 1_000_000))
+        return p
+
+    @staticmethod
+    def _step(o):
+        return next((x for x in o.receipt_lines if x.get("decision", "").startswith("retention:")), None)
+
+    @staticmethod
+    def _whole_second(ms):
+        return int(ms) // 1000 * 1000
+
+    def test_an_incomplete_receipt_within_the_grace_period_survives(self):
+        d, _, env = scratch()
+        run_count(d, env, ["count"], lambda r: None)
+        rdir = os.path.join(d, ".parley", "receipts")
+        written = self._whole_second(time.time() * 1000 - 2 * self.HOUR)
+        flight = self._plant(rdir, 5, False, written)
+        o = run_count(d, env, ["count"], lambda r: pe._retain(r, "t", r.receipt_dir, 1, False, written + self.HOUR))
+        self.assertTrue(os.path.exists(flight))
+        self.assertEqual(self._step(o)["decision"], "retention: deleted 1 receipt bundle(s)")
+        # The first run's receipt, complete, went in the in-flight one's place.
+        self.assertEqual(len([f for f in os.listdir(rdir) if f.endswith(".jsonl")]), 2)
+
+    def test_a_complete_receipt_beyond_the_count_is_deleted_whatever_its_age(self):
+        d, _, env = scratch()
+        run_count(d, env, ["count"], lambda r: None)
+        rdir = os.path.join(d, ".parley", "receipts")
+        written = self._whole_second(time.time() * 1000 - 2 * self.HOUR)
+        done = self._plant(rdir, 5, True, written)
+        side = done[: -len(".jsonl")]
+        os.mkdir(side)
+        with open(os.path.join(side, "3.json"), "w") as f:
+            f.write("{}")
+        flight = self._plant(rdir, 6, False, written + 1000)
+        o = run_count(d, env, ["count"], lambda r: pe._retain(r, "t", r.receipt_dir, 2, False, written + self.HOUR))
+        self.assertFalse(os.path.exists(done))
+        self.assertFalse(os.path.exists(side))
+        self.assertTrue(os.path.exists(flight))
+        self.assertEqual(self._step(o)["decision"], "retention: deleted 2 receipt bundle(s)")
+
+    def test_an_incomplete_receipt_past_the_grace_period_is_deleted(self):
+        d, _, env = scratch()
+        run_count(d, env, ["count"], lambda r: None, over={"name": "other"})
+        rdir = os.path.join(d, ".parley", "receipts")
+        written = self._whole_second(time.time() * 1000 - 72 * self.HOUR)
+        crashed = self._plant(rdir, 5, False, written)
+        at_grace = run_count(d, env, ["count"], lambda r: pe._retain(r, "t", r.receipt_dir, 1, False, written + 24 * self.HOUR))
+        self.assertTrue(os.path.exists(crashed))
+        self.assertEqual(self._step(at_grace)["decision"], "retention: nothing to delete")
+        past = run_count(d, env, ["count"], lambda r: pe._retain(r, "t", r.receipt_dir, 2, False, written + 24 * self.HOUR + 1))
+        self.assertFalse(os.path.exists(crashed))
+        self.assertEqual(self._step(past)["decision"], "retention: deleted 1 receipt bundle(s)")
+
     def test_sidecars_survive_when_the_receipt_cannot_be_unlinked(self):
         # PY-13g (flyingrobots/parley#113): a bundle is deleted together or not at all.
         d, _, env = scratch()

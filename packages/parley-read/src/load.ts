@@ -427,6 +427,12 @@ function resolveSidecar(seq: number, held: Held, read: boolean): { resolution: S
 
 const SIDECAR_SECTION = "§5";
 
+const ENVELOPE_KEYS: ReadonlySet<string> = new Set<string>(ENVELOPE);
+
+function envelopeDefect(key: string, r: Raw, run: string): Defect {
+  return defect("copies.disagree", "§1.3", r.file, r.line, `seq ${r.seq}: a projected copy disagrees with the record on ${key}, which a projection never changes`, { run });
+}
+
 /**
  * Fold the projected copies over the records already held, and return one note per source (§8).
  *
@@ -446,12 +452,6 @@ const SIDECAR_SECTION = "§5";
  * that disagrees on `event`, `t` or `_schema` is §1.3's defect in whatever wrote it and is
  * reported as one, whichever copy the preference returned.
  */
-const ENVELOPE_KEYS: ReadonlySet<string> = new Set<string>(ENVELOPE);
-
-function envelopeDefect(key: string, r: Raw, run: string): Defect {
-  return defect("copies.disagree", "§1.3", r.file, r.line, `seq ${r.seq}: a projected copy disagrees with the record on ${key}, which a projection never changes`, { run });
-}
-
 function foldProjections(run: string, raw: readonly Raw[], held: Map<number, Held>, defects: Defect[], sole: boolean): Note[] {
   const projected = raw
     .filter((r): r is Raw & { projection: Transform } => r.projection !== undefined)

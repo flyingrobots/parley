@@ -19,6 +19,18 @@ rather than moving its version.
   order lost nothing. No constraint changed: the schema's `if`/`then` already refused `none`
   beside a non-zero count, and still does. The shipped copies in both packages were re-synced,
   which is a digest change and no version change.
+- `parley.query` 1.0.0 (draft) gains an optional **`records`** field (flyingrobots/parley#51): an
+  array of at least one `{run, seq}`, the identity a `parley.lens` names records by, present only
+  on a **drill-down** — a read that opens those records in full rather than answering with a
+  digest. The view and window are recorded and select nothing on a drill-down, and
+  `budget.records` is the number of ids asked; the schema says so. Nothing required changed, so
+  every `parley.query` line written before still validates. The decision behind it: opening
+  records reads history, so by the reasoning of flyingrobots/parley#48 it is a recorded read with
+  an asker and a view, and recording it as the same message rather than a new one keeps "which
+  questions get asked" and "which records get opened" in one place. Rejected: a new message type
+  for one optional field; recording the ids only in a `receipt.step`, where a reader of the query
+  line could not tell a drill-down from a read. The shipped copies in both packages were
+  re-synced, which moves no version.
 
 ### Decided
 

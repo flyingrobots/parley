@@ -10,6 +10,21 @@ its manifest so it cannot be published by accident.
 
 ### Added
 
+- **The drill-down**, `openRecords(request, opts)` (flyingrobots/parley#51): records by the
+  `(run, seq)` pairs a `parley.lens` names, each in full, in the order asked, with exactly one
+  outcome per id — `opened`, `sidecar_unavailable`, `run_not_found` or `seq_not_found` — and never
+  a throw for one bad id. A record stored in a sidecar opens with its contents, checked by the
+  loader against the declared `bytes` and `sha256`; opening the `sidecar` event itself brings the
+  stored record as `held`; a sidecar missing, mismatched or unchecked is that id's outcome and
+  claims no contents. Every id whose run resolved carries its bundle's replay ruling, so a failed
+  run's `error` opens and says its bundle is unavailable for replay.
+- A drill-down is **a recorded read**: refused without an asker, a view, a window and at least one
+  well-formed id (`open.records_missing`, `open.records_invalid` beside the query's own codes),
+  writing nothing; accepted, it is a run of its own whose `parley.query` record carries the new
+  optional `records` field, followed by a `receipt.step` stating the outcome counts. It emits no
+  `parley.lens`. `planOpen` and `openOne` are its refusal rules and its per-id resolution as pure
+  functions. `src/schemas.ts` is re-synced for the `parley.query` draft change; no version moved.
+
 - `src/schemas.ts` re-synced from the repository drafts: the reader now ships seventeen, adding
   `parley.history.transform` 1.0.0 (flyingrobots/parley#57), so a projected copy's opening line on
   the shared stream validates against its exact pair rather than being reported as partial. No

@@ -116,8 +116,8 @@ the view, and results computed under different budgets are not comparable. It al
   is what lets a reader choose what to open before opening anything
   ([flyingrobots/parley#77](https://github.com/flyingrobots/parley/issues/77)), and it is part of
   the line a byte budget bounds;
-- **each run those records belong to**, once, in `runs`: the head's `tool`, `v`, `argv` and
-  `inv`, the `outcome` the window establishes for the run (`failed`, `undetermined` or
+- **each run those records belong to**, once, in `runs`: the head's `tool`, `v`, `argv`,
+  `resolved` (whole, the tool's own shape; flyingrobots/parley#90) and `inv`, the `outcome` the window establishes for the run (`failed`, `undetermined` or
   `succeeded`) and, when it is `undetermined`, a `reason` (`no_end_in_window` or
   `end_status_unusable`). A run whose head the window does not hold still has a section, saying
   `head: "not_in_window"`, and a section too large for its bound drops whole fields and names them

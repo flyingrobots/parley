@@ -73,8 +73,34 @@ rather than moving its version.
   `parley.lens` line written under the earlier draft still validates; parley-read always writes
   `loss.folded`, 0 included. The decision is under *Decided*. The shipped copies in both packages
   were re-synced, which moves no version.
+- `parley.lens` 1.0.0 (draft): a run section gains an optional **`resolved`**, an object, and
+  `dropped` gains `resolved` in its enum, with `maxItems` raised from 4 to 5
+  (flyingrobots/parley#90). `resolved` is the head's `resolved` (spec §5), copied whole and already
+  redacted there (§5.3), and it is the first field dropped to fit the section's bound. Every line
+  written under the earlier draft still validates. The decision is under *Decided*. The shipped
+  copies in all three packages were re-synced, which moves no version.
 
 ### Decided
+
+- **What a run section says about what a run compared** (flyingrobots/parley#90). The issue left
+  the mechanism open; this is the decision, and an owner may overrule any part of it. A section
+  carries the head's **`resolved` whole**, when it is a JSON object, and the reader picks none of
+  its keys. It is the first field dropped to fit `RUN_SECTION_BYTES`, before `argv`, whole and
+  named in `dropped`; the drop order is `resolved`, `argv`, `inv`, `v`, `tool`. Carrying it whole
+  keeps every tool's field names out of the reader: `base_commit` and `head_commit` are footprint's,
+  and parley-read does not know them. Nothing chosen from `resolved` can drift from the head,
+  because nothing is chosen. A value §5.3 redacted stays `[redacted]`, since the copy is the
+  head's. Rejected:
+  - *a tool-declared subset of keys*, declared on the head or in a §2.2-style tool document. It
+    needs a new head field or a new document, and the subset can drift from what the head holds;
+  - *`resolved` on every entry*, which repeats one identity per record, as flyingrobots/parley#83
+    already rejected for `argv`;
+  - *dropping `argv` before `resolved`*, which would keep the richer field. `resolved` is the
+    larger, tool-shaped one, and `argv` is the protocol's, so when only one fits the protocol's is
+    kept.
+
+  The cost is bytes: under RD-22b's `{records: 20, bytes: 2048}` a digest names 12 records where it
+  named 13. On footprint's own receipts every section still fits, the largest at 495 of 512 bytes.
 
 - **How a digest folds repeated runs, and how the lens says so** (flyingrobots/parley#79). The
   issue left the lens field open; this is the decision, and an owner may overrule any part of it.

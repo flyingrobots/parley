@@ -30,7 +30,7 @@ suite and `bun run typecheck` checks it strictly, over `src`, `scripts` and `tes
 | `Deadline`, `MONOTONIC`, `OVER_BUDGET`, `declineOnRun` | The deadline `budget.ms` is checked against, the default clock it is measured on, the one code a read declines with, and the step and error a decline reports on its run |
 | `lensEntry(record)` | The entry a digest names one record by: its `(run, seq)` and its summary |
 | `runSection(run, window, outcomes?, fold?)` | What a digest says once about one run it names, read off the window's records: see [what each run section says](#what-each-run-section-says) |
-| `RUN_SECTION_BYTES`, `DROPPABLE`, `UNDETERMINED_REASONS` | The bound on one run section (512 bytes), the fields it drops to fit in the order it drops them, and the closed set of reasons an outcome is `undetermined` |
+| `RUN_SECTION_BYTES`, `DROPPABLE`, `UNDETERMINED_REASONS` | The bound on one run section (512 bytes), the fields it drops to fit in the order it drops them (`resolved`, `argv`, `inv`, `v`, `tool`), and the closed set of reasons an outcome is `undetermined` |
 | `digestLine(digest, envelope)`, `digestBytes(digest, envelope)` | The line the writer will write for a digest, and its length in UTF-8 bytes: how a byte budget is applied before the line exists rather than discovered after it |
 | `runOutcomes(records)`, `onViewSurface(view, record)`, `onFailureSurface(record)`, `impliesChange(view)` | The four questions the ranking asks, each answerable on its own |
 | `TIERS`, `OUTCOMES`, `CHANGE_VIEWS` | The three tiers best first, the three outcomes best-known-worst first, and the views that imply a change |
@@ -399,7 +399,7 @@ in `runs`, rather than on each entry
 ([flyingrobots/parley#83](https://github.com/flyingrobots/parley/issues/83)):
 
 ```json illustrative
-{"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8","tool":"theme-book","v":"0.2.1","argv":["theme-book","count","--format","css","--token","[redacted]"],"outcome":"undetermined","reason":"no_end_in_window"}
+{"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8","tool":"theme-book","v":"0.2.1","argv":["theme-book","count","--format","css","--token","[redacted]"],"resolved":{"command":"count","format":"css","cwd":"/work/site","token":"[redacted]"},"outcome":"undetermined","reason":"no_end_in_window"}
 ```
 
 That section is a fragment of a lens, not a message of its own; the [package README](../../../packages/parley-read/README.md#a-captured-digest)
@@ -409,6 +409,7 @@ holds a captured one.
 | --- | --- | --- |
 | `run` | The run the section is about, one that `records` names | Never |
 | `tool`, `v`, `argv` | The run's `receipt.head` as the loader read it. `argv` is already redacted there (§5.3), so a declared secret is not repeated here | The window does not hold the head, or the head does not carry the field usably |
+| `resolved` | The head's `resolved` (§5), whole: the run's interpretation after defaults and environment, so `HEAD~1..HEAD` reads as the two commits it was ([flyingrobots/parley#90](https://github.com/flyingrobots/parley/issues/90)). It is the tool's own shape and the reader picks none of its keys, so no tool's field names live here and nothing chosen from it can drift from the head. A value §5.3 redacted is `[redacted]` here too | The window does not hold the head, or its `resolved` is not a JSON object |
 | `inv` | The head's `inv`, or else that of the window's `receipt.inputs` for the run (§2.2): what [a fold](#runs-of-one-invocation-are-named-once) groups repeated runs by | Neither carries one. Never a placeholder (§2.2) |
 | `outcome` | `failed`, `undetermined` or `succeeded`: what the window establishes about the run, exactly as [the ranking](#what-a-runs-outcome-is-established-from) established it | No ranking outcomes were given to `digestFor` |
 | `reason` | Why the outcome is `undetermined`: `no_end_in_window`, the window holds no `end` for the run, or `end_status_unusable`, it holds one whose `status` is not a number. Those are the only two ways the ranking reaches `undetermined`, and the schema refuses any other value | The outcome is not `undetermined`. The schema refuses a `reason` beside `failed` or `succeeded` and an `undetermined` without one |
@@ -424,15 +425,18 @@ only what the window holds: it cannot tell a run that ended after the window fro
 ended, and it does not try.
 
 **Each section is bounded.** When a section's serialised JSON is more than `RUN_SECTION_BYTES`,
-512 UTF-8 bytes, whole fields are dropped — `argv` first, then `inv`, then `v`, then `tool` — until
-it fits, and `dropped` names them. A string is never cut part-way, because a cut argument reads as
-a different argument. `run`, `outcome`, `reason`, `head` and `folded` are never dropped, because without them
+512 UTF-8 bytes, whole fields are dropped — `resolved` first, then `argv`, `inv`, `v` and `tool` —
+until it fits, and `dropped` names them. `resolved` goes first because it is the largest field and
+the tool's own shape, while `argv` is the protocol's. A string or an object is never cut part-way,
+because a cut argument reads as a different argument. `run`, `outcome`, `reason`, `head` and `folded` are never dropped, because without them
 the section does not say which run it is or what became of it; a run id long enough to break the
 bound on its own is left whole, and the line's `budget.bytes` still holds.
 
 The entries and the sections cost bytes, and both are part of the line `budget.bytes` bounds.
-Under `{records: 20, bytes: 2048}`, over runs of three records each, the digest names 13 records
-where a bare `(run, seq)` lens named 20 and an entry carrying its run's outcome named 16 (RD-22b).
+Under `{records: 20, bytes: 2048}`, over runs of three records each, the digest names 12 records
+where a bare `(run, seq)` lens named 20, an entry carrying its run's outcome named 16, and a section
+without `resolved` named 13 (RD-22b). On footprint's own receipts every section still fits with its
+`resolved`, the largest at 495 of the 512 bytes.
 A run of more records costs its section once and so pays less per entry.
 
 ### Runs of one invocation are named once

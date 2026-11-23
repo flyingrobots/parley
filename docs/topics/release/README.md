@@ -21,8 +21,8 @@ release moves no package version (spec §4.4, §4.5).
 
 A schema version named by a dated root changelog entry is released (spec §4.5). Its bytes are
 snapshotted at `schemas/released/<id>/<version>.schema.json` (§4.6), and the top-level file
-`schemas/<id>.schema.json` holds the same bytes until a change moves it on. Any change, a
-description included, gives the top-level file a new version; that version is a draft, recorded
+`schemas/<id>.schema.json` may hold a released version only with the snapshot's exact bytes. The
+first change after a release, a description included, moves the top-level file to a new version; that version is a draft, recorded
 under `## [Unreleased]`, and may change in place until the next release snapshots it.
 
 The loader every check uses (`scripts/check-examples.ts`, `loadSchemas`) refuses two files that

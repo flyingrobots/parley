@@ -7,6 +7,14 @@ the entry under it names each schema version it releases, and those are separate
 
 ## [Unreleased]
 
+### Changed
+
+- Spec §4.5 now says what the first release did: a top-level schema file may hold a released
+  version only with the snapshot's exact bytes, and the first change after a release moves it to a
+  new draft version. This replaces the sentence that the change which snapshots a version bumps the
+  draft. No normative term was added, removed or moved, so the spec stays `0.2.0` and no schema
+  version moves (flyingrobots/parley#107).
+
 ## [0.2.0] — 2026-11-22
 
 The first release of the schemas, with spec `0.2.0`. **From this entry on, no schema listed here is

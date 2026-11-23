@@ -7,8 +7,8 @@ validation is against the schema for the exact advertised pair (spec §4.5).
 
 Every version in the table is **released** (the `0.2.0` entry in
 [`CHANGELOG.md`](../CHANGELOG.md)) and immutable: its snapshot is at
-`released/<id>/<version>.schema.json` (spec §4.6), and the top-level file here holds the same bytes.
-A change to a schema, a description included, moves it to a new version; that version is a draft,
+`released/<id>/<version>.schema.json` (spec §4.6), and the top-level file here holds a released version only with the snapshot's exact bytes.
+The first change after a release, a description included, moves it to a new version; that version is a draft,
 which may change in place, while its changelog entry is under `Unreleased` (spec §4.5).
 `scripts/schemas.test.ts` fails if a top-level file changes a released pair's bytes, or carries a
 version that is neither released nor named under `Unreleased`.

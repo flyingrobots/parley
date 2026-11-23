@@ -14,6 +14,21 @@ on its own; the spec and each message schema move separately (spec §4.4).
   field for a drill-down (flyingrobots/parley#51). The writer's behaviour is unchanged and no
   version moved; discovery serves the updated draft.
 
+- The `code` of a diagnostic **the writer itself raises** is no longer scrubbed. It is the
+  writer's own stable identifier, like a schema id or a command's name, and replacing part of it
+  put a line on the stream that no longer validated against `parley.warning` or `parley.error` —
+  which is the one thing redaction must not do. `receipt.relocated`, `human.renderer_failed`,
+  `sink.write_failed`, `sink.sidecar_failed` and the two `history.*` warnings are affected; a
+  tool's own `run.warning` and `run.error` are not writer-built and their `code` is scrubbed
+  exactly as before. `startup.failed` already behaved this way, scrubbing only its `problem`.
+  Found by review of flyingrobots/parley#3, where a secret that is a substring of `history`
+  reached it. (flyingrobots/parley#3)
+
+- `src/schemas.ts` re-synced from the repository drafts: the package now ships sixteen, adding
+  `parley.query` 1.0.0 and `parley.lens` 1.0.0 for the reader's query record and result lens
+  (flyingrobots/parley#46). `--schema` serves the drafts at the newly pinned commit; this moves no
+  schema version and no package version of its own (spec §4.5).
+
 ### Fixed
 
 - Retention counts and expires only this tool's receipts (flyingrobots/parley#75): a bundle is
@@ -168,23 +183,6 @@ on its own; the spec and each message schema move separately (spec §4.4).
   back to 14. A window wide enough that its own start date is not a date would have thrown out of
   `main` after the head was written, where nothing could catch it, and a retention window is not
   worth failing a run over.
-
-### Changed
-
-- The `code` of a diagnostic **the writer itself raises** is no longer scrubbed. It is the
-  writer's own stable identifier, like a schema id or a command's name, and replacing part of it
-  put a line on the stream that no longer validated against `parley.warning` or `parley.error` —
-  which is the one thing redaction must not do. `receipt.relocated`, `human.renderer_failed`,
-  `sink.write_failed`, `sink.sidecar_failed` and the two `history.*` warnings are affected; a
-  tool's own `run.warning` and `run.error` are not writer-built and their `code` is scrubbed
-  exactly as before. `startup.failed` already behaved this way, scrubbing only its `problem`.
-  Found by review of flyingrobots/parley#3, where a secret that is a substring of `history`
-  reached it. (flyingrobots/parley#3)
-
-- `src/schemas.ts` re-synced from the repository drafts: the package now ships sixteen, adding
-  `parley.query` 1.0.0 and `parley.lens` 1.0.0 for the reader's query record and result lens
-  (flyingrobots/parley#46). `--schema` serves the drafts at the newly pinned commit; this moves no
-  schema version and no package version of its own (spec §4.5).
 
 ## [0.1.0] — 2026-11-22
 

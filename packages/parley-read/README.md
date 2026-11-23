@@ -491,8 +491,9 @@ the ids are opened; a drill-down past it declines as a read does and opens nothi
 | `openRecords(request, opts)`, `planOpen(request)`, `openOne(id, bundles)` | The drill-down: records by `(run, seq)`, one outcome per id, recorded as a `parley.query` carrying `records`; its refusal rules as a pure function; one id resolved against loaded bundles |
 | `planQuery(request)`, `queryRecord(query)` | The refusal rules and the recorded payload, without any reading or writing |
 | `rankRecords(query, records)` | The view's order over records, pure: the same records reordered, never a subset |
-| `digestFor(query, answers, ranked, envelope)` | The bound over that order, pure: the digest's payload, the records it names, the count it excluded, the bytes its line takes and whether it `fits` a stated byte bound at all |
-| `sufficientBytes(query, answers, total, envelope)` | The smallest `budget.bytes` that holds a digest naming no records, which a byte decline names |
+| `digestFor(query, answers, ranked, envelope, outcomes?)` | The bound over that order, pure: the digest's payload, the records it names, the count it excluded and how many of those it `folded`, the bytes its line takes and whether it `fits` a stated byte bound at all |
+| `foldRuns(ranked, outcomes?)` | The fold `digestFor` applies first, pure: runs of one invocation with one result named by the most recent of them |
+| `sufficientBytes(query, answers, total, envelope, folded?)` | The smallest `budget.bytes` that holds a digest naming no records, which a byte decline names |
 | `Deadline`, `MONOTONIC`, `OVER_BUDGET`, `declineOnRun(run, budget, phase, last, over)` | The deadline `budget.ms` is checked against, the default clock, the decline code, and the step and error a decline reports on its run |
 | `digestLine`, `digestBytes` | The line the writer will write for a digest, and its length in UTF-8 bytes |
 | `runOutcomes`, `onViewSurface`, `onFailureSurface`, `impliesChange`, `TIERS`, `OUTCOMES`, `CHANGE_VIEWS` | The parts of that order, each answerable on its own |

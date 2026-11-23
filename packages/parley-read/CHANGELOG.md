@@ -166,7 +166,9 @@ its manifest so it cannot be published by accident.
   back by `(run, seq)` for the call that will.
 - A read states a retention policy that deletes nothing (`NO_RETENTION`): §5.1 asks every tool for
   one, and expiring the receipts a read was asked to read would destroy the history in order to
-  answer a question about it.
+  answer a question about it. (Since flyingrobots/parley#75 retention is per tool, so a read's
+  receipts no longer cost another tool its history; a read still deletes nothing, because it
+  would expire only its own receipts, and nothing asked it to.)
 - The loader: `loadReceipts` returns every run in both receipt locations for a working directory
   as bundles, and `readReceiptFile` reads one receipt file, yielding one bundle per run it holds.
   A bundle carries its records in `seq` order, its resolved sidecars, its quarantined lines, every

@@ -211,6 +211,61 @@ describe("PE-5 retention", () => {
   });
 });
 
+describe("PE-26 retention is per tool", () => {
+  const body = () => {};
+  const names = (d: string) => readdirSync(d).filter((f) => f.endsWith(".jsonl")).sort();
+  async function populate(dir: string, env: Record<string, string>) {
+    const own: string[] = [], other: string[] = [];
+    for (let i = 0; i < 49; i++) own.push((await runCount(dir, env, ["count"], body, { retention: { count: 50 } })).path!);
+    for (let i = 0; i < 14; i++) other.push((await runCount(dir, env, ["count"], body, { name: "reader", retention: { count: 50 } })).path!);
+    return { own, other };
+  }
+
+  test("fourteen reads beside fifty receipts do not push any of the tool's history out", async () => {
+    const { dir, env } = scratch();
+    const { own, other } = await populate(dir, env);
+    const last = await runCount(dir, env, ["count"], body, { retention: { count: 50 } });
+    expect([...own, last.path!].every((p) => existsSync(p))).toBe(true);
+    expect(other.every((p) => existsSync(p))).toBe(true);
+    expect(names(join(dir, ".parley", "receipts")).length).toBe(64);
+    expect(last.receiptLines.some((o) => o.event === "receipt.step" && /retention/.test(String(o.decision)))).toBe(false);
+  });
+
+  test("the tool's own excess is still expired, oldest first, and a neighbour's receipts are never counted", async () => {
+    const { dir, env } = scratch();
+    const { own, other } = await populate(dir, env);
+    await runCount(dir, env, ["count"], body, { retention: { count: 50 } });
+    const next = await runCount(dir, env, ["count"], body, { retention: { count: 50 } });
+    expect(existsSync(own[0]!)).toBe(false);
+    expect(own.slice(1).every((p) => existsSync(p))).toBe(true);
+    expect(other.every((p) => existsSync(p))).toBe(true);
+    expect(names(join(dir, ".parley", "receipts")).length).toBe(64);
+    expect(next.violations).toEqual([]);
+  });
+
+  test("a file whose head cannot be read is not the tool's and is left alone", async () => {
+    const { dir, env } = scratch();
+    for (let i = 0; i < 2; i++) await runCount(dir, env, ["count"], body, { retention: { count: 2 } });
+    const rd = join(dir, ".parley", "receipts");
+    writeFileSync(join(rd, "a-empty.jsonl"), "");
+    writeFileSync(join(rd, "b-garbage.jsonl"), "not json\n{\"event\":\"end\"}\n");
+    writeFileSync(join(rd, "c-nohead.jsonl"), JSON.stringify({ event: "receipt.step", tool: "t" }) + "\n" + JSON.stringify({ event: "end" }) + "\n");
+    const r = await runCount(dir, env, ["count"], body, { retention: { count: 2 } });
+    expect(["a-empty.jsonl", "b-garbage.jsonl", "c-nohead.jsonl"].every((f) => existsSync(join(rd, f)))).toBe(true);
+    expect(names(rd).length).toBe(5);
+    expect(r.status).toBe(0);
+  });
+
+  test("the decision counts the tool's own receipts", async () => {
+    const { dir, env } = scratch();
+    for (let i = 0; i < 3; i++) await runCount(dir, env, ["count"], body, { name: "reader", retention: { count: 2 } });
+    for (let i = 0; i < 3; i++) await runCount(dir, env, ["count"], body, { retention: { count: 2 } });
+    const step = readFileSync((await runCount(dir, env, ["count"], body, { retention: { count: 2 } })).path!, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as { event: string; decision?: string }).find((o) => o.event === "receipt.step" && /retention/.test(o.decision ?? ""));
+    expect(step?.decision).toBe("retention: deleted 1 receipt bundle(s)");
+    expect(JSON.stringify(step)).toContain("3 of this tool's receipts exceeded the retention count of 2");
+  });
+});
+
 describe("PE-6 repository hygiene", () => {
   test("first write creates the ignore file", async () => {
     const { dir, env } = scratch();

@@ -221,7 +221,7 @@ itself a parley tool can hand one straight to `run.error`:
 | --- | --- | --- |
 | `asker` | Verbatim, `tool` required | Nothing branches on it: two askers asking the same thing get the same answer |
 | `view` | Verbatim, one of five tokens | **The order.** It ranks the answer and filters none of it (below) |
-| `budget` | Verbatim, defaulted to `{"records": 20}` and the answer says it defaulted | **The bound.** `records` bounds how many records the answer names; `bytes` bounds the digest's line; `ms` bounds nothing (below) |
+| `budget` | Verbatim, defaulted to `{"records": 20}` and the answer says it defaulted | **The bound.** `records` bounds how many records the answer names; `bytes` bounds the digest's line; `ms` is a deadline for the whole read (below) |
 | `window` | Verbatim, two timestamps inclusive at both ends | Yes: the answer is the records inside it, ordered by the view, with `(t, run, seq)` ascending as the last part of the key |
 | `note` | Verbatim | Never parsed |
 
@@ -238,7 +238,7 @@ holds by `(run, seq)` — the way back a drill-down needs — and the loss:
 | --- | --- |
 | `records` (required) | **The count.** At most this many records are named, and `answer.records` holds exactly those |
 | `bytes` (optional) | **The line.** The lens line as written, serialised JSON plus its newline in UTF-8, is at most this many bytes; records are dropped from the tail of the ranking until it fits |
-| `ms` (optional) | **Nothing.** A read that has loaded the history has already spent its time (flyingrobots/parley#71) |
+| `ms` (optional) | **The whole read, as a deadline**, measured on `opts.clock` from the call and checked after the load, after the ranking and before the digest is written (flyingrobots/parley#71) |
 
 `loss.excluded` is always there, zero included — an absent count and a count of zero are different
 claims — and `loss.bound` is `none` only beside a count of 0, which the schema refuses to pair any
@@ -247,6 +247,30 @@ excluded is not returned by another route and is named by no id, so it is reache
 under a wider budget, not by a drill-down. `counts.inWindow` and
 the ranking's tier census still describe the whole window the digest was drawn from, so the caller
 can see it is not the whole without being handed what it cut.
+
+### A budget the read cannot meet
+
+A read whose deadline passes at a check, or whose `budget.bytes` cannot hold even a digest naming
+no records, **declines** (flyingrobots/parley#71). It is still a recorded run — its `parley.query`
+is in its receipt — but it writes no lens: it never answers from a partial load, and never writes
+a line over a stated bound. It reports one `parley.error`, code `query.over_budget`, whose
+`detail` states the `bound` that declined, the `phase` it stopped at, the budget `given`, what was
+`measured`, a budget that would have been `sufficient` where that is known (exactly, for bytes:
+the size of the smallest digest) and the elapsed time as `at_least` when phases were still to run.
+The run ends with status 2, and `queryReceipts` returns `{refused: false, declined: true, decline,
+…}` rather than throwing:
+
+```ts
+const out = await queryReceipts(
+  { asker: { tool: "my-agent" }, view: "what-failed", window: { from: 0, to: Date.now() }, budget: { records: 20, ms: 50 } },
+  { cwd: process.cwd() },
+);
+if (!out.refused && out.declined) console.error(out.decline.problem, out.decline.sufficient, out.decline.atLeast);
+```
+
+The deadline is measured on `opts.clock`, monotonic by default and replaceable so a test can script
+it. The full rules, and a captured decline, are in
+[the reader page](../../docs/topics/parley-read/README.md#when-a-read-declines).
 
 ### The view orders the answer, and filters none of it
 
@@ -444,16 +468,22 @@ truncated record. Not-found and `sidecar_unavailable` outcomes cost nothing. The
 `parley.query` carries the bound applied. The full rules are in
 [the reader page](../../docs/topics/parley-read/README.md#a-byte-bound).
 
+It may also state `budget: { ms }`, the same deadline a read has, checked after the load and after
+the ids are opened; a drill-down past it declines as a read does and opens nothing
+([the reader page](../../docs/topics/parley-read/README.md#a-deadline)).
+
 ## Surface
 
 | Export | Job |
 | --- | --- |
 | `loadReceipts(opts)` | Every run in both receipt locations for a working directory, as bundles |
-| `queryReceipts(request, opts)` | A read: refused without an asker, a view and a window, else recorded as a `parley.query` event and answered with a `parley.lens` digest — the window's records ordered by the view, cut at the budget, and the count the cut left out |
+| `queryReceipts(request, opts)` | A read: refused without an asker, a view and a window, else recorded as a `parley.query` event and answered with a `parley.lens` digest — the window's records ordered by the view, cut at the budget, and the count the cut left out — or declined with `query.over_budget` when the budget cannot be met |
 | `openRecords(request, opts)`, `planOpen(request)`, `openOne(id, bundles)` | The drill-down: records by `(run, seq)`, one outcome per id, recorded as a `parley.query` carrying `records`; its refusal rules as a pure function; one id resolved against loaded bundles |
 | `planQuery(request)`, `queryRecord(query)` | The refusal rules and the recorded payload, without any reading or writing |
 | `rankRecords(query, records)` | The view's order over records, pure: the same records reordered, never a subset |
-| `digestFor(query, answers, ranked, envelope)` | The bound over that order, pure: the digest's payload, the records it names, the count it excluded and the bytes its line takes |
+| `digestFor(query, answers, ranked, envelope)` | The bound over that order, pure: the digest's payload, the records it names, the count it excluded, the bytes its line takes and whether it `fits` a stated byte bound at all |
+| `sufficientBytes(query, answers, total, envelope)` | The smallest `budget.bytes` that holds a digest naming no records, which a byte decline names |
+| `Deadline`, `MONOTONIC`, `OVER_BUDGET`, `declineOnRun(run, budget, phase, last, over)` | The deadline `budget.ms` is checked against, the default clock, the decline code, and the step and error a decline reports on its run |
 | `digestLine`, `digestBytes` | The line the writer will write for a digest, and its length in UTF-8 bytes |
 | `runOutcomes`, `onViewSurface`, `onFailureSurface`, `impliesChange`, `TIERS`, `OUTCOMES`, `CHANGE_VIEWS` | The parts of that order, each answerable on its own |
 | `VIEWS`, `DEFAULT_BUDGET`, `QUERY_SCHEMA`, `LENS_SCHEMA`, `NO_RETENTION` | The five view tokens, the one documented budget default, the two pairs a read emits, and the retention policy a read states |
@@ -487,10 +517,11 @@ secret, whether its `inv` matches — is the caller's to decide, and this reader
 
 - Project. The records a digest names come back whole; no view reduces one to fewer fields
   (flyingrobots/parley#59).
-- Hand back what the bound excluded, or decline on budget grounds. The digest states the count and
-  names only what it kept, so the drill-down opens those; the excluded tail is a wider read, and "not within your
-  budget, and here is the budget that would do it" is something `parley.lens` 1.0.0 cannot say
-  (flyingrobots/parley#71).
+- Hand back what the bound excluded. The digest states the count and names only what it kept, so
+  the drill-down opens those; the excluded tail is a wider read.
+- Interrupt a phase. `budget.ms` is checked between the load, the ranking and the digest, so a
+  slow load is discovered when it finishes and the read then declines; it never answers from part
+  of the history (flyingrobots/parley#71).
 - Apply a transform at read time. It prefers the least-projected copy it can see and names the
   projection it passed over; re-projecting a record for an asker is
   flyingrobots/parley#59's.

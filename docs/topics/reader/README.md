@@ -193,10 +193,13 @@ of ids asked, and `budget.bytes`, when stated, bounds the records that open: the
 
 ## What is still open
 
-- A read that cannot be answered within the declared budget should say so, and say what budget
-  would suffice. Nothing in `parley.lens` 1.0.0 expresses that: a read on `main` bounds its answer
-  and states the loss, but it cannot decline, and `budget.ms` bounds nothing at all
-  ([flyingrobots/parley#71](https://github.com/flyingrobots/parley/issues/71)).
+- A deadline is checked between phases, not inside them. `budget.ms` bounds the whole read and a
+  read past it declines and names the budget it measured
+  ([parley-read](../parley-read/README.md#when-a-read-declines),
+  [flyingrobots/parley#71](https://github.com/flyingrobots/parley/issues/71)), but the load reads
+  every receipt in both locations whatever the window, so a slow load is only discovered once it
+  has finished. Making a time bound cheap to honour needs an index
+  ([flyingrobots/parley#2](https://github.com/flyingrobots/parley/issues/2)).
 - `loss.bound` has two values and only one of them is a measurement. A distortion bound measured
   from a real translator is a later version of `parley.lens`, and nothing exists to measure it
   yet, so a caller who needs to know *what* a digest lost still has to widen the budget and read

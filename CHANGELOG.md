@@ -122,7 +122,37 @@ rather than moving its version.
   description of `asker.task` is corrected in place, since the schema is still a draft under this
   `Unreleased` section (§4.5); that moves no version.
 
+- **What `budget.ms` bounds, and how a read declines** (flyingrobots/parley#71). `ms` is a
+  **deadline for the whole read**, measured from the call and checked between phases: after the
+  load, after the ranking, before the digest is written. A read never answers from a partial load.
+  A read that passes its deadline, or whose `budget.bytes` cannot hold even a digest naming no
+  records, **declines**: it is still a recorded run, and it answers with a structured
+  `parley.error`, code `query.over_budget`, whose `detail` states the budget given, what was
+  measured, and a budget that would have sufficed where that is known — the elapsed time for `ms`
+  when the read stopped at its last check (a lower bound, `at_least`, when phases were still to
+  run), and the size of the smallest digest for `bytes`, which is exact. The run ends with status
+  2, the §3.4 status for a reported structured error; this is the one part of the decision an
+  owner may most reasonably overrule, since a decline is an answer rather than a failure and §3.4
+  has no status for that. `ms` stays in `parley.query`. Rejected:
+  - *`ms` bounds the load*, abandoning it part-way and naming what was not reached. A digest drawn
+    from part of the history carries an excluded count of records the read *saw*, which reads as a
+    loss bound over the window and is not one.
+  - *Remove `ms`*, which moves `parley.query`. A caller with a deadline is the observer-geometry
+    treatment's own case, and a bound that is recorded and ignored was the defect, not the bound.
+  - *A field on a later `parley.lens`* saying what budget would suffice. A lens is a digest of
+    records; a declined read has none, and the verdict is a §6 error with `measured` and `limit`.
+  - *Another refusal code beside those `planQuery` returns*. A refusal is pure and pre-load; a verdict about whether
+    real history fits a budget can only come from a read that ran. No schema moved.
+
 ### Added
+
+- **A read that cannot meet its budget declines, and names the budget that would**
+  (flyingrobots/parley#71): `queryReceipts` and `openRecords` in `packages/parley-read` apply
+  `budget.ms` as a deadline checked between phases on an injectable `clock` (monotonic by default,
+  so tests script it rather than sleep), and decline a read past it — or one whose `budget.bytes`
+  cannot hold an empty digest — with a recorded run that ends in one `query.over_budget` error and
+  status 2. See the decision above and
+  [the reader page](docs/topics/parley-read/README.md#when-a-read-declines).
 
 - **A built-in history transform that refuses a suspected secret** (flyingrobots/parley#60), in
   `parley-emit`: `refuseSuspectedSecrets()` withholds a line whose body matches one of ten
@@ -273,8 +303,8 @@ rather than moving its version.
   a result to carry its own lens so a later reader "cannot mistake a digest for the whole"; the
   digest is evidence rather than a return value, written into the read's own receipt and read back
   `validated` against the exact pair. `budget.records` bounds the count of records named,
-  `budget.bytes` bounds the lens line in UTF-8 bytes with its newline, and `budget.ms` bounds
-  nothing. `loss.excluded` is always present, zero included, and `loss.bound` is `none` only
+  `budget.bytes` bounds the lens line in UTF-8 bytes with its newline, and `budget.ms` bounded
+  nothing until flyingrobots/parley#71 made it a deadline (above). `loss.excluded` is always present, zero included, and `loss.bound` is `none` only
   beside a count of 0 — the schema refuses the other pairing, so a digest that left something out
   says so structurally. **This replaces the limit flyingrobots/parley#48 landed**, where the
   budget was recorded and bounded nothing. **No schema version moved**; see the in-place draft

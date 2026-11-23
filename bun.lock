@@ -15,6 +15,10 @@
       "name": "@flyingrobots/parley-emit",
       "version": "0.1.0",
     },
+    "packages/parley-emit-py": {
+      "name": "@flyingrobots/parley-emit-py",
+      "version": "0.1.0",
+    },
     "packages/parley-read": {
       "name": "@flyingrobots/parley-read",
       "version": "0.1.0",
@@ -27,6 +31,8 @@
   },
   "packages": {
     "@flyingrobots/parley-emit": ["@flyingrobots/parley-emit@workspace:packages/parley-emit"],
+
+    "@flyingrobots/parley-emit-py": ["@flyingrobots/parley-emit-py@workspace:packages/parley-emit-py"],
 
     "@flyingrobots/parley-read": ["@flyingrobots/parley-read@workspace:packages/parley-read"],
 

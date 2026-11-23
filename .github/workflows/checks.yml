@@ -11,6 +11,14 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+      # packages/parley-emit-py promises Python 3.9 or later, so the gate runs it on the oldest
+      # version it promises; bun test shells out to python3 for its suite and its oracles. The
+      # runner image ships no 3.9 for actions/setup-python, so uv installs a standalone build.
+      - uses: astral-sh/setup-uv@v6
+      - run: |
+          uv python install 3.9
+          echo "$(dirname "$(uv python find 3.9)")" >> "$GITHUB_PATH"
+      - run: python3 --version && python3 -c "import sys; assert sys.version_info[:2] == (3, 9), sys.version"
       - run: bun install --frozen-lockfile
       - run: bun test
       - run: bun run check

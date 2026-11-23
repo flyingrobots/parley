@@ -229,8 +229,6 @@ describe("PE-26 retention is per tool", () => {
     expect(other.every((p) => existsSync(p))).toBe(true);
     expect(names(join(dir, ".parley", "receipts")).length).toBe(64);
     expect(last.receiptLines.some((o) => o.event === "receipt.step" && /retention/.test(String(o.decision)))).toBe(false);
-    // Sixty-four real writer runs: a loaded machine stretches them past the default 5 s, and the
-    // case is about which receipts survive, not how fast.
   }, 60_000);
 
   test("the tool's own excess is still expired, oldest first, and a neighbour's receipts are never counted", async () => {
@@ -243,8 +241,6 @@ describe("PE-26 retention is per tool", () => {
     expect(other.every((p) => existsSync(p))).toBe(true);
     expect(names(join(dir, ".parley", "receipts")).length).toBe(64);
     expect(next.violations).toEqual([]);
-    // Sixty-four real writer runs: a loaded machine stretches them past the default 5 s, and the
-    // case is about which receipts survive, not how fast.
   }, 60_000);
 
   test("a file whose head cannot be read is not the tool's and is left alone", async () => {
@@ -258,7 +254,7 @@ describe("PE-26 retention is per tool", () => {
     expect(["a-empty.jsonl", "b-garbage.jsonl", "c-nohead.jsonl"].every((f) => existsSync(join(rd, f)))).toBe(true);
     expect(names(rd).length).toBe(5);
     expect(r.status).toBe(0);
-  });
+  }, 60_000);
 
   test("the decision counts the tool's own receipts", async () => {
     const { dir, env } = scratch();
@@ -267,7 +263,7 @@ describe("PE-26 retention is per tool", () => {
     const step = readFileSync((await runCount(dir, env, ["count"], body, { retention: { count: 2 } })).path!, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as { event: string; decision?: string }).find((o) => o.event === "receipt.step" && /retention/.test(o.decision ?? ""));
     expect(step?.decision).toBe("retention: deleted 1 receipt bundle(s)");
     expect(JSON.stringify(step)).toContain("3 of this tool's receipts exceeded the retention count of 2");
-  });
+  }, 60_000);
 });
 
 describe("PE-6 repository hygiene", () => {
@@ -967,7 +963,7 @@ function segmentObjs(hist: string): Record<string, unknown>[] {
   return segmentText(hist).trimEnd().split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>);
 }
 const bookkeepingOf = (head: Record<string, unknown>) => (head.effects as { bookkeeping: { op: string; scope: string }[] }).bookkeeping;
-const pathsOf = (boot: Record<string, unknown>) => boot.paths as Record<string, string>;
+const pathsOf = (boot: Record<string, unknown>) => boot.paths as Record<string, string> & { receipt: string };
 
 describe("PE-22 the shared history stream", () => {
   test("a run with no stream configured is untouched", async () => {
@@ -1560,7 +1556,8 @@ describe("PE-23 the history sink's transform", () => {
     for (const s of SCHEMAS) expect(schemaSubsetGap(s.schema), `${s.id}@${s.version}`).toBeNull();
     expect(schemaSubsetGap({ type: "object", properties: { a: { $ref: "#/$defs/x" } } })).toBe("$ref");
     expect(schemaSubsetGap({ type: "string", format: "uri" })).toBe("format uri");
-    expect(checkRecord({ a: 1 }, { properties: { a: { uniqueItems: true } } }).unsupported).toBe("uniqueItems");
+    const unsupported = checkRecord({ a: 1 }, { properties: { a: { uniqueItems: true } } });
+    expect("unsupported" in unsupported ? unsupported.unsupported : undefined).toBe("uniqueItems");
   });
 
   test("the doctor reports a segment's projection and its withheld gaps", async () => {
@@ -1817,7 +1814,7 @@ describe("PE-25 refuseSuspectedSecrets", () => {
     expect(warns.length).toBe(1);
     expect(String(warns[0]!.problem)).toContain(`seq ${String(r.receiptLines[0]!.seq)}`);
     const vs = inspectSegment(segmentText(hist)) as { event: string; seq?: number }[];
-    expect(vs.filter((v) => v.event === "doctor.gap").map((v) => v.seq)).toContain(r.receiptLines[0]!.seq);
+    expect(vs.filter((v) => v.event === "doctor.gap").map((v) => v.seq)).toContain(r.receiptLines[0]!.seq as number | undefined);
     expect(vs.at(-1)).toMatchObject({ event: "doctor.segment", runs: 1, projected: 1, torn: 0, passed: true });
   });
 

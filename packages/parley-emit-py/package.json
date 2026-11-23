@@ -1,6 +1,6 @@
 {
   "name": "@flyingrobots/parley-emit-py",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "A writer for the Parley output protocol in one vendorable Python file, standard library only. This manifest exists for the repository's scripts; the package is the file parley_emit.py.",
   "license": "Apache-2.0",

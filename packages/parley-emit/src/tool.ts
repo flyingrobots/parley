@@ -293,13 +293,18 @@ function discover(run: Run, spec: ToolSpec, discovery: "schema" | "help", comman
     for (const t of types.values()) {
       const doc = t.schema ?? SCHEMAS.find((s) => s.id === t.id && s.version === t.version)?.schema;
       if (!doc) { run.warning({ code: "schema.unavailable", problem: `no schema document for ${t.id}@${t.version}`, remedy: "declare the schema on the emitted type" }); continue; }
-      run.describe({ event: "schema", id: t.id, version: t.version, schema: doc }, SCHEMA_IDS.schema);
+      run.describe({ event: "schema", id: t.id, version: t.version, schema: doc }, SCHEMA_IDS.schema, "schema");
     }
     run.end(0);
   }
 }
 
 function scrubText(s: string, values: ReadonlySet<string>): string { return scrub(s, values) as string; }
+
+/** A receipt's size and mtime, as a comparable key and the mtime in milliseconds, or null when it is gone. */
+function observe(path: string): { key: string; mtime: number } | null {
+  try { const st = statSync(path, { bigint: true }); return { key: `${st.size}:${st.mtimeNs}`, mtime: Number(st.mtimeNs / 1_000_000n) }; } catch { return null; }
+}
 
 /** True when the receipt's final line is a newline-terminated `end` (§5.4), read from its tail. */
 function hasEnded(path: string): boolean {
@@ -350,27 +355,43 @@ function headTool(path: string): string | null {
   } catch { return null; } finally { if (fd !== null) closeSync(fd); }
 }
 
-/** §5.1: delete the oldest completed bundles of this tool beyond `count` in this location (another tool's receipts are never counted or deleted); never a receipt still in flight; never on a dry run; recorded as a decision. */
-function retain(run: Run, receiptDir: string, count: number, dryRun: boolean, at: number): void {
+/**
+ * §5.1: delete the oldest completed bundles of this tool beyond `count` in this location (another
+ * tool's receipts are never counted or deleted); never a receipt still in flight; never on a dry
+ * run; recorded as a decision. Exported for the package's own tests, not from the index:
+ * `afterScan` runs between the listing and the decisions, where another run can append.
+ */
+export function retain(run: Run, receiptDir: string, count: number, dryRun: boolean, at: number, afterScan?: () => void): void {
   let files: { name: string; mtime: number }[];
   try {
     files = readdirSync(receiptDir).filter((f) => f.endsWith(".jsonl") && headTool(join(receiptDir, f)) === run.tool).map((name) => ({ name, mtime: statSync(join(receiptDir, name)).mtimeMs }));
   } catch { return; }
+  afterScan?.();
   const excess = files.length - count;
   if (excess <= 0) return;
   const candidates = files.filter((f) => f.name !== `${run.id}.jsonl`).sort((a, b) => a.mtime - b.mtime || a.name.localeCompare(b.name));
-  const victims: string[] = [];
+  // The scan orders the candidates; each decision re-observes its receipt, because another run can
+  // append between the scan and here (flyingrobots/parley#112). The observation is compared again
+  // just before the unlink.
+  const chosen: { name: string; seen: string }[] = [];
   for (const f of candidates) {
-    if (victims.length >= excess) break;
+    if (chosen.length >= excess) break;
     const p = join(receiptDir, f.name);
-    if (hasEnded(p) || at - f.mtime > INCOMPLETE_GRACE_MS) victims.push(f.name);
+    const seen = observe(p);
+    if (seen === null) continue;
+    if (hasEnded(p) || at - seen.mtime > INCOMPLETE_GRACE_MS) chosen.push({ name: f.name, seen: seen.key });
   }
+  const victims = chosen.map((c) => c.name);
   if (!victims.length) { run.step("retention: nothing to delete", `${files.length} of this tool's receipts exceed the retention count of ${count}, but every excess receipt is still in flight (no end line yet); only completed bundles, or incomplete ones older than a day, are deleted (§5.1)`); return; }
   if (dryRun) { run.step(`retention: would delete ${victims.length} receipt bundle(s)`, `${files.length} of this tool's receipts exceed the retention count of ${count}; a dry run performs no retention deletion (§4.3)`, { receipts: victims }); return; }
   const deleted: string[] = [];
-  for (const name of victims) {
+  for (const { name, seen } of chosen) {
+    const p = join(receiptDir, name);
+    if (observe(p)?.key !== seen) continue; // it moved since the decision: its run may be alive (flyingrobots/parley#112)
     const base = name.slice(0, -".jsonl".length);
-    try { rmSync(join(receiptDir, name), { force: true }); rmSync(join(receiptDir, base), { recursive: true, force: true }); deleted.push(name); } catch { /* a bundle another run is deleting */ }
+    // One bundle (§5): rmSync with force ignores only an absent receipt, so a receipt that cannot be
+    // unlinked throws here and keeps its sidecars.
+    try { rmSync(p, { force: true }); rmSync(join(receiptDir, base), { recursive: true, force: true }); deleted.push(name); } catch { /* a bundle another run is deleting */ }
   }
   run.step(`retention: deleted ${deleted.length} receipt bundle(s)`, `${files.length} of this tool's receipts exceeded the retention count of ${count}; the oldest completed bundles are deleted with their sidecars (§5.1)`, { receipts: deleted });
 }

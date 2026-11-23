@@ -645,6 +645,11 @@ NOT** edit the user's tracked `.gitignore` or any other tracked file to achieve 
 If the file exists and has no such line, it is a user's file: the program **MUST NOT** edit it,
 **MUST** use the state-directory fallback (§5) for this run, and **SHOULD** emit a warning (§6.1)
 saying why the receipt went elsewhere. The bootstrap line's absolute `paths.receipt` says where.
+A file that has the line but also a negation pattern (a line beginning `!`) that can match the
+directory `receipts` is a user's file too, under the same rule. Git cannot re-include a file whose
+parent directory is excluded, so with `*` in force nothing under `receipts/` can be staged unless a
+negation re-includes that directory; `!keep` cannot, `!receipts/` and `!*/` can. A program that
+cannot tell whether a negation matches **MUST** treat it as one that does.
 
 Be clear about what that buys. The file ignores itself, so it does not travel through a clone;
 each conforming writer establishes hygiene locally on first use, and a collaborator's first run
@@ -686,7 +691,12 @@ collide unless the program redacts. Privacy wins:
   environment can leak through a command that did not declare it, while resolving another command's
   source runs side effects the call never asked for. A declared secret that reaches a later receipt
   line is replaced there too; that line needs no entry on the head, because the head already says
-  the receipt is partial.
+  the receipt is partial. The schema document a `schema` line publishes (§4.2) is the exception:
+  it is the program's own static declaration, fixed before any invocation, so no secret can reach
+  it, and it **MUST** be published as declared. A secret value that occurs in it by coincidence,
+  such as `object` or `2020`, was not written there by the run, and replacing it would advertise a
+  pair whose document the line no longer carries. Every other field of discovery stays subject to
+  this rule.
 - It **MAY** redact more than it declared, in the head or in any later line, by replacing the value
   before the record is written and recording it with a `redaction` event (below), which for the
   head names `in: 1`. Name-based redaction misses odd names and pattern-based redaction misses odd

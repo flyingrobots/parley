@@ -23,8 +23,9 @@ derivation, and the README's last section names every place it differs.
    `startup.unknown_command`; both are one `startup.failed` line on stderr and exit 3 (§3.2).
 3. Replace `sys.stdout` and `sys.stderr` with capturing objects (§1.2). Resolve the running
    command's declared credential sources; a resolver that raises means not present.
-4. Reserve the receipt (§3.1, §5, §5.2): `.parley/.gitignore` holding `*`, created whole if absent
-   and never overwritten, then `.parley/receipts/<run>.jsonl` opened exclusively; otherwise the
+4. Reserve the receipt (§3.1, §5, §5.2): `.parley/.gitignore` holding `*`, and no negation that
+   can re-include `receipts/` (flyingrobots/parley#109), created whole if absent and never
+   overwritten, then `.parley/receipts/<run>.jsonl` opened exclusively; otherwise the
    state directory `$XDG_STATE_HOME/parley/<repo-hash>/receipts/`, keyed as `parley-read` looks for
    it. With neither, `startup.receipt_unwritable` or `startup.secret_in_path`, exit 3.
 5. Call the tool's `resolved` and `inputs` callbacks. A raise is `startup.arguments_invalid`,
@@ -66,7 +67,12 @@ writer agrees. A type with no schema document is a
 
 Per tool: only bundles whose receipt head names this tool are counted and deleted, oldest first by
 modification time, with their sidecar directories (flyingrobots/parley#75). A bundle with no `end`
-is deleted only after a day. A dry run deletes nothing and records what it would have deleted.
+is deleted only after a day, judged from the receipt as it is at the decision, and a receipt whose
+size or modification time moved between the decision and the unlink is spared
+(flyingrobots/parley#112). That narrows the race with a run that appends but does not close it.
+The sidecars go only once the receipt is gone, so a receipt that cannot be unlinked keeps its
+bundle whole and is not reported deleted (flyingrobots/parley#113). A dry run deletes nothing and
+records what it would have deleted.
 
 ## Stray output, and what it cannot hold
 

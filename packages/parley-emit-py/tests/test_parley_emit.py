@@ -20,6 +20,7 @@ import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 import warnings
 
 PACKAGE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -269,6 +270,35 @@ class TestInv(unittest.TestCase):
         o = run_count(d, env, ["count"], lambda r: r.input("-", "from stdin"), inputs=[{"path": "-", "role": "stdin"}])
         inputs = next(x for x in o.receipt_lines if x["event"] == "receipt.inputs")
         self.assertEqual(inputs["inputs"][0]["sha256"], hashlib.sha256(b"from stdin").hexdigest())
+
+    def test_an_input_the_handler_could_not_read_is_recorded_unread(self):
+        # PY-15g (flyingrobots/parley#110): the handler fails to read a declared input, says so,
+        # and the file appears before end. The writer must not hash bytes the program never saw.
+        d, _, env = scratch()
+        refused = []
+
+        def body(run):
+            run.input_unreadable("dag.json")
+            with open(os.path.join(run.cwd, "dag.json"), "w") as f:
+                f.write("{}")
+            try:
+                run.input_unreadable("typo.json")
+            except ValueError:
+                refused.append("undeclared")
+            run.finalise_inputs()
+            try:
+                run.input_unreadable("dag.json")
+            except ValueError:
+                refused.append("settled")
+            run.error("dag_spec.unreadable", "could not read dag.json")
+
+        o = run_count(d, env, ["count"], body, inputs=[{"path": "dag.json"}])
+        self.assertEqual(o.status, 2)
+        inputs = next(x for x in o.receipt_lines if x["event"] == "receipt.inputs")
+        self.assertEqual(inputs["inputs"], [{"path": "dag.json", "error": "input.unreadable"}])
+        self.assertFalse(any("inv" in x for x in o.stdout.objs + o.receipt_lines))
+        self.assertEqual(refused, ["undeclared", "settled"])
+        assert_valid(self, o)
 
 
 class TestRedaction(unittest.TestCase):
@@ -784,6 +814,31 @@ class TestDiscovery(unittest.TestCase):
         ids = [f"{x['id']}@{x['version']}" for x in out.objs if x["event"] == "schema"]
         self.assertEqual(ids, ["t.count@1.0.0", "parley.error@2.0.0", "parley.startup.failed@1.0.0"])
 
+    def test_a_schema_document_is_published_as_declared(self):
+        # PY-4d (flyingrobots/parley#111): a declared secret whose value occurs in a static schema
+        # document must not rewrite it; the command line, which carries paths, is still scrubbed.
+        d, _, env = scratch()
+        env = {**env, "T_TOKEN": "object"}
+        commands = {"count": {
+            "intent": "Count each object under the working directory",
+            "effects": {"reads": ["<cwd>/**"], "writes": [], "network": False, "idempotent": True},
+            "secrets": ["T_TOKEN"],
+            "emits": [{"id": "t.count", "version": "1.0.0", "schema": RESULT}],
+        }}
+        out, err = Capture(), Capture()
+        status = pe.main(tool(commands=commands), ["t", "count", "--help"], lambda r, a: None, cwd=d, env=env, stdout=out, stderr=err)
+        self.assertEqual(status, 0)
+        docs = {x["id"]: x["schema"] for x in out.objs if x["event"] == "schema"}
+        self.assertEqual(docs["t.count"], RESULT)
+        self.assertEqual(docs["parley.error"], pe.schema_for(("parley.error", "2.0.0")))
+        command = next(x for x in out.objs if x["event"] == "command")
+        self.assertEqual(command["intent"], "Count each [redacted] under the working directory")
+        o = Outcome(status, out, err, out.objs[0]["paths"]["receipt"])
+        schema_seqs = {x["seq"] for x in o.receipt_lines if x["event"] == "schema"}
+        self.assertFalse(any(x["in"] in schema_seqs for x in o.receipt_lines if x["event"] == "redaction"))
+        self.assertTrue(o.stdout.objs[-1]["redacted"])
+        assert_valid(self, o)
+
 
 PLAIN = {"reads": [], "writes": [], "network": False, "idempotent": True}
 TWO_COMMANDS = {
@@ -937,6 +992,32 @@ class TestHygiene(unittest.TestCase):
         self.assertTrue(any(x["code"] == "receipt.relocated" for x in o.stderr.objs))
         assert_valid(self, o)
 
+    def test_a_negation_that_can_reinclude_receipts_sends_the_receipt_to_the_fallback(self):
+        # PY-12d (flyingrobots/parley#109): with `*`, nothing under receipts/ can be staged unless a
+        # negation re-includes the directory itself; a writer that cannot tell treats it as one.
+        for text in ("*\n!receipts/\n!receipts/**\n", "*\n!rec*\n", "*\n!*/\n", "*\n!**/receipts\n",
+                     "*\n!receipts/**\n", "*\n!/Receipts/\n", "*\n!r[e]ceipts\n"):
+            with self.subTest(text=text):
+                d, state, env = scratch()
+                os.mkdir(os.path.join(d, ".parley"))
+                with open(os.path.join(d, ".parley", ".gitignore"), "w") as f:
+                    f.write(text)
+                o = run_count(d, env, ["count"], lambda r: None)
+                with open(os.path.join(d, ".parley", ".gitignore")) as f:
+                    self.assertEqual(f.read(), text)
+                self.assertTrue(o.path.startswith(os.path.join(state, "parley")), o.path)
+                warn = next(x for x in o.stderr.objs if x.get("code") == "receipt.relocated")
+                self.assertIn("negation", warn["problem"])
+                assert_valid(self, o)
+        for text in ("*\n!keep\n", "*\n# !receipts/\n", "*\n\\!receipts\n", "*\n"):
+            with self.subTest(text=text):
+                d, _, env = scratch()
+                os.mkdir(os.path.join(d, ".parley"))
+                with open(os.path.join(d, ".parley", ".gitignore"), "w") as f:
+                    f.write(text)
+                o = run_count(d, env, ["count"], lambda r: None)
+                self.assertTrue(o.path.startswith(os.path.join(d, ".parley")), o.path)
+
 
 class TestRetention(unittest.TestCase):
     def test_by_count_oldest_first(self):
@@ -1003,6 +1084,64 @@ class TestRetention(unittest.TestCase):
         self.assertIs(o.receipt_lines[0]["dry_run"], True)
         self.assertTrue(any(x.get("decision", "").startswith("retention: would delete") for x in o.receipt_lines))
         assert_valid(self, o)
+
+    def test_a_receipt_that_moved_after_the_scan_is_spared(self):
+        # PY-13f (flyingrobots/parley#112): an incomplete receipt silent for two days whose owner
+        # appends after the scan. The age is read at the decision, and a receipt that moved since
+        # is not deleted.
+        d, _, env = scratch()
+        run_count(d, env, ["count"], lambda r: None, over={"retention": {"count": 100}})
+        rdir = os.path.join(d, ".parley", "receipts")
+        stale = os.path.join(rdir, pe.ulid(5) + ".jsonl")
+        with open(stale, "w") as f:
+            f.write(json.dumps({"event": "receipt.head", "t": 1, "seq": 1, "run": os.path.basename(stale)[:-6], "tool": "t", "v": "0.0.1", "argv": [], "resolved": {}, "inputs": [], "_schema": pe.SCHEMA_IDS["head"]}) + "\n")
+        two_days = time.time() - 2 * 86400
+        os.utime(stale, (two_days, two_days))
+        real = pe._has_ended
+
+        def owner_appends(path):
+            if path == stale:
+                with open(stale, "a") as f:
+                    f.write(json.dumps({"event": "receipt.step", "t": 2, "seq": 2, "run": os.path.basename(stale)[:-6], "decision": "resumed", "because": "its owner woke", "_schema": pe.SCHEMA_IDS["step"]}) + "\n")
+            return real(path)
+
+        with unittest.mock.patch.object(pe, "_has_ended", owner_appends):
+            run_count(d, env, ["count"], lambda r: None, over={"retention": {"count": 1}})
+        self.assertTrue(os.path.exists(stale))
+
+    def test_sidecars_survive_when_the_receipt_cannot_be_unlinked(self):
+        # PY-13g (flyingrobots/parley#113): a bundle is deleted together or not at all.
+        d, _, env = scratch()
+        rows = [{"i": i, "text": "x" * 30} for i in range(3000)]
+        big = run_count(d, env, ["count"], lambda r: r.result({"event": "result", "value": 1}, T_COUNT, {"rows": rows}), over={"retention": {"count": 100}})
+        side = os.path.join(os.path.dirname(big.path), big.stdout.objs[0]["run"])
+        self.assertTrue(os.path.isdir(side))
+        real = os.unlink
+
+        def refuse(path, *a, **k):
+            if os.path.abspath(path) == big.path:
+                raise PermissionError(1, "Operation not permitted", path)
+            return real(path, *a, **k)
+
+        with unittest.mock.patch.object(pe.os, "unlink", refuse):
+            o = run_count(d, env, ["count"], lambda r: None, over={"retention": {"count": 1}})
+        self.assertTrue(os.path.exists(big.path))
+        self.assertTrue(os.path.isdir(side))
+        self.assertEqual(os.listdir(side), [f"{next(x for x in big.receipt_lines if x['event'] == 'sidecar')['source']}.json"])
+        step = next(x for x in o.receipt_lines if x.get("decision", "").startswith("retention:"))
+        self.assertNotIn(os.path.basename(big.path), step.get("detail", {}).get("receipts", []))
+
+        # A receipt another run removed first: its sidecars still go, so no orphan is left.
+        def gone(path, *a, **k):
+            if os.path.abspath(path) == big.path:
+                real(path)
+                raise FileNotFoundError(2, "No such file or directory", path)
+            return real(path, *a, **k)
+
+        with unittest.mock.patch.object(pe.os, "unlink", gone):
+            run_count(d, env, ["count"], lambda r: None, over={"retention": {"count": 1}})
+        self.assertFalse(os.path.exists(big.path))
+        self.assertFalse(os.path.exists(side))
 
 
 class TestSidecars(unittest.TestCase):

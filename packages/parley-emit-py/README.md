@@ -108,7 +108,7 @@ and `count files --human` printed `2 file(s)` and nothing else, exit 0.
 | --- | --- |
 | `define_tool(name=, version=, commands=, retention=, sources=None, human=None)` | Checks the declaration: a non-empty name and version, at least one command, an intent and the four effects per command, a SemVer version on every emitted and error type, a positive retention count. `commands` maps a name to `{intent, effects, secrets?, emits: [{id, version, schema?}], errors?}` |
 | `main(tool, argv, handler, *, cwd, env, home, stdout, stderr, session, now, inputs, resolved)` | Runs one invocation and returns the exit status. `argv` is `[tool.name, *sys.argv[1:]]`; `handler(run, args)` is called with the arguments that remain once the writer's flags and the command, the first argument, are set aside (see [Arguments and flags](#arguments-and-flags)). Nothing raised inside escapes as a traceback |
-| `Run` | `result(record, schema, receipt_extra=None)`, `page(cursor, has_more, record=None, receipt_extra=None)`, `step(decision, because, detail=...)`, `warning(code, problem, **fields)`, `error(code, problem, receipt_extra=None, **fields)`, `input(path, data)`, `finalise_inputs()`, `end(status=None)`; `id`, `cwd`, `receipt_path`, `receipt_dir`, `dry_run`, `ended`, `status`, `sink_failed`. A schema is `("id", "version")` or `{"id": ..., "version": ...}`; diagnostic fields are `remedy`, `remedy_target`, `measured`, `limit`, `retryable` and `detail` |
+| `Run` | `result(record, schema, receipt_extra=None)`, `page(cursor, has_more, record=None, receipt_extra=None)`, `step(decision, because, detail=...)`, `warning(code, problem, **fields)`, `error(code, problem, receipt_extra=None, **fields)`, `input(path, data)`, `input_unreadable(path, code="input.unreadable")`, `finalise_inputs()`, `end(status=None)`; `id`, `cwd`, `receipt_path`, `receipt_dir`, `dry_run`, `ended`, `status`, `sink_failed`. A schema is `("id", "version")` or `{"id": ..., "version": ...}`; diagnostic fields are `remedy`, `remedy_target`, `measured`, `limit`, `retryable` and `detail` |
 | `check_record(value, schema)`, `validate_line(line, extra=None)`, `schema_subset_gap(schema)` | The bounded JSON Schema checker (below) |
 | `SCHEMAS`, `SCHEMA_SOURCE`, `schema_for(pair)`, `schema_text_digests()` | The embedded schemas and their pins |
 | `compute_inv`, `canonical`, `digest_tree`, `digest_input`, `sha256` | The `inv` derivation and its parts |
@@ -121,10 +121,10 @@ and `count files --human` printed `2 file(s)` and nothing else, exit 0.
 | Spec | Behaviour |
 | --- | --- |
 | §3.1 | Creates the receipt before announcing it; the bootstrap line is the first line on any stream, `seq: 0`, stdout only, before the handler runs |
-| §5, §5.2 | `.parley/receipts/<run>.jsonl` under the initial working directory, after `.parley/.gitignore` holds a line `*` (created whole under a temporary name and linked into place if absent, never overwritten). The receipt goes to `$XDG_STATE_HOME/parley/<repo-hash>/receipts/` instead, with a `receipt.relocated` warning, when the ignore file is a user's without `*` or when the working-directory path would carry a declared secret value; an unwritable working directory falls back silently (the bootstrap line says where). No writable location is `startup.receipt_unwritable`; a state path that would carry the secret too is `startup.secret_in_path`; both exit 3 |
+| §5, §5.2 | `.parley/receipts/<run>.jsonl` under the initial working directory, after `.parley/.gitignore` holds a line `*` (created whole under a temporary name and linked into place if absent, never overwritten). The receipt goes to `$XDG_STATE_HOME/parley/<repo-hash>/receipts/` instead, with a `receipt.relocated` warning, when the ignore file is a user's (without `*`, or with a negation that can re-include `receipts/`, such as `!receipts/` or `!*/`; a negation the writer cannot evaluate counts as one) or when the working-directory path would carry a declared secret value; an unwritable working directory falls back silently (the bootstrap line says where). No writable location is `startup.receipt_unwritable`; a state path that would carry the secret too is `startup.secret_in_path`; both exit 3 |
 | §1.3 | One counter per run, under a lock, so threads emitting at once cannot share or skip a `seq`. A record is serialised before it takes a `seq`, so one that is not JSON is raised to the tool and leaves no gap |
 | §2.2 | `inv` exactly as the TypeScript writer derives it (below) |
-| §5.3 | Declared flags, variables and sources replaced with `[redacted]` in `argv`, `resolved`, `inputs` and every later record before any copy leaves the process; longest secret first; a number or boolean whose JSON form is a secret becomes `[redacted]`; a key carrying one is renamed. The head's `redacted` says where; a later surfacing gets a `redaction` event; `end.redacted` aggregates. The envelope and the writer's own identity fields are never scrubbed, a run id or receipt path carrying a secret is never chosen, and a session carrying one is `startup.secret_in_identity`, exit 3 |
+| §5.3 | Declared flags, variables and sources replaced with `[redacted]` in `argv`, `resolved`, `inputs` and every later record before any copy leaves the process; longest secret first; a number or boolean whose JSON form is a secret becomes `[redacted]`; a key carrying one is renamed. The head's `redacted` says where; a later surfacing gets a `redaction` event; `end.redacted` aggregates. The envelope, the writer's own identity fields and the schema document a `schema` line publishes (the tool's static declaration, flyingrobots/parley#111) are never scrubbed, a run id or receipt path carrying a secret is never chosen, and a session carrying one is `startup.secret_in_identity`, exit 3 |
 | §5 | A receipt record over 65,536 bytes is stored as `<run>/<seq>.json` beside the receipt with a `sidecar` event in its place; if the sidecar cannot be written the record stays inline and the run closes with a `sink.sidecar_failed` error and status 4 |
 | §5.1 | Retention by count, **per tool** (below) |
 | §4.1, §4.2 | `--schema` and `<command> --help` are runs that emit `command` and `schema` lines and close with `end` |
@@ -181,7 +181,11 @@ paths in its `exclude` list. The run id, receipt path, session and clock are not
 With no declared inputs, `inv` covers the tool, version, command and `resolved` only and is on the
 bootstrap line; with inputs it arrives in `receipt.inputs` before `end`, and an unreadable input
 (`input.unreadable`, or `input.unread` for a stdin input the handler never supplied with
-`run.input("-", data)`) omits it. `resolved` is in the preimage, so keep it order-normalised and
+`run.input("-", data)`) omits it. When the handler itself fails to read a declared input it calls
+`run.input_unreadable(path)`, so the writer records the input as unread instead of opening the
+path at finalisation and digesting bytes the program never saw (spec §2.2,
+flyingrobots/parley#110); it raises `ValueError` for an undeclared path and after the inputs are
+settled. `resolved` is in the preimage, so keep it order-normalised and
 free of volatile values such as the working directory.
 
 ## Retention, per tool
@@ -191,7 +195,11 @@ head names this tool**, the oldest beyond N are deleted with their sidecar direc
 deletion is recorded as a `receipt.step`. Another tool's receipts, a reader's included, are never
 counted and never deleted; that is the decision recorded on flyingrobots/parley#75, implemented
 here from the start. A receipt with no `end` is deleted only once it is more than a day old, so a
-run still in flight is never a candidate; a dry run deletes nothing and says what it would have
+run still in flight is never a candidate. The age is judged from the receipt at the decision rather
+than at the scan, and a receipt whose size or modification time moved before the unlink is spared
+(flyingrobots/parley#112); that narrows the race with a run that appends, and closing it would need
+a lock. A bundle goes together or not at all: the sidecars are removed only once the receipt is
+gone (flyingrobots/parley#113). A dry run deletes nothing and says what it would have
 deleted. Telling whose a receipt is means reading the first line of each one in the directory on
 every run.
 

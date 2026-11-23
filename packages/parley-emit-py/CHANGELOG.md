@@ -10,6 +10,39 @@ release's digest is recorded on its GitHub release (tag `parley-emit-py-vX.Y.Z`)
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-11-22
+
+Fixes for the findings raised on the vendored copy in flyingrobots/taskalisk#71 (copied at parley
+`e158c51`). The schemas it embeds are unchanged, and so is the `--vendor-info` line's shape; its
+digest moves with the file.
+
+### Added
+
+- **`run.input_unreadable(path, code="input.unreadable")`** (flyingrobots/parley#110). It records
+  that the program could not read a declared input, with an `error` and no digest, so `inv` is
+  omitted as spec §2.2 requires. Before this, the writer opened the path itself at finalisation,
+  so a file that appeared after the program failed to read it got a digest and an `inv` for bytes
+  the program never saw. It raises `ValueError` for a path that is not a declared input and after
+  the inputs are settled; `run.input` after it supplies bytes again.
+
+### Fixed
+
+- **A `.parley/.gitignore` negation that can re-include `receipts/` sends the receipt to the state
+  directory** (flyingrobots/parley#109, spec §5.2). A file of `*`, `!receipts/` and `!receipts/**`
+  used to be accepted, and its receipts were left where `git add` stages them. The
+  `receipt.relocated` warning names the negation. A pattern the check cannot evaluate is taken to
+  match, and `!keep` still stores in the repository.
+- **`--schema` and `--help` publish schema documents as declared** (flyingrobots/parley#111, spec
+  §5.3). A declared secret whose value occurred in a document, such as `object`, used to rewrite it
+  under the original `id` and `version`.
+- **Retention re-reads a receipt's age at the decision** (flyingrobots/parley#112), and skips the
+  unlink when the receipt's size or mtime moved since. This narrows the window; the issue stays
+  open for a lock.
+- **Retention deletes a bundle together or not at all** (flyingrobots/parley#113). A receipt that
+  could not be unlinked used to lose its sidecars anyway, leaving a receipt that names missing
+  records. Now the sidecars go only once the receipt is gone, and a bundle whose receipt survives
+  is not reported as deleted.
+
 ## [0.1.0] — 2026-11-22
 
 The first released, vendorable version. The schemas it embeds are the released versions of the

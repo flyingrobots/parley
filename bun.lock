@@ -13,11 +13,11 @@
     },
     "packages/parley-emit": {
       "name": "@flyingrobots/parley-emit",
-      "version": "0.2.0",
+      "version": "0.2.1",
     },
     "packages/parley-emit-py": {
       "name": "@flyingrobots/parley-emit-py",
-      "version": "0.1.0",
+      "version": "0.1.1",
     },
     "packages/parley-read": {
       "name": "@flyingrobots/parley-read",

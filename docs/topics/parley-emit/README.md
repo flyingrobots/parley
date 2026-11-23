@@ -19,6 +19,7 @@ it. This page is the reference for what the package does on `main`; the package
 | `resolveHistory`, `openHistory`, `isHistoryFailure`, `writeWholeLine`, `retainHistory`, `historyBookkeeping`, `segmentName`, `historyDays` | The shared history stream of spec §8: where it is, opening a segment, the whole-line append, segment retention, and the bookkeeping a run with a stream declares |
 | `historyProjection`, `transformDigest`, `transformName`, `isHistorySink` | The projection a configured transform applies to the stream copy: its name, the digest of its source, and which form `MainOptions.history` was given |
 | `declaredProjection(values)` | A built-in transform: the writer's own §5.3 scrubber applied to the stream copy's body with a second declared set; `undefined` for an empty set, so no transform is configured at all |
+| `refuseSuspectedSecrets`, `findSuspectedSecret`, `SECRET_PATTERNS`, `refuse`, `isHistoryRefusal` | The built-in transform that withholds a line whose body matches one of ten documented token shapes, the shapes themselves as data, and the typed refusal a transform returns to withhold a line under a code of its own |
 | `checkRecord` | The bounded JSON Schema check the writer re-validates a projected line with, in a package with no runtime dependencies |
 | `classifySecrets`, `collectSecretValues`, `redactArgv`, `scrub` | Redaction |
 | `ulid` | Run ids |
@@ -85,7 +86,7 @@ stream configured is the program that existed before the sink did.
 | Appending | `O_APPEND`, one whole line per write, so concurrent writers cannot split each other's lines. A short write is abandoned rather than continued and the stream is dropped for the rest of the run |
 | Failing | An unopenable path is one `history.unavailable` warning; a failed append is one `history.write_failed` warning. Neither is an error, a sink failure or a change of exit status |
 | Injecting | `MainOptions.history` takes a sink, `null`, or `{ sink?, transform?, name? }`, beside `stdout`, `stderr`, `now` and `home` |
-| Projecting | `{ history: { transform } }` narrows the stream copy and nothing else; see below |
+| Projecting | `{ history: { transform } }` narrows the stream copy and nothing else; see below. `refuseSuspectedSecrets()` is the built-in |
 
 Two decisions the issue (flyingrobots/parley#3) left to the owner are implemented behind a
 recommendation, stated in the package
@@ -178,6 +179,36 @@ is itself `undefined`: the writer never builds a projection for it and the strea
 name, so that line's `name` is always `declaredProjection` and its `sha256` — a digest of the
 function's *source text* — never discloses `values`, which only ever reaches it as a variable the
 function closes over.
+
+### Refusing a suspected secret
+
+`refuseSuspectedSecrets(patterns?)` is a built-in transform (flyingrobots/parley#60). Declared
+redaction cannot catch a secret nobody declared, and an undeclared token on the shared timeline
+lives for the retention window rather than one run's lifetime. The built-in **withholds** any line
+whose body matches one of ten token shapes and raises one `history.suspected_secret` warning naming
+the withheld `seq`, the shape and a JSON Pointer — never the matched text.
+
+| | |
+| --- | --- |
+| Configure | `{ history: { transform: refuseSuspectedSecrets() } }`; a caller's list replaces the default, `[...SECRET_PATTERNS, ...mine]` extends it, `[]` is the identity |
+| The shapes | `src/transforms/secret-patterns.ts`, as data: a name, a regex source and one line of rationale each, covering AWS access key ids, GitHub tokens of six prefixes and fine-grained PATs, Slack tokens, Google API keys, PEM private-key headers, JWTs, `Bearer` values, npm tokens and Stripe live keys. Each is anchored and length-bounded, and each has a positive and a negative sample in the suite |
+| It refuses | It never rewrites: a heuristic must not claim the certainty rewriting implies, so a false positive costs one withheld stream line and never a changed value in the receipt |
+| Scanned | String values, recursively, through objects and arrays. Not the five envelope fields, which are the writer's (§1.3), and not object keys |
+| Limits | An unlisted shape passes; a token split across two values passes; a token used as a key passes; a legitimate value that matches is withheld. Declaring the value as a secret (§5.3) remains the real protection, which the warning's `remedy` says |
+| The head | Not exempt, and the likeliest line to match, because it echoes `argv` and `resolved` (§5). An undeclared token on the command line withholds the whole head, so that stream copy has no head; the gap is reported and the receipt is complete |
+| The pointer | Built from the record's own keys, so when it matches a shape itself the warning names the shape instead of the pointer |
+| Identity keys | Scanned, unlike `declaredProjection`, which skips `DIGEST_KEYS` because it rewrites; a refusal changes nothing, so there is nothing to corrupt and skipping would only let a token through |
+| Composing | No helper ships; a caller composes `declaredProjection` and this in its own function, passing a refusal on untouched |
+| Status | Unchanged. A withheld line is a warning, and warnings never change the exit status (§6.1) |
+
+A transform of your own can withhold a line under its own code the same way, by returning
+`refuse(code, problem, remedy?)` instead of nothing. The writer raises one warning carrying that
+code and still owns the namespace: a code that is not spec §6's shape, or an empty problem, is
+`history.transform_failed`, and a code carrying a declared secret value is
+`history.transform_unredacted`, because a diagnostic's `code` is the one string §5.3 does not
+scrub. The package
+[README](../../../packages/parley-emit/README.md#five-decisions-the-owner-may-overrule) states the
+five decisions behind the built-in that the owner can overrule.
 
 ## What it does not do
 

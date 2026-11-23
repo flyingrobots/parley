@@ -7,6 +7,44 @@ on its own; the spec and each message schema move separately (spec §4.4).
 
 ### Added
 
+- **A built-in that refuses a suspected secret** (flyingrobots/parley#60). `refuseSuspectedSecrets(patterns?)`
+  is a history transform that withholds any line whose body matches one of ten documented token
+  shapes, and raises one `history.suspected_secret` warning naming the withheld `seq`, the shape
+  and a JSON Pointer — never the matched text.
+
+  ```ts
+  await main(tool, argv, handler, { history: { transform: refuseSuspectedSecrets() } });
+  ```
+
+  It refuses; it never rewrites. A false positive costs one withheld stream line and never a
+  changed value in the receipt. The shapes ship as data in `src/transforms/secret-patterns.ts`,
+  each with a name, a regex source and one line of rationale: AWS access key ids, GitHub tokens of
+  six prefixes, GitHub fine-grained PATs, Slack tokens, Google API keys, PEM private-key headers,
+  JWTs, `Bearer` values, npm tokens and Stripe live keys. Every one is anchored and length-bounded,
+  every one has a positive and a negative sample, and the test walks the shipped list, so a new
+  entry without samples fails. String values are scanned recursively; the five envelope fields are
+  not, and neither are object keys. The limits are stated in the README: an unlisted shape passes,
+  a token split across two values passes, a token used as a key passes, and a legitimate value that
+  matches is withheld. The head is not exempt and is the likeliest line to match, because it echoes
+  `argv` and `resolved` (§5): an undeclared token on the command line withholds the whole head, so
+  that stream copy has no head and the gap is reported like any other. The warning names a JSON
+  Pointer only when the pointer does not itself match a shape, since a pointer is built from the
+  record's keys and a key can be a token too. The exit status never moves (§6.1).
+
+  New exports: `refuseSuspectedSecrets`, `findSuspectedSecret`, `SUSPECTED_SECRET_CODE`,
+  `SECRET_PATTERNS`, the types `SecretPattern` and `SuspectedSecret`.
+
+- **A transform may refuse, not only withhold** (flyingrobots/parley#60). `refuse(code, problem, remedy?)`
+  returns a typed refusal: the writer withholds the line and raises one warning carrying that
+  `code`, `problem` and `remedy`, on stderr and in the receipt, leaving the exit status alone. The
+  four enforcement rules of flyingrobots/parley#57 are unchanged, and the writer still owns the
+  namespace: a `code` that is not spec §6's shape, or an empty `problem`, is
+  `history.transform_failed`, and a `code` carrying a declared secret value is
+  `history.transform_unredacted`, because a diagnostic's `code` is the one string §5.3 does not
+  scrub. `HistoryTransform` widens to allow a `HistoryRefusal` return; returning a record or
+  nothing behaves exactly as before. New exports: `refuse`, `isHistoryRefusal` and the type
+  `HistoryRefusal`.
+
 - **A user-defined transform on the history sink** (flyingrobots/parley#57). The stream copy of a
   run can be a projection of the receipt copy rather than the whole of it. Configure it in code:
 

@@ -22,6 +22,7 @@ import { isAbsolute, join } from "node:path";
 import { sha256 } from "./inv.ts";
 import { stateBase } from "./location.ts";
 import { carriesSecret } from "./redact.ts";
+import type { HistoryRefusal } from "./refusal.ts";
 
 /** The directory the stream lives in, or an off switch. Absolute when it names a directory. */
 export const HISTORY_ENV = "PARLEY_HISTORY";
@@ -59,11 +60,12 @@ export interface HistorySink {
 /**
  * A user-defined projection of one record for the stream copy (flyingrobots#57). It is handed the
  * parsed record the receipt already holds, after §5.3 has replaced every declared secret, and
- * returns a record to put on the stream or nothing to withhold the line. The envelope is not its
- * to change: the writer reattaches `event`, `t`, `seq`, `run` and `_schema` afterwards and
- * re-validates the returned body against the schema for that exact pair.
+ * returns a record to put on the stream, nothing to withhold the line, or a `refuse(...)` to
+ * withhold it under a code of its own (flyingrobots#60). The envelope is not its to change: the
+ * writer reattaches `event`, `t`, `seq`, `run` and `_schema` afterwards and re-validates the
+ * returned body against the schema for that exact pair.
  */
-export type HistoryTransform = (record: Record<string, unknown>) => Record<string, unknown> | undefined | null | void;
+export type HistoryTransform = (record: Record<string, unknown>) => Record<string, unknown> | HistoryRefusal | undefined | null | void;
 
 /** `MainOptions.history` in its long form: the sink, the transform, and what to call it. */
 export interface HistoryConfig {

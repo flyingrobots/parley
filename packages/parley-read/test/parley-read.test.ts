@@ -1645,7 +1645,9 @@ describe("RD-22 a digest never reads as complete", () => {
       const { dir, env } = scratch();
       seedDays(dir, receipts);
       const answer = answered(await queryReceipts(
-        { asker: { tool: "t" }, view: "everything", window: SEALED, budget: { records: 20, bytes: BYTES } },
+        // The asker states its cwd, so the line does not grow with the length of the machine's
+        // temporary directory and the measured sizes below hold on any machine.
+        { asker: { tool: "t", cwd: "/w" }, view: "everything", window: SEALED, budget: { records: 20, bytes: BYTES } },
         { cwd: dir, env },
       ));
       named.push(answer.digest.records.length);
@@ -1656,14 +1658,15 @@ describe("RD-22 a digest never reads as complete", () => {
       const held = lensRecord(dir, env, answer.run);
       expect(Buffer.byteLength(JSON.stringify(held.record) + "\n", "utf8")).toBe(answer.digestBytes);
     }
-    // A hundredfold more history: the digest names 20 records at 30 receipts and still 20 at 300.
-    expect(named).toEqual([9, 20, 20]);
-    expect(excluded).toEqual([0, 70, 880]);
-    // Measured, not claimed: every line is inside the stated byte bound, and the last two differ
-    // by exactly the one digit the excluded count gained — the line does not grow with history.
-    expect(sizes.map((b) => b <= BYTES)).toEqual([true, true, true]);
-    expect(sizes[1]!).toBeGreaterThan(sizes[0]!);
-    expect(sizes[2]! - sizes[1]!).toBe(1);
+    // A hundredfold more history, and the bytes now cut before the record count does: each entry
+    // carries its summary (flyingrobots/parley#77), about 65 bytes, so 20 of them no longer fit in
+    // 2048. At 30 receipts 16 entries fit, at 2047 bytes; at 300 the excluded count gains a digit,
+    // the sixteenth entry no longer fits beside it, and 15 are named. Measured, not claimed.
+    expect(named).toEqual([9, 16, 15]);
+    expect(excluded).toEqual([0, 74, 885]);
+    expect(sizes).toEqual([1302, 2047, 1940]);
+    // Every line is inside the stated byte bound: the line does not grow with history.
+    expect(sizes.every((b) => b <= BYTES)).toBe(true);
   }, 120_000);
 
   test("the digest on receipts a real tool wrote validates against its schema", async () => {
@@ -1685,7 +1688,9 @@ describe("RD-22 a digest never reads as complete", () => {
     expect(answer.records.length).toBe(2);
     expect(answer.digest.loss).toEqual({ bound: "count-only", excluded: 9 });
     // The failing run's error is what a change purpose puts first, and the digest keeps it.
-    expect(answer.digest.records[0]).toEqual({ run: broke.run, seq: answer.records[0]!.seq });
+    expect(answer.digest.records[0]).toEqual({
+      run: broke.run, seq: answer.records[0]!.seq, event: "error", t: answer.records[0]!.t!, outcome: "failed",
+    });
     expect(answer.records[0]!.run).toBe(broke.run);
 
     const lens = lensRecord(dir, env, answer.run);

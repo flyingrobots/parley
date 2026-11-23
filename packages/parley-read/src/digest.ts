@@ -32,8 +32,16 @@
 // pairing, so a digest that left something out says so structurally rather than in prose. Since
 // ranking reorders and never filters, a digest that reached the end of its ranking lost nothing at
 // all, whichever view produced it.
+//
+// **Each name carries a summary** (flyingrobots/parley#77). A record named by `(run, seq)` alone
+// has to be opened before a reader can tell an `error` from a `receipt.step`, so every entry also
+// carries the record's `event` and `t` and the outcome the ranking established for its run. The
+// summary is read off the loaded record when the digest is built, never from anywhere else, so it
+// cannot drift from the record; a field the record does not carry usably is left out rather than
+// filled in. It is part of the line, so `budget.bytes` bounds it like everything else.
 import type { LoadedRecord } from "./load.ts";
 import type { AcceptedQuery, Asker, Budget, QueryWindow, View } from "./query.ts";
+import type { Outcome } from "./rank.ts";
 
 /** The `parley.lens` pair a digest is emitted as; a change to the message moves this version. */
 export const LENS_SCHEMA = { id: "parley.lens", version: "1.0.0" } as const;
@@ -45,6 +53,23 @@ export type LossBound = "none" | "count-only";
 export interface RecordRef {
   readonly run: string;
   readonly seq: number;
+}
+
+/**
+ * One record a digest names: its identity, which is the way back to it, and a fixed summary of it
+ * so a reader can choose what to open. Each summary field is present only when it is known:
+ *
+ * - `event`: the record's event token as the loader reports it, a tool's own included verbatim;
+ *   absent when the record carries none.
+ * - `t`: the record's POSIX milliseconds as the loader reports them; absent when the record has no
+ *   non-negative integer `t`, rather than a made-up one.
+ * - `outcome`: what the ranked window establishes about the record's run (`rank.ts`), which is the
+ *   window's verdict and not the digest's prefix's; absent when no ranking outcomes were given.
+ */
+export interface LensEntry extends RecordRef {
+  readonly event?: string;
+  readonly t?: number;
+  readonly outcome?: Outcome;
 }
 
 /**
@@ -68,8 +93,8 @@ export interface Digest {
   readonly budget: Budget;
   readonly window: QueryWindow;
   readonly loss: Loss;
-  /** The records the digest names, in rank order, never more than `budget.records` of them. */
-  readonly records: readonly RecordRef[];
+  /** The records the digest names, in rank order, never more than `budget.records` of them, each with its summary. */
+  readonly records: readonly LensEntry[];
 }
 
 /** The envelope the writer will put on the digest's line, which the byte bound is measured against. */
@@ -89,7 +114,21 @@ export interface Digested {
   readonly bytes: number;
 }
 
-const ref = (record: LoadedRecord): RecordRef => ({ run: record.run, seq: record.seq });
+/**
+ * The entry a digest names a record by, read off the loaded record and its run's ranked outcome.
+ * The key order is fixed, `run, seq, event, t, outcome`, because the byte bound is measured
+ * against the serialised line.
+ */
+export function lensEntry(record: LoadedRecord, outcomes?: Readonly<Record<string, Outcome>>): LensEntry {
+  const outcome = outcomes?.[record.run];
+  return {
+    run: record.run,
+    seq: record.seq,
+    ...(typeof record.event === "string" && record.event.length > 0 ? { event: record.event } : {}),
+    ...(typeof record.t === "number" && Number.isInteger(record.t) && record.t >= 0 ? { t: record.t } : {}),
+    ...(outcome === undefined ? {} : { outcome }),
+  };
+}
 
 /**
  * The line the writer will write for this digest, byte for byte.
@@ -122,17 +161,22 @@ export function digestBytes(digest: Digest, envelope: LineEnvelope): number {
  * Pure: it reads nothing, writes nothing, records nothing, and mutates neither its arguments nor
  * the records in them. `ranked` is the whole of the window in rank order
  * (flyingrobots/parley#49); the digest is its prefix, and `excluded` is the rest of it counted.
+ * `outcomes` is the ranking's verdict per run over that whole window, and each entry carries its
+ * run's; without it, no entry carries an outcome.
  *
  * The byte search is a binary search over the prefix length, which is sound because the line only
- * grows as the prefix does: one more record adds its `(run, seq)` pair, while the excluded count
- * beside it can shrink by at most one digit.
+ * grows as the prefix does: one more record adds its entry, at least its `(run, seq)` pair, while
+ * the excluded count beside it can shrink by at most one digit.
  */
 export function digestFor(
   query: AcceptedQuery,
   answers: RecordRef,
   ranked: readonly LoadedRecord[],
   envelope: LineEnvelope,
+  outcomes?: Readonly<Record<string, Outcome>>,
 ): Digested {
+  // Built once, so every candidate prefix the byte search measures is cut from the same entries.
+  const entries = ranked.map((record) => lensEntry(record, outcomes));
   const build = (keep: number): Digest => {
     const excluded = ranked.length - keep;
     return {
@@ -145,7 +189,7 @@ export function digestFor(
       // `none` is a claim that nothing was left out, so it is only ever paired with 0; the schema
       // refuses `none` beside a non-zero count (flyingrobots/parley#46).
       loss: { bound: excluded === 0 ? "none" : "count-only", excluded },
-      records: ranked.slice(0, keep).map(ref),
+      records: entries.slice(0, keep),
     };
   };
 

@@ -465,6 +465,8 @@ export async function queryReceipts(request: QueryRequest, opts: QueryOptions = 
       { run: run.id, seq },
       ranking.records,
       { run: run.id, seq: (ranked + 2) * 10, t: (opts.now ?? Date.now)() },
+      // Each entry's outcome is the whole window's verdict on its run, not the prefix's.
+      ranking.outcomes,
     );
     const records = digested.records;
 

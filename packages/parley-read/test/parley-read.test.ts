@@ -2875,6 +2875,13 @@ describe("RD-90 runs of one invocation with one result are folded", () => {
     const { digested } = digestOf(records);
     expect(digested.digest.runs.map((r) => r.run)).toEqual([runId(1), runId(2)]);
     expect(digested.digest.runs.some((r) => "folded" in r)).toBe(false);
+
+    // Two runs whose window holds neither head nor end, only `receipt.inputs` with one `inv`: the
+    // window cannot show either is unredacted (§1.2a), so neither folds.
+    const blind = [3, 4].map((n) => loaded(runId(n), 3, "receipt.inputs", T0 + n * 10, { inputs: [], inv: "inv_blind" }));
+    const unknown = digestOf(blind).digested;
+    expect(unknown.digest.runs.map((r) => r.run)).toEqual([runId(3), runId(4)]);
+    expect(unknown.folded).toBe(0);
   });
 
   test("the loss separates what the fold left out from what the budget cut", () => {

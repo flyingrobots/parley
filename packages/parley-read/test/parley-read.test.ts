@@ -2452,6 +2452,23 @@ describe("RD-72 a bytes budget that cannot hold an empty digest declines and nam
     // …and one byte under it, the read declines again.
     expect(declined(await ask(smallest - 1)).decline.bound).toBe("bytes");
   });
+
+  test("a read over both bounds at the last check names both", async () => {
+    const { dir, env } = scratch();
+    seedDays(dir, 3);
+    const out = declined(await queryReceipts(
+      { asker: { tool: "t" }, view: "everything", window: SEALED, budget: { records: 5, bytes: 1, ms: 50 } },
+      { cwd: dir, env, clock: scripted(0, 10, 20, 70) },
+    ));
+    expect(out.decline.bound).toBe("ms");
+    expect(out.decline.phase).toBe("digest");
+    expect(out.decline.measured.ms).toBe(70);
+    expect(out.decline.sufficient.ms).toBe(70);
+    expect(out.decline.measured.bytes).toBe(out.decline.sufficient.bytes!);
+    expect(out.decline.sufficient.bytes).toBeGreaterThan(1);
+    expect(out.decline.problem).toContain("deadline");
+    expect(out.decline.problem).toContain("budget.bytes");
+  });
 });
 
 describe("RD-73 a read that states no ms has no deadline", () => {

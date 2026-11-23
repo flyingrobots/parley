@@ -87,13 +87,20 @@ describe("parley-emit-py: the doctor over captured runs of examples/count.py", (
     expectLoadsClean(c, 1);
   }, SLOW);
 
-  test("PY-2a usage error: a structured error, exit 2, and the doctor passes", () => {
-    const c = example(["files", "--frobnicate"]);
-    expect(c.status).toBe(2);
-    expect(objs(c.stderr).map((o) => o.code)).toEqual(["usage.unknown_argument"]);
-    expect((objs(c.stdout).at(-1) as { status: number }).status).toBe(2);
-    expect(violations(c)).toEqual([]);
-    expectLoadsClean(c, 1);
+  test("PY-2a usage error: checked before the bootstrap line, so a startup failure, exit 3, and the doctor passes", () => {
+    const at = scratch();
+    const c = example(["files", "--frobnicate"], at);
+    expect(c.status).toBe(3);
+    expect(c.stdout).toBe("");
+    const errs = objs(c.stderr);
+    expect(errs.length).toBe(1);
+    expect(errs[0]).toMatchObject({ event: "startup.failed", seq: 0, code: "startup.arguments_invalid" });
+    expect(String(errs[0]!.problem)).toContain("files takes no arguments");
+    const vs = doctor({ stdout: c.stdout, stderr: c.stderr }, SCHEMAS_DIR);
+    expect(vs.filter((v) => v.event === "doctor.violation")).toEqual([]);
+    expect(vs.at(-1)).toMatchObject({ event: "doctor.summary", passed: true, status: null });
+    // A startup failure leaves no receipt (spec §3.2): the loader finds nothing.
+    expect(loadReceipts({ cwd: at.dir, env: at.env }).bundles).toEqual([]);
   }, SLOW);
 
   test("PY-3a runtime failure: exit 2, the traceback in the receipt only, and the doctor passes", () => {
@@ -148,7 +155,8 @@ describe("parley-emit-py: the doctor over captured runs of examples/count.py", (
   test("PY-1b every example run in one directory: the loader reads them all clean", () => {
     const at = scratch();
     for (const args of [["files"], ["files", "--frobnicate"], ["files", "--help"], ["--schema"], ["files", "--human"], ["files", "--dry-run"]]) example(args, at);
-    expectLoadsClean({ status: 0, stdout: "", stderr: "", ...at }, 6);
+    // The usage error is a startup failure and leaves no receipt, so five runs left bundles.
+    expectLoadsClean({ status: 0, stdout: "", stderr: "", ...at }, 5);
   }, SLOW);
 });
 

@@ -312,7 +312,7 @@ export function declineOnRun(
   }
   if (over.bytes !== undefined) {
     problems.push(`budget.bytes of ${budget.bytes} cannot hold even a digest naming no records, whose line is ${over.bytes} bytes`);
-    remedies.push(`state budget.bytes of ${over.bytes} or more for a digest naming no records; each record it names adds its entry on top`);
+    remedies.push(`state budget.bytes of ${over.bytes} or more for a digest naming no records; each record it names adds its entry, and its run's section the first time that run is named`);
   }
   const problem = problems.join("; and ");
   const remedy = remedies.join("; and ");

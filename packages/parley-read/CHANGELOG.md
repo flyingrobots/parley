@@ -22,12 +22,23 @@ its manifest so it cannot be published by accident.
   types `BudgetDecline`, `BudgetPhase`, `QueryDeclined`, `OpenDeclined`; `digestFor` reports
   `fits`. `openRecords` accepts `budget.ms` and records it in its `parley.query`.
 
+- **Each run a digest names, stated once** (flyingrobots/parley#83). A `parley.lens` now carries
+  `runs`, one section per run its entries name, in the order they first name it: the head's
+  `tool`, `v`, `argv` and `inv` (or `receipt.inputs`'s `inv`), the run's `outcome` over the whole
+  window, and a `reason` (`no_end_in_window`, `end_status_unusable`) when that outcome is
+  `undetermined`. A run whose head is outside the window says `head: "not_in_window"`. A section is
+  bounded by `RUN_SECTION_BYTES` (512): whole fields are dropped, `argv`, then `inv`, then `v`,
+  then `tool`, and named in `dropped`; no string is cut. An `error` or `warning` entry also carries
+  its `code`. `runSection`, `RUN_SECTION_BYTES`, `DROPPABLE` and `UNDETERMINED_REASONS` are
+  exported. Under `{records: 20, bytes: 2048}` over three-record runs a digest now names 13 records
+  (RD-22b).
+
 - **A summary beside each record a digest names** (flyingrobots/parley#77). Each `parley.lens`
-  entry now carries the record's `event` and `t` as the loader read them and the `outcome` the
-  ranking established for its run over the whole window, each absent when the record does not
-  carry it. `lensEntry(record, outcomes?)` builds one; `digestFor` takes the ranking's `outcomes`
-  as a fifth argument and `queryReceipts` passes them. The summary counts against `budget.bytes`:
-  under `{records: 20, bytes: 2048}` a digest that named 20 records now names 15 or 16 (RD-22b).
+  entry now carries the record's `event` and `t` as the loader read them, each absent when the
+  record does not carry it. `lensEntry(record)` builds one; `digestFor` takes the ranking's
+  `outcomes` as a fifth argument and `queryReceipts` passes them. The run's outcome, which this
+  entry first put on every entry, is stated once per run in `runs` since flyingrobots/parley#83,
+  and `lensEntry` no longer takes `outcomes`. The summary counts against `budget.bytes` (RD-22b).
 - **A byte budget for the drill-down** (flyingrobots/parley#78): `openRecords` accepts
   `budget: { bytes }`. Records open whole, in the order asked, while their summed size (UTF-8 bytes
   of each record's JSON as returned, sidecar contents included) stays within the bound; every id

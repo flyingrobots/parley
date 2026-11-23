@@ -14,6 +14,7 @@ import {
   digestBytes,
   digestFor,
   digestLine,
+  RUN_SECTION_BYTES,
   planQuery,
   queryReceipts,
   rankRecords,
@@ -21,6 +22,7 @@ import {
   readReceiptFile,
   receiptLocations,
   splitLines,
+  sufficientBytes,
   validator,
   type Bundle,
   type LoadedRecord,
@@ -1750,13 +1752,15 @@ describe("RD-22 a digest never reads as complete", () => {
       const held = lensRecord(dir, env, answer.run);
       expect(Buffer.byteLength(JSON.stringify(held.record) + "\n", "utf8")).toBe(answer.digestBytes);
     }
-    // A hundredfold more history, and the bytes now cut before the record count does: each entry
-    // carries its summary (flyingrobots/parley#77), about 65 bytes, so 20 of them no longer fit in
-    // 2048. At 30 receipts 16 entries fit, at 2047 bytes; at 300 the excluded count gains a digit,
-    // the sixteenth entry no longer fits beside it, and 15 are named. Measured, not claimed.
-    expect(named).toEqual([9, 16, 15]);
-    expect(excluded).toEqual([0, 74, 885]);
-    expect(sizes).toEqual([1302, 2047, 1940]);
+    // A hundredfold more history, and the bytes cut before the record count does: each entry
+    // carries its summary (flyingrobots/parley#77), and each run it names has a section stating
+    // its identity and outcome once (flyingrobots/parley#83), about 100 bytes for each of these
+    // three-record runs, while the entries lost the outcome they each repeated. 13 entries, the
+    // whole of four runs and the head of a fifth, with five sections, fit at 30 receipts and at
+    // 300 alike; the fourteenth entry, about 80 bytes, does not. Measured, not claimed.
+    expect(named).toEqual([9, 13, 13]);
+    expect(excluded).toEqual([0, 77, 887]);
+    expect(sizes).toEqual([1422, 1970, 1971]);
     // Every line is inside the stated byte bound: the line does not grow with history.
     expect(sizes.every((b) => b <= BYTES)).toBe(true);
   }, 120_000);
@@ -1781,7 +1785,7 @@ describe("RD-22 a digest never reads as complete", () => {
     expect(answer.digest.loss).toEqual({ bound: "count-only", excluded: 9 });
     // The failing run's error is what a change purpose puts first, and the digest keeps it.
     expect(answer.digest.records[0]).toEqual({
-      run: broke.run, seq: answer.records[0]!.seq, event: "error", t: answer.records[0]!.t!, outcome: "failed",
+      run: broke.run, seq: answer.records[0]!.seq, event: "error", t: answer.records[0]!.t!, code: answer.records[0]!.record.code as string,
     });
     expect(answer.records[0]!.run).toBe(broke.run);
 
@@ -2140,9 +2144,11 @@ describe("RD-23 the least-projected copy", () => {
 // open it to learn what it is. Each entry carries the record's `event` and `t`, and the outcome
 // the ranking established for its run, derived from the loaded record when the lens is built. The
 // oracle in every case below is the loader read again afterwards, never the digest's own builder.
+// Since flyingrobots/parley#83 the outcome is stated once per run, in the lens's `runs` section
+// (RD-80), and an entry keeps its `event`, its `t` and, for an error or a warning, its `code`.
 
 /** The keys a lens entry may carry, and no others. */
-const ENTRY_KEYS = new Set(["run", "seq", "event", "t", "outcome"]);
+const ENTRY_KEYS = new Set(["run", "seq", "event", "t", "code"]);
 
 /** Every loaded record in a directory, by `(run, seq)`, as a fresh load reports it. */
 function loadedById(dir: string, env: Record<string, string>): Map<string, LoadedRecord> {
@@ -2155,15 +2161,26 @@ function heldEntries(dir: string, env: Record<string, string>, run: string): Rec
   return (lensRecord(dir, env, run).record as { records: Record<string, unknown>[] }).records;
 }
 
-/** Assert each entry's summary is the loaded record's and its run's ranked outcome, and nothing else. */
-function expectSummariesMatch(entries: readonly Record<string, unknown>[], byId: Map<string, LoadedRecord>, outcomes: Readonly<Record<string, string>>) {
+/** The `runs` section of the lens the read left in its own receipt, as the loader reads it back. */
+function heldRuns(dir: string, env: Record<string, string>, run: string): Record<string, unknown>[] {
+  return (lensRecord(dir, env, run).record as { runs: Record<string, unknown>[] }).runs;
+}
+
+/** The outcome each run's section states, by run id. */
+function sectionOutcomes(runs: readonly Record<string, unknown>[]): Record<string, unknown> {
+  return Object.fromEntries(runs.map((r) => [r.run as string, r.outcome]));
+}
+
+/** Assert each entry's summary is the loaded record's, and nothing else. */
+function expectSummariesMatch(entries: readonly Record<string, unknown>[], byId: Map<string, LoadedRecord>) {
   for (const entry of entries) {
     const record = byId.get(`${entry.run}:${entry.seq}`);
     expect(record).toBeDefined();
     expect(Object.keys(entry).filter((k) => !ENTRY_KEYS.has(k))).toEqual([]);
     expect(entry.event).toBe(record!.event!);
     expect(entry.t).toBe(record!.t!);
-    expect(entry.outcome).toBe(outcomes[record!.run]!);
+    if (record!.event === "error" || record!.event === "warning") expect(entry.code).toBe(record!.record.code as string);
+    else expect("code" in entry).toBe(false);
   }
 }
 
@@ -2187,11 +2204,13 @@ describe("RD-50 a lens names each record with a summary of it", () => {
     const byId = loadedById(dir, env);
     const held = heldEntries(dir, env, answer.run);
     expect(held).toEqual(answer.digest.records as unknown as Record<string, unknown>[]);
-    expectSummariesMatch(held, byId, answer.ranking.outcomes);
+    expectSummariesMatch(held, byId);
     // The failing run's error is what a change purpose puts first, and its entry says so without
     // being opened.
-    expect(held[0]).toEqual({ run: broke.run, seq: answer.records[0]!.seq, event: "error", t: answer.records[0]!.t!, outcome: "failed" });
-    expect(new Set(held.filter((e) => e.run !== broke.run).map((e) => e.outcome))).toEqual(new Set(["succeeded"]));
+    expect(held[0]).toEqual({ run: broke.run, seq: answer.records[0]!.seq, event: "error", t: answer.records[0]!.t!, code: answer.records[0]!.record.code });
+    const outcomes = sectionOutcomes(heldRuns(dir, env, answer.run));
+    expect(outcomes[broke.run]).toBe("failed");
+    expect(new Set(Object.entries(outcomes).filter(([r]) => r !== broke.run).map(([, o]) => o))).toEqual(new Set(["succeeded"]));
     expect(lensRecord(dir, env, answer.run).validation.state).toBe("validated");
   }, 60_000);
 
@@ -2206,8 +2225,8 @@ describe("RD-50 a lens names each record with a summary of it", () => {
       expect(answer.digest.records.length).toBe(8);
       const held = heldEntries(dir, env, answer.run);
       expect(held).toEqual(answer.digest.records as unknown as Record<string, unknown>[]);
-      expectSummariesMatch(held, loadedById(dir, env), answer.ranking.outcomes);
-      expect(held.every((e) => typeof e.event === "string" && typeof e.t === "number" && typeof e.outcome === "string")).toBe(true);
+      expectSummariesMatch(held, loadedById(dir, env));
+      expect(held.every((e) => typeof e.event === "string" && typeof e.t === "number" && !("outcome" in e))).toBe(true);
     }
   });
 
@@ -2223,7 +2242,7 @@ describe("RD-50 a lens names each record with a summary of it", () => {
     const envelope = { run: runId(8), seq: 30, t: T0 + 10 };
     const digested = digestFor(plan.query, { run: runId(8), seq: 1 }, ranking.records, envelope, ranking.outcomes);
     const entry = (seq: number) => digested.digest.records.find((e) => e.seq === seq) as unknown as Record<string, unknown>;
-    expect(entry(1)).toEqual({ run, seq: 1, event: "receipt.head", t: T0, outcome: "undetermined" });
+    expect(entry(1)).toEqual({ run, seq: 1, event: "receipt.head", t: T0 });
     expect("t" in entry(2)).toBe(false);
     expect(entry(2).event).toBe("receipt.step");
     expect("t" in entry(3)).toBe(false);
@@ -2234,7 +2253,7 @@ describe("RD-50 a lens names each record with a summary of it", () => {
     expect(validator().validate(line).state).toBe("validated");
     // A ranking whose outcomes are not given carries no outcome: nothing is invented to fill it.
     const bare = digestFor(plan.query, { run: runId(8), seq: 1 }, ranking.records, envelope);
-    expect(bare.digest.records.some((e) => "outcome" in e)).toBe(false);
+    expect(bare.digest.runs.some((r) => "outcome" in r || "reason" in r)).toBe(false);
   });
 
   test("a tool-owned event token is carried verbatim", async () => {
@@ -2242,7 +2261,7 @@ describe("RD-50 a lens names each record with a summary of it", () => {
     richReceipt(repoReceipts(dir), runId(1), T0 - DAY);
     const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "what-changed", window: SEALED }, { cwd: dir, env }));
     const result = heldEntries(dir, env, answer.run).find((e) => e.seq === 4)!;
-    expect(result).toEqual({ run: runId(1), seq: 4, event: "result", t: T0 - DAY + 3, outcome: "succeeded" });
+    expect(result).toEqual({ run: runId(1), seq: 4, event: "result", t: T0 - DAY + 3 });
     expect(loadedById(dir, env).get(`${runId(1)}:4`)!.validation.state).toBe("unvalidated");
   });
 
@@ -2260,11 +2279,10 @@ describe("RD-50 a lens names each record with a summary of it", () => {
     ]);
     const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: SEALED, budget: { records: 4 } }, { cwd: dir, env }));
     const held = heldEntries(dir, env, answer.run);
-    expect(held.map((e) => [e.run, e.seq, e.outcome])).toEqual([
-      [open, 1, "undetermined"],
-      [open, 2, "undetermined"],
-      [runId(0), 1, "succeeded"],
-      [runId(0), 2, "succeeded"],
+    expect(held.map((e) => [e.run, e.seq])).toEqual([[open, 1], [open, 2], [runId(0), 1], [runId(0), 2]]);
+    expect(heldRuns(dir, env, answer.run).map((r) => [r.run, r.outcome])).toEqual([
+      [open, "undetermined"],
+      [runId(0), "succeeded"],
     ]);
     // The digest holds none of the first seeded run's `end`, and its entries still say succeeded.
     expect(held.some((e) => e.run === runId(0) && e.event === "end")).toBe(false);
@@ -2453,6 +2471,30 @@ describe("RD-72 a bytes budget that cannot hold an empty digest declines and nam
     expect(declined(await ask(smallest - 1)).decline.bound).toBe("bytes");
   });
 
+  test("the smallest sufficient bytes is exact against the lens line as digestFor writes it", () => {
+    const plan = planQuery({ asker: { tool: "t", cwd: "/work/site" }, view: "everything", window: SEALED, budget: { records: 7, bytes: 1 } });
+    if (plan.refused) throw new Error("the plan was refused");
+    const { dir } = scratch();
+    const total = seedDays(dir, 4);
+    const ranked = loadReceipts({ cwd: dir, env: {} }).bundles.flatMap((b) => b.records);
+    expect(ranked.length).toBe(total);
+    const answers = { run: RUN_A, seq: 1 };
+    const envelope = { run: RUN_B, seq: 40, t: T0 };
+    const n = sufficientBytes(plan.query, answers, ranked.length, envelope);
+    const under = (bytes: number) => digestFor({ ...plan.query, budget: { ...plan.query.budget, bytes } }, answers, ranked, envelope, {});
+    const fits = under(n);
+    // The smallest digest names no records and so no runs: `runs` is present and empty, as the
+    // lens line carries it since flyingrobots/parley#83, and it is measured with it.
+    expect(fits.fits).toBe(true);
+    expect(fits.digest.records).toEqual([]);
+    expect(fits.digest.runs).toEqual([]);
+    expect(digestLine(fits.digest, envelope)).toContain('"runs":[]');
+    // At the least fixed point the line is exactly the bound, and one byte less cannot hold it.
+    expect(fits.bytes).toBe(n);
+    expect(under(n - 1).fits).toBe(false);
+    expect(under(n - 1).digest.records).toEqual([]);
+  });
+
   test("a read over both bounds at the last check names both", async () => {
     const { dir, env } = scratch();
     seedDays(dir, 3);
@@ -2494,4 +2536,230 @@ describe("RD-73 a read that states no ms has no deadline", () => {
     expect(answer.status).toBe(0);
     expect(answer.digest.records.length).toBe(15);
   });
+});
+
+// ---- RD-80 each run a lens names, stated once ------------------------------------------------
+//
+// flyingrobots/parley#83: a cold reader opened 26 heads to learn which invocation a run was, and
+// could not tell from a digest why a run was `undetermined`. A lens now carries a `runs` section:
+// one entry per run its records name, with the head's identity, the run's outcome over the whole
+// window, and a reason when that outcome is `undetermined`. The oracle is the loader read again
+// afterwards.
+
+/** The keys a run section may carry, and no others. */
+const SECTION_KEYS = new Set(["run", "tool", "v", "argv", "inv", "outcome", "reason", "head", "dropped"]);
+
+/**
+ * Assert the lens's `runs` say what the loaded window says and nothing else: one section per run
+ * the entries name, in first-named order; identity off the loaded head; outcome off the ranking.
+ */
+function expectSectionsMatch(
+  lens: { records: readonly Record<string, unknown>[]; runs: readonly Record<string, unknown>[] },
+  byId: Map<string, LoadedRecord>,
+  outcomes: Readonly<Record<string, string>>,
+) {
+  const named = [...new Set(lens.records.map((e) => e.run as string))];
+  expect(lens.runs.map((r) => r.run)).toEqual(named);
+  for (const section of lens.runs) {
+    expect(Object.keys(section).filter((k) => !SECTION_KEYS.has(k))).toEqual([]);
+    const head = [...byId.values()].find((r) => r.run === section.run && r.event === "receipt.head");
+    expect(head).toBeDefined();
+    expect(section.tool).toBe(head!.record.tool as string);
+    expect(section.v).toBe(head!.record.v as string);
+    expect(section.argv).toEqual(head!.record.argv as string[]);
+    if (typeof head!.record.inv === "string") expect(section.inv).toBe(head!.record.inv);
+    else expect("inv" in section).toBe(false);
+    expect(section.outcome).toBe(outcomes[section.run as string]!);
+    expect("reason" in section).toBe(section.outcome === "undetermined");
+    expect("head" in section).toBe(false);
+  }
+}
+
+/** Bound a hand-built ranking with `digestFor`, as `queryReceipts` does. */
+function digestOf(records: readonly LoadedRecord[], budget: { records: number; bytes?: number } = { records: 100 }, outcomes = true) {
+  const plan = planQuery({ asker: { tool: "t", cwd: "/w" }, view: "everything", window: WIDE, budget });
+  if (plan.refused) throw new Error("the plan was refused");
+  const ranking = rankRecords(plan.query, records);
+  const envelope = { run: runId(99), seq: 30, t: T0 + 10 };
+  const digested = digestFor(plan.query, { run: runId(99), seq: 1 }, ranking.records, envelope, outcomes ? ranking.outcomes : undefined);
+  return { digested, envelope, ranking };
+}
+
+describe("RD-80 a lens states each run it names once", () => {
+  test("a lens states each real run's identity off its head", async () => {
+    const { dir, state, env } = scratch();
+    writeFileSync(join(dir, "a.txt"), "hello");
+    const first = realRun(dir, state);
+    symlinkSync(join(dir, "nothing-here"), join(dir, "dangling"));
+    const broke = realRun(dir, state);
+    rmSync(join(dir, "dangling"));
+    const third = realRun(dir, state);
+    expect([first.status, broke.status, third.status]).toEqual([0, 2, 0]);
+
+    const answer = answered(await queryReceipts(
+      { asker: { tool: "t", task: "flyingrobots/parley#83" }, view: "what-changed", window: { from: 0, to: Date.now() } },
+      { cwd: dir, env },
+    ));
+    const lens = lensRecord(dir, env, answer.run);
+    expect(lens.validation.state).toBe("validated");
+    const held = lens.record as unknown as { records: Record<string, unknown>[]; runs: Record<string, unknown>[] };
+    expect(held.runs).toEqual(answer.digest.runs as unknown as Record<string, unknown>[]);
+    expect(held.runs.length).toBe(3);
+    const byId = loadedById(dir, env);
+    expectSectionsMatch(held, byId, answer.ranking.outcomes);
+    expect(sectionOutcomes(held.runs)[broke.run]).toBe("failed");
+    // The failing run's error entry names its code, so three failures of one case read as one.
+    const error = byId.get(`${held.records[0]!.run}:${held.records[0]!.seq}`)!;
+    expect(error.event).toBe("error");
+    expect(held.records[0]!.code).toBe(error.record.code as string);
+    expect(held.records.some((e) => "outcome" in e)).toBe(false);
+  }, 60_000);
+
+  test("a run section cannot drift from the head it summarises", async () => {
+    for (const view of VIEWS) {
+      const { dir, env } = scratch();
+      const receipts = repoReceipts(dir);
+      writeReceipt(receipts, runId(1), [
+        { ...head(runId(1), { inv: "inv_one", argv: ["t", "count", "--deep"] }), t: T0 - 3 * DAY },
+        { ...step(runId(1), 2), t: T0 - 3 * DAY + 1 },
+        { event: "error", t: T0 - 3 * DAY + 2, seq: 3, run: runId(1), code: "count.unreadable", problem: "it failed", _schema: { id: "parley.error", version: "2.0.0" } },
+        { ...end(runId(1), 4, join(receipts, `${runId(1)}.jsonl`), { status: 2 }), t: T0 - 3 * DAY + 3 },
+      ]);
+      richReceipt(receipts, runId(2), T0 - 2 * DAY, "warned");
+      // A run with no end at all: undetermined, and the section says why.
+      writeReceipt(receipts, runId(3), [{ ...head(runId(3)), t: T0 - DAY }, { ...step(runId(3), 2), t: T0 - DAY + 1 }]);
+      const answer = answered(await queryReceipts({ asker: { tool: "t" }, view, window: SEALED, budget: { records: 12 } }, { cwd: dir, env }));
+      const lens = lensRecord(dir, env, answer.run);
+      expect(lens.validation.state).toBe("validated");
+      const held = lens.record as unknown as { records: Record<string, unknown>[]; runs: Record<string, unknown>[] };
+      expectSectionsMatch(held, loadedById(dir, env), answer.ranking.outcomes);
+      expectSummariesMatch(held.records, loadedById(dir, env));
+      expect(held.runs.find((r) => r.run === runId(3))!.reason).toBe("no_end_in_window");
+      expect(held.runs.find((r) => r.run === runId(1))!.inv).toBe("inv_one");
+    }
+  });
+
+  test("a run whose head is outside the window still has a section", () => {
+    const run = runId(5);
+    // The head is not in the ranking at all: the window began after it.
+    const inputs = loaded(run, 3, "receipt.inputs", T0 + 1, { inputs: [], inv: "inv_late" });
+    const finish = loaded(run, 4, "end", T0 + 2, { status: 0 });
+    const { digested, envelope } = digestOf([inputs, finish]);
+    expect(digested.digest.runs).toEqual([{ run, inv: "inv_late", outcome: "succeeded", head: "not_in_window" }]);
+    expect(validator().validate(JSON.parse(digestLine(digested.digest, envelope))).state).toBe("validated");
+  });
+
+  test("an undetermined outcome says why, and only an undetermined one", () => {
+    const open = runId(1);
+    const unusable = runId(2);
+    const failed = runId(3);
+    const fine = runId(4);
+    const records = [
+      loaded(open, 1, "receipt.head", T0, { tool: "t", v: "1", argv: ["t"] }),
+      loaded(unusable, 1, "receipt.head", T0 + 1, { tool: "t", v: "1", argv: ["t"] }),
+      loaded(unusable, 2, "end", T0 + 2, { status: "zero" }),
+      loaded(failed, 1, "receipt.head", T0 + 3, { tool: "t", v: "1", argv: ["t"] }),
+      loaded(failed, 2, "end", T0 + 4, { status: 2 }),
+      loaded(fine, 1, "receipt.head", T0 + 5, { tool: "t", v: "1", argv: ["t"] }),
+      loaded(fine, 2, "end", T0 + 6, { status: 0 }),
+    ];
+    const { digested, envelope } = digestOf(records);
+    const by = Object.fromEntries(digested.digest.runs.map((r) => [r.run, r]));
+    expect([by[open]!.outcome, by[open]!.reason]).toEqual(["undetermined", "no_end_in_window"]);
+    expect([by[unusable]!.outcome, by[unusable]!.reason]).toEqual(["undetermined", "end_status_unusable"]);
+    expect(by[failed]!.outcome).toBe("failed");
+    expect("reason" in by[failed]!).toBe(false);
+    expect(by[fine]!.outcome).toBe("succeeded");
+    expect("reason" in by[fine]!).toBe(false);
+    // The schema holds the pairing: a reason beside succeeded, or an undetermined without one, is refused.
+    const line = JSON.parse(digestLine(digested.digest, envelope)) as { runs: Record<string, unknown>[] };
+    expect(validator().validate(line as unknown as Record<string, unknown>).state).toBe("validated");
+    const lens = validator();
+    const withRuns = (runs: Record<string, unknown>[]) => lens.validate({ ...line, runs } as unknown as Record<string, unknown>).state;
+    expect(withRuns([{ run: fine, outcome: "succeeded", reason: "no_end_in_window" }])).toBe("invalid");
+    expect(withRuns([{ run: open, outcome: "undetermined" }])).toBe("invalid");
+    expect(withRuns([{ run: open, outcome: "undetermined", reason: "it hung" }])).toBe("invalid");
+  });
+
+  test("a large argv is dropped whole and the section says so", () => {
+    const big = runId(1);
+    const bigger = runId(2);
+    const argv = ["t", ...Array.from({ length: 1000 }, (_, i) => `--flag-${i}`)];
+    const records = [
+      loaded(big, 1, "receipt.head", T0, { tool: "t", v: "1.2.3", argv, inv: "inv_small" }),
+      loaded(big, 2, "end", T0 + 1, { status: 0 }),
+      loaded(bigger, 1, "receipt.head", T0 + 2, { tool: "t", v: "1.2.3", argv, inv: "x".repeat(2000) }),
+    ];
+    expect(JSON.stringify(argv).length).toBeGreaterThan(10_000);
+    for (const budget of [{ records: 100 }, { records: 100, bytes: 1024 }]) {
+      const { digested, envelope } = digestOf(records, budget);
+      const by = Object.fromEntries(digested.digest.runs.map((r) => [r.run, r]));
+      expect(by[big]).toEqual({ run: big, tool: "t", v: "1.2.3", inv: "inv_small", outcome: "succeeded", dropped: ["argv"] });
+      expect(by[bigger]).toEqual({ run: bigger, tool: "t", v: "1.2.3", outcome: "undetermined", reason: "no_end_in_window", dropped: ["argv", "inv"] });
+      for (const section of digested.digest.runs) expect(Buffer.byteLength(JSON.stringify(section), "utf8")).toBeLessThanOrEqual(RUN_SECTION_BYTES);
+      if (budget.bytes !== undefined) expect(digested.bytes).toBeLessThanOrEqual(budget.bytes);
+      expect(validator().validate(JSON.parse(digestLine(digested.digest, envelope))).state).toBe("validated");
+    }
+  });
+
+  test("only an error or a warning entry carries its code, and only a well-formed one", () => {
+    const run = runId(1);
+    const records = [
+      loaded(run, 1, "error", T0, { code: "git.diff_failed", problem: "p" }),
+      loaded(run, 2, "warning", T0 + 1, { code: "graft.review_failed", problem: "p" }),
+      loaded(run, 3, "error", T0 + 2, { code: "Not A Code", problem: "p" }),
+      loaded(run, 4, "result", T0 + 3, { code: "t.count" }),
+    ];
+    const { digested } = digestOf(records);
+    const entry = (seq: number) => digested.digest.records.find((e) => e.seq === seq) as unknown as Record<string, unknown>;
+    expect(entry(1).code).toBe("git.diff_failed");
+    expect(entry(2).code).toBe("graft.review_failed");
+    expect("code" in entry(3)).toBe(false);
+    expect("code" in entry(4)).toBe(false);
+  });
+
+  test("the byte search is exact with run sections in the line", () => {
+    const records: LoadedRecord[] = [];
+    for (let r = 0; r < 6; r++) {
+      const run = runId(r);
+      records.push(loaded(run, 1, "receipt.head", T0 + r * 10, { tool: "t", v: "1", argv: ["t", "x".repeat(r * 7)], inv: `inv_${r}` }));
+      records.push(loaded(run, 2, "warning", T0 + r * 10 + 1, { code: "w.x", problem: "p" }));
+      if (r % 2 === 0) records.push(loaded(run, 3, "end", T0 + r * 10 + 2, { status: r === 2 ? 1 : 0 }));
+    }
+    const whole = digestOf(records).digested;
+    expect(whole.excluded).toBe(0);
+    for (let bytes = 1; bytes <= whole.bytes; bytes++) {
+      const { digested, envelope, ranking } = digestOf(records, { records: 100, bytes });
+      const kept = digested.digest.records.length;
+      if (kept > 0) expect(digested.bytes).toBeLessThanOrEqual(bytes);
+      if (kept < records.length) {
+        // One more entry would not have fitted.
+        const plan = planQuery({ asker: { tool: "t", cwd: "/w" }, view: "everything", window: WIDE, budget: { records: kept + 1 } });
+        if (plan.refused) throw new Error("the plan was refused");
+        const more = digestFor(plan.query, { run: runId(99), seq: 1 }, ranking.records, envelope, ranking.outcomes);
+        expect(digestBytes({ ...more.digest, budget: digested.digest.budget }, envelope)).toBeGreaterThan(bytes);
+      }
+    }
+  });
+
+  test("ten thousand run sections are built in one bounded pass", () => {
+    const records: LoadedRecord[] = [];
+    for (let i = 0; i < 10_000; i++) {
+      const run = runId(i);
+      records.push(loaded(run, 1, "receipt.head", T0 + i * 10, { tool: "t", v: "1", argv: ["t"] }));
+      records.push(loaded(run, 2, "receipt.step", T0 + i * 10 + 1));
+      records.push(loaded(run, 3, "end", T0 + i * 10 + 2, { status: 0 }));
+    }
+    const plan = planQuery({ asker: { tool: "t" }, view: "everything", window: WIDE, budget: { records: 30_000 } });
+    if (plan.refused) throw new Error("the plan was refused");
+    const ranking = rankRecords(plan.query, records);
+    const started = Date.now();
+    const digested = digestFor(plan.query, { run: runId(99_999), seq: 1 }, ranking.records, { run: runId(99_999), seq: 30, t: T0 }, ranking.outcomes);
+    const elapsed = Date.now() - started;
+    expect(digested.digest.runs.length).toBe(10_000);
+    // A section per run is found by an index over the window, not a scan of it per run. A scan
+    // per run took 1.1 to 1.6 s here, the index about 30 ms; the bound fails on that complexity,
+    // not on a noisy machine.
+    expect(elapsed).toBeLessThan(500);
+  }, 60_000);
 });

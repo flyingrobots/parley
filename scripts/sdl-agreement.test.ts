@@ -132,6 +132,8 @@ describe("interim directives are declared, known and documented (SDL-5)", () => 
 const gate = wesleyGate(findWesley(), pin, Boolean(process.env.CI));
 
 if (gate.kind === "skip") {
+  // bun test lists only a count of skipped tests, so the reason is also printed where it is seen.
+  console.warn(`scripts/sdl-agreement.test.ts: SKIPPING the SDL agreement cases (SDL-1 to SDL-3): ${gate.reason}`);
   test.skip(`SDL agreement (SDL-1 to SDL-3): ${gate.reason}`, () => {});
 } else if (gate.kind === "fail") {
   test("SDL agreement: the pinned wesley runs (SDL-4)", () => { throw new Error(gate.reason); });

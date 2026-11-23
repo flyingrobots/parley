@@ -19,6 +19,22 @@ jobs:
           uv python install 3.9
           echo "$(dirname "$(uv python find 3.9)")" >> "$GITHUB_PATH"
       - run: python3 --version && python3 -c "import sys; assert sys.version_info[:2] == (3, 9), sys.version"
+      # The SDL agreement test (scripts/sdl-agreement.test.ts, transitional until
+      # flyingrobots/parley#119) runs the Wesley pinned in package.json config.wesley, and under CI
+      # it fails rather than skips when that binary is missing. A build from crates.io takes
+      # minutes, so the binary is cached by its exact version; a new pin is a cache miss.
+      - name: Read the Wesley pin
+        id: wesley
+        run: echo "version=$(bun -e "console.log(JSON.parse(await Bun.file('package.json').text()).config.wesley)")" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        id: wesley-cache
+        with:
+          path: ~/.wesley
+          key: wesley-${{ steps.wesley.outputs.version }}-${{ runner.os }}-${{ runner.arch }}
+      - if: steps.wesley-cache.outputs.cache-hit != 'true'
+        run: cargo install wesley-cli --version "=${{ steps.wesley.outputs.version }}" --locked --root "$HOME/.wesley"
+      - run: echo "$HOME/.wesley/bin" >> "$GITHUB_PATH"
+      - run: test "$(wesley --version)" = "${{ steps.wesley.outputs.version }}"
       - run: bun install --frozen-lockfile
       - run: bun test
       - run: bun run check

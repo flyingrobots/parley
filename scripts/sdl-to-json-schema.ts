@@ -373,7 +373,7 @@ export function findWesley(): { bin: string; version: string } | null {
   return { bin, version: r.stdout.toString().trim() };
 }
 
-export type Gate = { kind: "run"; bin: string } | { kind: "skip" | "fail"; reason: string };
+export type Gate = { kind: "run"; bin: string } | { kind: "skip"; reason: string } | { kind: "fail"; reason: string };
 
 /** Whether the Wesley-dependent cases run: only the pinned version; skipped only off CI. */
 export function wesleyGate(found: { bin: string; version: string } | null, pin: string, ci: boolean): Gate {

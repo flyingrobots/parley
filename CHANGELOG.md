@@ -7,6 +7,18 @@ the entry under it names each schema version it releases, and those are separate
 
 ## [Unreleased]
 
+### Added
+
+- `schemas/parley.graphql`: Wesley SDL for all 17 messages, with interim `parley_` directives
+  where Wesley 0.3.0-alpha.4 has no construct yet, each tied to the Wesley issue that retires it
+  (flyingrobots/wesley#850 to flyingrobots/wesley#857). **It is not the source.** The hand-written
+  JSON Schemas stay the source of truth until flyingrobots/parley#119, and no schema byte or
+  version changes. A transitional test, `scripts/sdl-agreement.test.ts`, derives each message's
+  JSON Schema value from the SDL and requires it to equal the hand-written schema as parsed JSON.
+  All 17 agree, with no exceptions. Wesley is pinned exactly in `package.json` `config.wesley`, and
+  CI installs that version and fails if it is missing. Without it, `bun test` skips those cases
+  and says why (flyingrobots/parley#118).
+
 ### Changed
 
 - Spec §4.5 now says what the first release did: a top-level schema file may hold a released

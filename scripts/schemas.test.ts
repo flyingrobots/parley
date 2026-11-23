@@ -318,7 +318,7 @@ describe("schemas/", () => {
       expect(lens({ ...okLens, runs: [{ run: "q", head: "in_window" }] })).toBe(false);
       expect(lens({ ...okLens, runs: [{ ...section, dropped: ["argv", "inv"] }] })).toBe(true);
       expect(lens({ ...okLens, runs: [{ ...section, dropped: [] }] })).toBe(false);
-      expect(lens({ ...okLens, runs: [{ ...section, dropped: ["argv", "argv"] }] })).toBe(false);
+      expect(lens({ ...okLens, runs: [{ ...section, dropped: ["argv", "inv", "v", "tool", "argv"] }] })).toBe(false);
       expect(lens({ ...okLens, runs: [{ ...section, dropped: ["run"] }] })).toBe(false);
     });
     test("a page with has_more needs a cursor; the last page does not (§7.2)", () => {

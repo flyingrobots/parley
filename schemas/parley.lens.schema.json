@@ -210,7 +210,6 @@
           "dropped": {
             "type": "array",
             "minItems": 1,
-            "uniqueItems": true,
             "items": {
               "enum": [
                 "argv",
@@ -219,7 +218,8 @@
                 "tool"
               ]
             },
-            "description": "The fields left out, whole, to bound the section's serialised JSON, in the order they were dropped: argv, then inv, then v, then tool. The bound is the reader's to state (parley-read: 512 UTF-8 bytes); a string is never cut part-way."
+            "description": "The fields left out, whole, to bound the section's serialised JSON, in the order they were dropped, each at most once: argv, then inv, then v, then tool. The bound is the reader's to state (parley-read: 512 UTF-8 bytes); a string is never cut part-way.",
+            "maxItems": 4
           }
         },
         "if": {

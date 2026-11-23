@@ -289,6 +289,49 @@ rather than moving its version.
   on its own and this release publishes no schema version. A tool conforms by constructing a writer and emitting through it. Its own changelog
   lives beside it; the repository's `bun test` runs its suite, every case using the doctor as the
   oracle, and `bun run typecheck` checks it strictly. (flyingrobots/parley#1)
+- `scripts/doctor.ts` (`bun run doctor`): a conformance checker that takes a captured run's
+  stdout, stderr and receipt and reports every violated rule with its spec section, stream and
+  line, as JSON Lines. Nine rules cover line discipline, the envelope, exact-pair validation, the
+  bootstrap and startup failure, the receipt head, the one-counter rule, the terminal event and
+  exit status, the redaction aggregate and receipt retention. Fixtures and a mutation test per
+  rule. (flyingrobots/parley#23)
+
+- `scripts/check-examples.ts`: validates every fenced JSON example in `README.md`, `spec/` and
+  `docs/` against the schema its `_schema` names, with `abridged` and `illustrative` fence labels
+  for examples that are deliberately not complete messages. Runs under `bun test` and in CI.
+  (flyingrobots/parley#4)
+
+- `docs/topics/related-work/README.md`: the neighbouring specifications and formats, what parley
+  borrows from each, and what is its own; routed from the README and the docs index.
+  (flyingrobots/parley#19)
+
+- Schema constraints, each stated in the spec text (flyingrobots/parley#9,
+  flyingrobots/parley#26): `t` is never negative (§1.3); `tool`, `v`, `run`, `inv` and `session`
+  are non-empty (§2.1); `code` is two or more dot-separated segments of lowercase letters, digits
+  and underscores and `problem` is non-empty (§6); `_schema.version` is exact (§4.5), which
+  rejects leading-zero components with everything else. These narrow `parley.run.bootstrap` `1.1.1`
+in place under the draft rule;
+  the earlier `1.1.1` entry below described its first, description-only change. A shared envelope
+schema file was
+  considered and not adopted: `scripts/schemas.test.ts` enforces the envelope uniformly across
+  every schema, and a cross-file `$ref` would force every consumer to preload schemas.
+- `parley.receipt.head` requires `tool` and `v` (§5 MUST list), so a receipt read on its own says
+  what wrote it and `inv` can be recomputed. (flyingrobots/parley#14)
+- `schemas/README.md` lists each schema and its current version. (flyingrobots/parley#9)
+- §5.3 redaction rule: secrets are declared in the command description's `secrets` list (§4.3);
+  their values are replaced with `[redacted]` before the head is written; the head's new
+  `redacted` field records argv indexes, resolved JSON Pointers, input indexes and env names and is
+  present whenever a declared secret was supplied. §2.2: `inv` never incorporates a declared
+  secret,
+so a receipt
+  is not an oracle for it; §2.3 and §5.3: a redacted receipt is never replayed from or served
+  from cache. (flyingrobots/parley#13)
+- §4.5: a schema version still under `Unreleased` is a draft and may change in place. The
+  constraint additions above therefore stay at `parley.error` `2.0.0`, `parley.receipt.head`
+  `2.0.0` and `parley.run.bootstrap` `1.1.1`.
+- §3: the bootstrap line is written to stdout only. §4.6: a reader with no schema for an id must
+  not validate the line against another schema. Checker docs explain exact-version resolution and
+  that the checker is not a parley program. (flyingrobots/parley#26)
 
 ### Changed
 
@@ -438,52 +481,6 @@ rather than moving its version.
 - Normative keywords cite RFC 2119 and RFC 8174; §1.1's no-colour rule carries its keyword; §3
   says how `v` differs from `_schema.version`; example timestamps are in 2026.
   (flyingrobots/parley#18)
-
-### Added
-
-- `scripts/doctor.ts` (`bun run doctor`): a conformance checker that takes a captured run's
-  stdout, stderr and receipt and reports every violated rule with its spec section, stream and
-  line, as JSON Lines. Nine rules cover line discipline, the envelope, exact-pair validation, the
-  bootstrap and startup failure, the receipt head, the one-counter rule, the terminal event and
-  exit status, the redaction aggregate and receipt retention. Fixtures and a mutation test per
-  rule. (flyingrobots/parley#23)
-
-- `scripts/check-examples.ts`: validates every fenced JSON example in `README.md`, `spec/` and
-  `docs/` against the schema its `_schema` names, with `abridged` and `illustrative` fence labels
-  for examples that are deliberately not complete messages. Runs under `bun test` and in CI.
-  (flyingrobots/parley#4)
-
-- `docs/topics/related-work/README.md`: the neighbouring specifications and formats, what parley
-  borrows from each, and what is its own; routed from the README and the docs index.
-  (flyingrobots/parley#19)
-
-- Schema constraints, each stated in the spec text (flyingrobots/parley#9,
-  flyingrobots/parley#26): `t` is never negative (§1.3); `tool`, `v`, `run`, `inv` and `session`
-  are non-empty (§2.1); `code` is two or more dot-separated segments of lowercase letters, digits
-  and underscores and `problem` is non-empty (§6); `_schema.version` is exact (§4.5), which
-  rejects leading-zero components with everything else. These narrow `parley.run.bootstrap` `1.1.1`
-in place under the draft rule;
-  the earlier `1.1.1` entry below described its first, description-only change. A shared envelope
-schema file was
-  considered and not adopted: `scripts/schemas.test.ts` enforces the envelope uniformly across
-  every schema, and a cross-file `$ref` would force every consumer to preload schemas.
-- `parley.receipt.head` requires `tool` and `v` (§5 MUST list), so a receipt read on its own says
-  what wrote it and `inv` can be recomputed. (flyingrobots/parley#14)
-- `schemas/README.md` lists each schema and its current version. (flyingrobots/parley#9)
-- §5.3 redaction rule: secrets are declared in the command description's `secrets` list (§4.3);
-  their values are replaced with `[redacted]` before the head is written; the head's new
-  `redacted` field records argv indexes, resolved JSON Pointers, input indexes and env names and is
-  present whenever a declared secret was supplied. §2.2: `inv` never incorporates a declared
-  secret,
-so a receipt
-  is not an oracle for it; §2.3 and §5.3: a redacted receipt is never replayed from or served
-  from cache. (flyingrobots/parley#13)
-- §4.5: a schema version still under `Unreleased` is a draft and may change in place. The
-  constraint additions above therefore stay at `parley.error` `2.0.0`, `parley.receipt.head`
-  `2.0.0` and `parley.run.bootstrap` `1.1.1`.
-- §3: the bootstrap line is written to stdout only. §4.6: a reader with no schema for an id must
-  not validate the line against another schema. Checker docs explain exact-version resolution and
-  that the checker is not a parley program. (flyingrobots/parley#26)
 
 ### Fixed
 

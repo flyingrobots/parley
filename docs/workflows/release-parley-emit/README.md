@@ -17,7 +17,7 @@ The tag starts `.github/workflows/release-parley-emit.yml`, which:
 
 | Job | Does |
 | --- | --- |
-| `sanity` | Refuses a tag whose version differs from `package.json` or has no changelog heading; checks the manifest fields; runs `bun test`, `bun run check`, `bun run typecheck`; refuses a stale `src/schemas.ts`; dry-runs the pack; fails if `npm publish --dry-run` reports that it would rewrite or remove anything in the manifest, if the packed `package.json` differs from the repository's, or if any dependency uses a `workspace:` range |
+| `sanity` | Refuses a tag whose version differs from `package.json` or has no changelog heading; checks the manifest fields; installs the Wesley pinned in `package.json` `config.wesley`, as the checks workflow does; runs `bun test`, `bun run check`, `bun run typecheck`; refuses a stale `src/schemas.ts`; dry-runs the pack; fails if `npm publish --dry-run` reports that it would rewrite or remove anything in the manifest, if the packed `package.json` differs from the repository's, or if any dependency uses a `workspace:` range |
 | `release` | Creates the GitHub release named after the tag, with the changelog section as notes and the tarball plus `SHA256SUMS` attached |
 | `publish` | In the `npm` environment, stages the version with `npm stage publish` and OIDC provenance through npm's trusted publishing; no token lives in the repository. Nothing is installable yet |
 
@@ -57,4 +57,5 @@ otherwise ([releasing parley-read](../release-parley-read/README.md)).
 `0.1.0` (tag `parley-emit-v0.1.0`, 2026-11-22) was published by hand before this workflow
 existed, with the GitHub release created the same way. `0.2.0`, `0.2.1` and `0.2.2` were tagged and
 released on GitHub but never reached npm: their workflow ran `npm publish`, which the trusted
-publisher refuses. `0.2.3` is the first version staged.
+publisher refuses. `0.2.3` was tagged and stopped at `sanity`, which lacked the pinned Wesley. `0.2.4` is the first
+version staged.

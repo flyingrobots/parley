@@ -26,7 +26,7 @@ The tag starts `.github/workflows/release-parley-read.yml`, which:
 
 | Job | Does |
 | --- | --- |
-| `sanity` | Refuses a tag whose version differs from `package.json` or has no changelog heading; checks the manifest fields; runs `bun test`, `bun run check`, `bun run typecheck`; refuses a stale `src/schemas.ts`; refuses a parley-emit range nothing on npm satisfies; dry-runs the pack; fails if `npm publish --dry-run` reports that it would rewrite or remove anything in the manifest, if the packed `package.json` differs from the repository's, or if any dependency uses a `workspace:` range |
+| `sanity` | Refuses a tag whose version differs from `package.json` or has no changelog heading; checks the manifest fields; installs the Wesley pinned in `package.json` `config.wesley`, as the checks workflow does; runs `bun test`, `bun run check`, `bun run typecheck`; refuses a stale `src/schemas.ts`; refuses a parley-emit range nothing on npm satisfies; dry-runs the pack; fails if `npm publish --dry-run` reports that it would rewrite or remove anything in the manifest, if the packed `package.json` differs from the repository's, or if any dependency uses a `workspace:` range |
 | `release` | Creates the GitHub release named after the tag, with the changelog section as notes and the tarball plus `SHA256SUMS` attached |
 | `publish` | In the `npm` environment, stages the version with `npm stage publish` and OIDC provenance through npm's trusted publishing; no token lives in the repository. Nothing is installable yet |
 

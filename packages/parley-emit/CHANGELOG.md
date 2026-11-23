@@ -5,6 +5,16 @@ on its own; the spec and each message schema move separately (spec §4.4).
 
 ## [Unreleased]
 
+## [0.2.4] — 2026-11-23
+
+No change to the library or the schemas it ships.
+
+### Fixed
+
+- The release workflow's `sanity` job installs the pinned Wesley, as the checks workflow does. The
+  suite fails under CI without it (flyingrobots/parley#118), so the `parley-emit-v0.2.3` tag
+  stopped at `sanity` and nothing was released or staged. This is the first version staged on npm.
+
 ## [0.2.3] — 2026-11-23
 
 No change to the library or the schemas it ships. This version exists so that a tag carries the
@@ -15,8 +25,7 @@ new release workflow.
 - **Releases are staged, then approved by the owner** (flyingrobots/parley#85). The release
   workflow runs `npm stage publish` in place of `npm publish`: the npm trusted publisher is allowed
   to stage and nothing else, and a version becomes installable only when the owner approves it with
-  two-factor authentication. 0.2.0, 0.2.1 and 0.2.2 never reached npm for that reason; this is the
-  first version staged, and it carries everything they changed.
+  two-factor authentication. 0.2.0, 0.2.1 and 0.2.2 never reached npm for that reason.
 
 ## [0.2.2] — 2026-11-22
 

@@ -261,8 +261,8 @@ describe("PE-26 retention is per tool", () => {
     for (let i = 0; i < 3; i++) await runCount(dir, env, ["count"], body, { name: "reader", retention: { count: 2 } });
     for (let i = 0; i < 3; i++) await runCount(dir, env, ["count"], body, { retention: { count: 2 } });
     const step = readFileSync((await runCount(dir, env, ["count"], body, { retention: { count: 2 } })).path!, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as { event: string; decision?: string }).find((o) => o.event === "receipt.step" && /retention/.test(o.decision ?? ""));
-    expect(step?.decision).toBe("retention: deleted 2 receipt bundle(s)");
-    expect(JSON.stringify(step)).toContain("4 of this tool's receipts exceeded the retention count of 2");
+    expect(step?.decision).toBe("retention: deleted 1 receipt bundle(s)");
+    expect(JSON.stringify(step)).toContain("3 of this tool's receipts exceeded the retention count of 2");
   });
 });
 

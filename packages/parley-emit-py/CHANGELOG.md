@@ -29,5 +29,7 @@ package registry. A copy is pinned by the SHA-256 `--vendor-info` prints.
   without a dependency, and reports a keyword it does not implement.
 - **`python3 parley_emit.py --vendor-info`**: one `parley.tooling.vendor_info` 1.0.0 line with the
   file's SHA-256, for pinning a vendored copy (`vendor-info.schema.json`).
-- `examples/count.py`, the Python twin of the TypeScript example; a `unittest` suite and a Bun
+- `examples/count.py`, the Python twin of the TypeScript example, which checks its arguments in its
+  `resolved` callback, before the bootstrap line, so a usage error is `startup.arguments_invalid`,
+  exit 3, with no receipt (flyingrobots/parley#91); a `unittest` suite and a Bun
   test that runs it with the TypeScript oracles, so `bun test` covers this writer.

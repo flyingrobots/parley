@@ -42,15 +42,20 @@ tool = pe.define_tool(
 )
 
 
-def files(run: pe.Run, args: list) -> None:
+def interpret(args: list, command: str) -> dict:
+    """The resolved interpretation, and the argument check. It runs before the bootstrap line, so a
+    usage error is a startup failure: exit 3, one startup.failed line, no receipt (spec section 3.2,
+    flyingrobots/parley#91). A mistaken call did no work, and a receipt of it would be noise."""
     if args:
-        run.error("usage.unknown_argument", f"files takes no arguments, and was given {len(args)}",
-                  remedy="run count files, or count files --help to see the command", detail={"arguments": args})
-        return
+        raise ValueError(f"{command} takes no arguments, and was given {len(args)}")
+    return {"command": command, "args": []}
+
+
+def files(run: pe.Run, args: list) -> None:
     names = sorted(n for n in os.listdir(run.cwd) if os.path.isfile(os.path.join(run.cwd, n)))
     run.step(f"counted {len(names)} regular file(s)", "directories and special files are not files; only regular files count", {"names": names})
     run.result({"event": "result", "files": len(names)}, ("count.result", "1.0.0"))
 
 
 if __name__ == "__main__":
-    sys.exit(pe.main(tool, ["count", *sys.argv[1:]], files))
+    sys.exit(pe.main(tool, ["count", *sys.argv[1:]], files, resolved=interpret))

@@ -172,13 +172,14 @@ rather than moving its version.
 - **A second conforming writer, in Python** (flyingrobots/parley#84): `packages/parley-emit-py`,
   one standard-library file a tool vendors by copying and pins by the digest `--vendor-info`
   prints. It is checked the way the spec asks a writer to be: the repository doctor passes on real
-  captured runs of its example (success, a usage error, a runtime failure, `--help`, `--schema`,
-  `--human`), `parley-read` loads its receipts with every `parley.*` record validated and no
+  captured runs of its example (success, a usage error as a startup failure, a runtime failure,
+  `--help`, `--schema`, `--human`), `parley-read` loads its receipts with every `parley.*` record validated and no
   defect, and its `inv` equals the TypeScript writer's for the same question. No schema and no
-  spec section moves. Writing it found three places the spec leaves a second implementation to
-  guess, filed as flyingrobots/parley#91 (is a usage error exit 2 or 3), flyingrobots/parley#92
-  (does `--help` list `parley.startup.failed`) and flyingrobots/parley#93 (whose declared secrets
-  `redacted.env` and `redacted.sources` cover).
+  spec section moves. Writing it found three places the spec left a second implementation to
+  guess, now decided: flyingrobots/parley#91 (the bootstrap line is the boundary for a usage error;
+  the example checks its arguments before it, exit 3), flyingrobots/parley#92 (`--help` lists
+  `parley.startup.failed`, as this writer does) and flyingrobots/parley#93 (scrub every command's
+  declared secrets, resolve only the running command's sources, as both writers do).
 - **The doctor checks a receipt alone** (flyingrobots/parley#84): `bun run doctor --receipt FILE`
   with no `--stdout` or `--stderr` runs the rules that need no stream, for the record of a
   `--human` run, whose streams are prose by request. `parley.tooling.doctor` stays 1.1.0: no line

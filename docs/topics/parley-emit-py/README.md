@@ -57,8 +57,8 @@ derivation, and the README's last section names every place it differs.
 emit, each error type they can produce and every message type this writer emits, then `end` with
 status 0. `<command> --help` emits that command's `command` line and the schemas of its success
 types and its error types. A command's error types default to `parley.error` and
-`parley.startup.failed`; the TypeScript writer's default is `parley.error` alone, and which reading
-of §4.2 is right is flyingrobots/parley#92. A type with no schema document is a
+`parley.startup.failed`, the reading of §4.2 decided on flyingrobots/parley#92; the TypeScript
+writer, whose default is `parley.error` alone, is being brought in line there. A type with no schema document is a
 `schema.unavailable` warning, not a missing line.
 
 ## Retention

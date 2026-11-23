@@ -56,16 +56,17 @@ tool = pe.define_tool(
     human=lambda line: f"{line['files']} file(s)" if line.get("event") == "result" else None,
 )
 
-def files(run, args):
+def interpret(args, command):  # runs before the bootstrap line
     if args:
-        run.error("usage.unknown_argument", f"files takes no arguments, and was given {len(args)}",
-                  remedy="run count files, or count files --help to see the command")
-        return
+        raise ValueError(f"{command} takes no arguments, and was given {len(args)}")
+    return {"command": command, "args": []}
+
+def files(run, args):
     names = sorted(n for n in os.listdir(run.cwd) if os.path.isfile(os.path.join(run.cwd, n)))
     run.step(f"counted {len(names)} regular file(s)", "only regular files count", {"names": names})
     run.result({"event": "result", "files": len(names)}, ("count.result", "1.0.0"))
 
-sys.exit(pe.main(tool, ["count", *sys.argv[1:]], files))
+sys.exit(pe.main(tool, ["count", *sys.argv[1:]], files, resolved=interpret))
 ```
 
 Captured from `python3 examples/count.py files` on Python 3.9.6, in a directory holding exactly
@@ -92,10 +93,11 @@ stderr was empty and the exit status was 0. The repository doctor reported the r
 is the one the TypeScript writer's own README shows for its `count files`: the same question,
 asked of two writers, has one identity.
 
-From the same directory, `count files --frobnicate` exited 2 with one line on stderr:
+Captured the same way on 2026-11-23, `count files --frobnicate` exited 3 with nothing on stdout,
+no receipt, and exactly one line on stderr, which the doctor reported conforming:
 
 ```jsonl
-{"event":"error","t":1795397578376,"seq":2,"run":"01M830HVM776SSZJ0K8G9FP0AC","code":"usage.unknown_argument","problem":"files takes no arguments, and was given 1","remedy":"run count files, or count files --help to see the command","detail":{"arguments":["--frobnicate"]},"_schema":{"id":"parley.error","version":"2.0.0"}}
+{"event":"startup.failed","t":1795398208647,"seq":0,"run":"01M83153440W0A6PPFVMGRAK56","tool":"count","v":"0.1.0","code":"startup.arguments_invalid","problem":"the arguments could not be interpreted: files takes no arguments, and was given 1","remedy":"fix the arguments; see the command's --help","_schema":{"id":"parley.startup.failed","version":"1.0.0"}}
 ```
 
 and `count files --human` printed `2 file(s)` and nothing else, exit 0.
@@ -140,10 +142,13 @@ one command needs none. The writer's flags, `--human`, `--humanize`, `--dry-run`
 command named, in a tool with more than one, is `startup.unknown_command`, exit 3.
 `PARLEY_SESSION`, or the `session` argument, is carried as `session`; the writer never invents one.
 
-Where a tool parses the rest of its arguments is its own choice, and the spec does not yet say
-which is right (flyingrobots/parley#91). A `resolved` callback that raises makes a bad argument a
-startup failure, exit 3, with no receipt; a handler that reports one, as `count.py` does, makes it
-a command error, exit 2, with a complete failed receipt that records the mistaken call.
+The bootstrap line is the boundary for a usage error, as decided on flyingrobots/parley#91: where
+a tool checks its arguments decides which side of it a mistake falls on, and the tool documents
+which. Checking before it is preferred, because a mistaken call did no work and a receipt of it is
+noise. With this writer that means the `resolved` callback: one that raises makes a bad argument a
+startup failure, `startup.arguments_invalid`, exit 3, with no receipt, and that is what
+`count.py` does, as the TypeScript example's tool does. A handler that reports a bad argument with
+`run.error` makes it a command error instead, exit 2, with a complete failed receipt.
 
 ## How `inv` is derived
 
@@ -253,8 +258,8 @@ Where it does something different:
 
 - **`--help` lists `parley.startup.failed`** among a command's error types by default, beside
   `parley.error`, because every command can produce one and §4.2 asks for "every error type it can
-  produce". The TypeScript writer lists `parley.error` only. Which is right is
-  flyingrobots/parley#92.
+  produce". That reading was decided on flyingrobots/parley#92; the TypeScript writer, which lists
+  `parley.error` only, is being brought in line there.
 - **Capture is of `sys.stdout` and `sys.stderr`**, not of `console`; the limits above are this
   language's. The TypeScript writer captures `console` and cannot contain a direct descriptor write
   either.
@@ -271,8 +276,7 @@ Where it does something different:
 - **Retention is per tool**, as flyingrobots/parley#75 decided; the TypeScript writer counts every
   bundle in the directory until that issue is fixed.
 
-What it does the same way, including where the spec is silent: the declared secrets of every
-command are scrubbed and every command's declared variables that are present are listed in
-`redacted.env`, while only the running command's credential sources are resolved and listed in
-`redacted.sources`. The spec does not say whose declarations count in a tool with several commands;
-that is flyingrobots/parley#93.
+What it does the same way: the declared secrets of every command are scrubbed and every
+command's declared variables that are present are listed in `redacted.env`, while only the running
+command's credential sources are resolved and listed in `redacted.sources` — scrub widely,
+resolve narrowly, as decided in flyingrobots/parley#93.

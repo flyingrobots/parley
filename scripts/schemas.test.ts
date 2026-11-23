@@ -224,6 +224,27 @@ describe("schemas/", () => {
       expect(query({ ...okQuery, note: "" })).toBe(false);
       expect(query({ ...okQuery, session: "" })).toBe(false);
     });
+    test("a drill-down query names the records it opens by (run, seq), at least one (flyingrobots/parley#51)", () => {
+      // The case above compiled this schema on the shared validator; take that one rather than
+      // registering its $id a second time.
+      const query = ajv.getSchema("https://flyingrobots.dev/parley/schemas/parley.query/1.0.0") ?? validate("parley.query.schema.json");
+      const okOpen = {
+        event: "query", t: 1, seq: 1, run: "r",
+        asker: { tool: "claude-code" },
+        view: "what-failed",
+        budget: { records: 2 },
+        window: { from: 0, to: 2 },
+        records: [{ run: "a", seq: 0 }, { run: "b", seq: 7 }],
+        _schema: { id: "parley.query", version: "1.0.0" },
+      };
+      expect(query(okOpen)).toBe(true);
+      expect(query({ ...okOpen, records: [] })).toBe(false);
+      expect(query({ ...okOpen, records: [{ run: "a" }] })).toBe(false);
+      expect(query({ ...okOpen, records: [{ run: "", seq: 1 }] })).toBe(false);
+      expect(query({ ...okOpen, records: [{ run: "a", seq: -1 }] })).toBe(false);
+      expect(query({ ...okOpen, records: [{ run: "a", seq: 1.5 }] })).toBe(false);
+      expect(query({ ...okOpen, records: { run: "a", seq: 1 } })).toBe(false);
+    });
     test("a lens names its query, its budget, its loss bound and its records (§9)", () => {
       const lens = validate("parley.lens.schema.json");
       const okLens = {

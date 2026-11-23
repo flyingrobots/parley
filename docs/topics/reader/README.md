@@ -10,9 +10,12 @@ the reader library that states these fields, is refused without them, is recorde
 digest bounded by its budget** that states what the bound left out —
 [parley-read](../parley-read/README.md#making-a-read),
 [how the purpose orders the answer](../parley-read/README.md#how-the-purpose-orders-the-answer)
-and [the digest](../parley-read/README.md#the-digest-and-what-it-left-out). What that read does
-**not** do is hand back what the digest excluded: the drill-down is
-[flyingrobots/parley#51](https://github.com/flyingrobots/parley/issues/51). Spec
+and [the digest](../parley-read/README.md#the-digest-and-what-it-left-out) — and a **drill-down**
+that opens the records a digest names, recorded as a `parley.query` carrying `records`
+([opening records by identity](../parley-read/README.md#opening-records-by-identity)). What is
+read nowhere is what a digest excluded: it is a count, named by no id, and a caller reaches it by
+reading again under a wider budget. [A cold resume on real history](cold-resume.md) is what this
+reader was able to reconstruct, and what it was not, when an agent with no other context used it. Spec
 [§9](../../../spec/parley-v0.2.md) is informative and unchanged; the reasoning behind the three
 fields is [Observer geometry and spec §9](../related-work/observer-geometry.md), and the decision
 itself is [flyingrobots/parley#46](https://github.com/flyingrobots/parley/issues/46).
@@ -129,7 +132,7 @@ that govern a draft.
 
 | Schema | Version | Message |
 | --- | --- | --- |
-| `parley.query` | 1.0.0 (draft) | A read, recorded as an event |
+| `parley.query` | 1.0.0 (draft) | A read, recorded as an event; with `records`, a drill-down naming the records it opens |
 | `parley.lens` | 1.0.0 (draft) | The lens a result carries |
 
 A read is a run, so both lines carry the §1.3 envelope. `run` on these lines is the read's own run,
@@ -163,7 +166,23 @@ The lens of the result that answers it, naming the failed run of this specificat
  "_schema":{"id":"parley.lens","version":"1.0.0"}}
 ```
 
-`bun run check` validates both of these against the schemas on every push, and
+A drill-down is the same `parley.query` message with `records` naming what it opens, by the
+`(run, seq)` pairs a lens carries, in the order asked. The view and window are the purpose and the
+stretch of history the records were named from, and select nothing; `budget.records` is the number
+of ids asked. Opening the two records the lens above names:
+
+```json
+{"event":"query","t":1795326530000,"seq":1,"run":"01JD5MP2W8C4E6G8J0K2M4P6R8",
+ "asker":{"tool":"claude-code","cwd":"/Users/j/git/theme-book","task":"flyingrobots/theme-book#88"},
+ "view":"what-failed",
+ "budget":{"records":2},
+ "window":{"from":1795240100000,"to":1795326500000},
+ "records":[{"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8","seq":4},
+            {"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8","seq":9}],
+ "_schema":{"id":"parley.query","version":"1.0.0"}}
+```
+
+`bun run check` validates all three of these against the schemas on every push, and
 `scripts/schemas.test.ts` holds the invariants the schemas themselves must satisfy.
 
 ## What is still open

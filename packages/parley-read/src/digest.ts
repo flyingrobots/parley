@@ -10,8 +10,8 @@
 // The digest is the `parley.lens` 1.0.0 record decided in flyingrobots/parley#46 — not a new
 // message. That decision already gives a lens the asker, the view, the budget applied, the
 // window, the query it answers by `(run, seq)`, a `loss` bound with the excluded count beside it,
-// and the records it was built from by `(run, seq)`, which is the way back a drill-down needs
-// (flyingrobots/parley#51). Inventing a second message for the same job would have been this
+// and the records it was built from by `(run, seq)`, which is the way back a drill-down takes
+// (`openRecords`, flyingrobots/parley#51). Inventing a second message for the same job would have been this
 // library redeciding a decided one.
 //
 // **The bound, exactly.** `budget.records` is required and bounds the count: the digest names at

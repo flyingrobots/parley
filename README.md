@@ -13,8 +13,8 @@ which reading is itself a recorded act carrying who is asking and why, has a que
 ranking that orders a result by purpose, and a bounded digest that states its lens and what it
 excluded, built and tested ([#48](https://github.com/flyingrobots/parley/issues/48),
 [#49](https://github.com/flyingrobots/parley/issues/49),
-[#50](https://github.com/flyingrobots/parley/issues/50)); fetching what a digest excluded is still
-design, not built ([#51](https://github.com/flyingrobots/parley/issues/51)).
+[#50](https://github.com/flyingrobots/parley/issues/50)), and a drill-down that opens the records a
+digest names ([#51](https://github.com/flyingrobots/parley/issues/51)).
 
 > **Status: proposal.** The [specification](spec/) is written. The writer library,
 > [`@flyingrobots/parley-emit`](packages/parley-emit/README.md), is published and appends to the

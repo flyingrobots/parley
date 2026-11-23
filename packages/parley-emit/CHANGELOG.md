@@ -7,6 +7,9 @@ on its own; the spec and each message schema move separately (spec §4.4).
 
 ### Changed
 
+- `src/schemas.ts` re-synced for a change to the draft `parley.lens` 1.0.0: an optional `runs`
+  section, and `code` in place of `outcome` on each named record (flyingrobots/parley#83). The
+  writer's behaviour is unchanged and no version moved; discovery serves the updated draft.
 - `src/schemas.ts` re-synced for a change to the draft `parley.lens` 1.0.0: optional `event`, `t`
   and `outcome` on each named record (flyingrobots/parley#77). The writer's behaviour is unchanged
   and no version moved; discovery serves the updated draft.

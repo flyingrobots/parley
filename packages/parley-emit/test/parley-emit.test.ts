@@ -266,6 +266,58 @@ describe("PE-26 retention is per tool", () => {
   }, 60_000);
 });
 
+describe("PE-27 the command is chosen by position (flyingrobots/parley#101)", () => {
+  const plain = { reads: [], writes: [], network: false, idempotent: true };
+  const twoCommands: ToolSpec["commands"] = {
+    plan: { intent: "plan", effects: plain, emits: [{ id: "t.count", version: "1.0.0" }] },
+    edit: { intent: "edit", effects: plain, emits: [{ id: "t.count", version: "1.0.0" }] },
+  };
+  async function select(argv: string[], commands?: ToolSpec["commands"]) {
+    const { dir, env } = scratch();
+    const s = streams();
+    let resolvedSaw: [string, string[]] | undefined, handlerSaw: string[] | undefined;
+    const status = await main(tool(commands ? { commands } : {}), ["t", ...argv], (_run, args) => { handlerSaw = [...args]; }, {
+      cwd: dir, env, ...s, resolved: (args, command) => { resolvedSaw = [command, [...args]]; return { command, args: [...args] }; },
+    });
+    return { status, resolved: resolvedSaw, handler: handlerSaw, codes: s.stderr.objs.map((o) => o.code) };
+  }
+
+  test("a flag value equal to the command's name reaches the tool", async () => {
+    const r = await select(["edit", "--reason", "edit"], twoCommands);
+    expect(r.status).toBe(0);
+    expect(r.resolved).toEqual(["edit", ["--reason", "edit"]]);
+    expect(r.handler).toEqual(["--reason", "edit"]);
+  });
+
+  test("a flag value naming another command does not select it", async () => {
+    const r = await select(["edit", "--reason", "plan"], twoCommands);
+    expect(r.status).toBe(0);
+    expect(r.resolved).toEqual(["edit", ["--reason", "plan"]]);
+    expect(r.handler).toEqual(["--reason", "plan"]);
+  });
+
+  test("the command is the first argument once the writer's flags are set aside", async () => {
+    const bad = await select(["--reason", "plan", "edit"], twoCommands);
+    expect(bad.status).toBe(3);
+    expect(bad.codes).toEqual(["startup.unknown_command"]);
+    expect(bad.resolved).toBeUndefined();
+    expect(bad.handler).toBeUndefined();
+    const ok = await select(["--dry-run", "edit", "--reason", "edit"], twoCommands);
+    expect(ok.status).toBe(0);
+    expect(ok.resolved).toEqual(["edit", ["--reason", "edit"]]);
+    expect(ok.handler).toEqual(["--reason", "edit"]);
+  });
+
+  test("a one-command tool removes its name only from the first position", async () => {
+    for (const argv of [["count", "--label", "count"], ["--label", "count"]]) {
+      const r = await select(argv);
+      expect(r.status).toBe(0);
+      expect(r.resolved).toEqual(["count", ["--label", "count"]]);
+      expect(r.handler).toEqual(["--label", "count"]);
+    }
+  });
+});
+
 describe("PE-6 repository hygiene", () => {
   test("first write creates the ignore file", async () => {
     const { dir, env } = scratch();

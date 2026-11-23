@@ -785,6 +785,65 @@ class TestDiscovery(unittest.TestCase):
         self.assertEqual(ids, ["t.count@1.0.0", "parley.error@2.0.0", "parley.startup.failed@1.0.0"])
 
 
+PLAIN = {"reads": [], "writes": [], "network": False, "idempotent": True}
+TWO_COMMANDS = {
+    "plan": {"intent": "plan", "effects": PLAIN, "emits": [{"id": "t.count", "version": "1.0.0"}]},
+    "edit": {"intent": "edit", "effects": PLAIN, "emits": [{"id": "t.count", "version": "1.0.0"}]},
+}
+
+
+def select(argv, commands=None):
+    """Run argv through `main` and return (status, the command and arguments `resolved` saw, those the handler saw, stderr codes)."""
+    d, _, env = scratch()
+    out, err = Capture(), Capture()
+    seen = {}
+
+    def resolved(args, command):
+        seen["resolved"] = (command, list(args))
+        return {"command": command, "args": list(args)}
+
+    def handler(run, args):
+        seen["handler"] = list(args)
+
+    over = {"commands": commands} if commands is not None else {}
+    status = pe.main(tool(**over), ["t", *argv], handler, cwd=d, env=env, stdout=out, stderr=err, resolved=resolved)
+    return status, seen.get("resolved"), seen.get("handler"), [x.get("code") for x in err.objs]
+
+
+class TestCommandSelection(unittest.TestCase):
+    """PY-21: the command is the first argument once the writer's flags are set aside, and only it is removed."""
+
+    def test_a_flag_value_equal_to_the_commands_name_reaches_the_tool(self):
+        status, resolved, handler, _ = select(["edit", "--reason", "edit"], TWO_COMMANDS)
+        self.assertEqual(status, 0)
+        self.assertEqual(resolved, ("edit", ["--reason", "edit"]))
+        self.assertEqual(handler, ["--reason", "edit"])
+
+    def test_a_flag_value_naming_another_command_does_not_select_it(self):
+        status, resolved, handler, _ = select(["edit", "--reason", "plan"], TWO_COMMANDS)
+        self.assertEqual(status, 0)
+        self.assertEqual(resolved, ("edit", ["--reason", "plan"]))
+        self.assertEqual(handler, ["--reason", "plan"])
+
+    def test_the_command_is_the_first_argument_once_the_writers_flags_are_set_aside(self):
+        status, resolved, handler, codes = select(["--reason", "plan", "edit"], TWO_COMMANDS)
+        self.assertEqual(status, 3)
+        self.assertEqual(codes, ["startup.unknown_command"])
+        self.assertIsNone(resolved)
+        self.assertIsNone(handler)
+        status, resolved, handler, _ = select(["--dry-run", "edit", "--reason", "edit"], TWO_COMMANDS)
+        self.assertEqual(status, 0)
+        self.assertEqual(resolved, ("edit", ["--reason", "edit"]))
+        self.assertEqual(handler, ["--reason", "edit"])
+
+    def test_a_one_command_tool_removes_its_name_only_from_the_first_position(self):
+        for argv in (["count", "--label", "count"], ["--label", "count"]):
+            status, resolved, handler, _ = select(argv)
+            self.assertEqual(status, 0, argv)
+            self.assertEqual(resolved, ("count", ["--label", "count"]), argv)
+            self.assertEqual(handler, ["--label", "count"], argv)
+
+
 class TestHygiene(unittest.TestCase):
     def test_the_ignore_file_is_created_whole(self):
         d, _, env = scratch()

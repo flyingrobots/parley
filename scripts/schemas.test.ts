@@ -225,7 +225,9 @@ describe("schemas/", () => {
       expect(query({ ...okQuery, session: "" })).toBe(false);
     });
     test("a drill-down query names the records it opens by (run, seq), at least one (flyingrobots/parley#51)", () => {
-      const query = validate("parley.query.schema.json");
+      // The case above compiled this schema on the shared validator; take that one rather than
+      // registering its $id a second time.
+      const query = ajv.getSchema("https://flyingrobots.dev/parley/schemas/parley.query/1.0.0") ?? validate("parley.query.schema.json");
       const okOpen = {
         event: "query", t: 1, seq: 1, run: "r",
         asker: { tool: "claude-code" },

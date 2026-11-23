@@ -6,3 +6,4 @@ export { LENS_SCHEMA, digestBytes, digestFor, digestLine, type Digest, type Dige
 export { DEFAULT_BUDGET, NO_RETENTION, QUERY_SCHEMA, VIEWS, planQuery, queryReceipts, queryRecord, type AcceptedQuery, type Asker, type Budget, type QueryAnswer, type QueryOptions, type QueryOutcome, type QueryPlan, type QueryRefusal, type QueryRefusalCode, type QueryRefused, type QueryRequest, type QueryWindow, type View } from "./query.ts";
 export { CHANGE_VIEWS, OUTCOMES, TIERS, impliesChange, onFailureSurface, onViewSurface, rankRecords, runOutcomes, type Outcome, type RankQuery, type Ranked, type Ranking, type Tier } from "./rank.ts";
 export { SCHEMAS, SCHEMA_SOURCE } from "./schemas.ts";
+export { openOne, openRecords, planOpen, type BundleRuling, type OpenAnswer, type OpenOptions, type OpenOutcome, type OpenOutcomeKind, type OpenPlan, type OpenRefusal, type OpenRefusalCode, type OpenRefused, type OpenRequest, type Opened } from "./open.ts";

@@ -99,6 +99,17 @@ describe("the Wesley pin (SDL-4)", () => {
     if (g.kind === "skip") expect(g.reason).toContain(`cargo install wesley-cli --version =${pin} --locked`);
   });
 
+  test("SDL-4c: a $WESLEY that names nothing runnable counts as no binary, not a crash", () => {
+    const saved = process.env.WESLEY;
+    process.env.WESLEY = "/nonexistent/wesley";
+    try {
+      expect(findWesley()).toBeNull();
+    } finally {
+      if (saved === undefined) delete process.env.WESLEY;
+      else process.env.WESLEY = saved;
+    }
+  });
+
   test("SDL-4d: no binary in CI fails", () => {
     const g = wesleyGate(null, pin, true);
     expect(g.kind).toBe("fail");

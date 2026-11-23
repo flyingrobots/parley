@@ -1347,7 +1347,7 @@ describe("RD-40 under a change view a warning ranks with its run's failure", () 
     expect(answer.records.map((r) => r.event)).toEqual(Array(20).fill("result"));
     expect(answer.records.some((r) => r.event === "warning")).toBe(false);
     expect(answer.ranking.counts.failure).toBe(0);
-    expect(answer.digest.loss).toEqual({ bound: "count-only", excluded: 80 });
+    expect(answer.digest.loss).toEqual({ bound: "count-only", excluded: 80, folded: 0 });
   });
 
   test("a failed run's warning is promoted with its failure and a succeeded run's is not", async () => {
@@ -1437,20 +1437,25 @@ describe("RD-19 ranking reorders and never filters", () => {
     const window = { from: 0, to: realDone };
     const all = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window }, { cwd: dir, env }));
     expect(ids(all.records)).toEqual(timeOrder(all.records));
-    expect(new Set(all.records.map((r) => r.run))).toEqual(new Set([first.run, broke.run, third.run]));
-    expect(all.records.length).toBe(11);
+    // The first and third runs are one invocation with one result, so the digest names the third
+    // for both (flyingrobots/parley#79): the window holds 11 records, the digest names 7, and the
+    // fold says it left out the first run's 4.
+    expect(new Set(all.records.map((r) => r.run))).toEqual(new Set([broke.run, third.run]));
+    expect(all.counts.inWindow).toBe(11);
+    expect(all.records.length).toBe(7);
+    expect(all.counts.folded).toBe(4);
 
     const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "what-changed", window }, { cwd: dir, env }));
     const real = new Set([first.run, broke.run, third.run]);
     const realOnly = (a: QueryAnswer) => [...ids(a.records.filter((r) => real.has(r.run)))].sort();
     expect(realOnly(answer)).toEqual(realOnly(all));
-    expect(realOnly(answer).length).toBe(11);
+    expect(realOnly(answer).length).toBe(7);
     expect(answer.ranking.outcomes[broke.run]).toBe("failed");
     expect(answer.ranking.outcomes[first.run]).toBe("succeeded");
     expect(answer.ranking.outcomes[third.run]).toBe("succeeded");
     expect(answer.records.slice(0, 2).map((r) => [r.run, r.event])).toEqual([[broke.run, "error"], [broke.run, "end"]]);
     const results = answer.ranking.ranked.filter((r) => r.record.event === "result");
-    expect(results.length).toBe(2);
+    expect(results.length).toBe(1);
     expect(results.every((r) => r.tier === "surface")).toBe(true);
     for (const r of results) {
       const own = answer.ranking.ranked.filter((o) => o.record.run === r.record.run && o.record.event !== "result");
@@ -1614,7 +1619,7 @@ describe("RD-21 the digest is bounded by the budget", () => {
     ));
     expect(answer.records.length).toBe(7);
     expect(answer.digest.records.length).toBe(7);
-    expect(answer.digest.loss).toEqual({ bound: "count-only", excluded: 23 });
+    expect(answer.digest.loss).toEqual({ bound: "count-only", excluded: 23, folded: 0 });
     expect(answer.counts.inWindow).toBe(30);
     expect(answer.counts.answered).toBe(7);
     expect(answer.counts.excluded).toBe(23);
@@ -1689,7 +1694,7 @@ describe("RD-21 the digest is bounded by the budget", () => {
       { cwd: dir, env },
     ));
     expect(answer.records.length).toBe(9);
-    expect(answer.digest.loss).toEqual({ bound: "none", excluded: 0 });
+    expect(answer.digest.loss).toEqual({ bound: "none", excluded: 0, folded: 0 });
     expect(answer.counts.excluded).toBe(0);
   });
 
@@ -1698,12 +1703,12 @@ describe("RD-21 the digest is bounded by the budget", () => {
     const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: SEALED }, { cwd: dir, env }));
     expect(answer.records).toEqual([]);
     expect(answer.digest.records).toEqual([]);
-    expect(answer.digest.loss).toEqual({ bound: "none", excluded: 0 });
+    expect(answer.digest.loss).toEqual({ bound: "none", excluded: 0, folded: 0 });
     expect(answer.counts.answered).toBe(0);
     expect(answer.counts.excluded).toBe(0);
     const lens = lensRecord(dir, env, answer.run);
     expect(lens.validation.state).toBe("validated");
-    expect((lens.record as { loss: unknown }).loss).toEqual({ bound: "none", excluded: 0 });
+    expect((lens.record as { loss: unknown }).loss).toEqual({ bound: "none", excluded: 0, folded: 0 });
   });
 });
 
@@ -1721,13 +1726,13 @@ describe("RD-22 a digest never reads as complete", () => {
       { asker: { tool: "t" }, view: "everything", window: SEALED, budget: { records: 1000 } },
       { cwd: dir, env },
     ));
-    expect(whole.digest.loss).toEqual({ bound: "none", excluded: 0 });
+    expect(whole.digest.loss).toEqual({ bound: "none", excluded: 0, folded: 0 });
     // The loss is where the digest says what it is: there is no prose field to read instead, and
     // `none` is impossible with a non-zero count because the schema refuses it.
     const lens = validator();
     const asRecord = (a: QueryAnswer) => a.lines.find((l) => l.event === "lens")!;
     expect(lens.validate({ ...asRecord(cut), loss: { bound: "none", excluded: cut.digest.loss.excluded } }).state).toBe("invalid");
-    expect(Object.keys(cut.digest.loss).sort()).toEqual(["bound", "excluded"]);
+    expect(Object.keys(cut.digest.loss).sort()).toEqual(["bound", "excluded", "folded"]);
   });
 
   test("the digest's size stays under its bound as history grows", async () => {
@@ -1757,10 +1762,12 @@ describe("RD-22 a digest never reads as complete", () => {
     // its identity and outcome once (flyingrobots/parley#83), about 100 bytes for each of these
     // three-record runs, while the entries lost the outcome they each repeated. 13 entries, the
     // whole of four runs and the head of a fifth, with five sections, fit at 30 receipts and at
-    // 300 alike; the fourteenth entry, about 80 bytes, does not. Measured, not claimed.
+    // 300 alike; the fourteenth entry, about 80 bytes, does not. The loss also says how much of
+    // it a fold left out (flyingrobots/parley#79), `"folded":0` here because these heads carry no
+    // `inv`: eleven bytes more on every line, and no fewer records. Measured, not claimed.
     expect(named).toEqual([9, 13, 13]);
     expect(excluded).toEqual([0, 77, 887]);
-    expect(sizes).toEqual([1422, 1970, 1971]);
+    expect(sizes).toEqual([1433, 1981, 1982]);
     // Every line is inside the stated byte bound: the line does not grow with history.
     expect(sizes.every((b) => b <= BYTES)).toBe(true);
   }, 120_000);
@@ -1782,7 +1789,9 @@ describe("RD-22 a digest never reads as complete", () => {
     ));
     expect(answer.counts.inWindow).toBe(11);
     expect(answer.records.length).toBe(2);
-    expect(answer.digest.loss).toEqual({ bound: "count-only", excluded: 9 });
+    // The first run is folded into the third, one invocation with one result (flyingrobots/parley#79):
+    // its 4 records are part of the 9 excluded, and the loss says so.
+    expect(answer.digest.loss).toEqual({ bound: "count-only", excluded: 9, folded: 4 });
     // The failing run's error is what a change purpose puts first, and the digest keeps it.
     expect(answer.digest.records[0]).toEqual({
       run: broke.run, seq: answer.records[0]!.seq, event: "error", t: answer.records[0]!.t!, code: answer.records[0]!.record.code as string,
@@ -2200,7 +2209,8 @@ describe("RD-50 a lens names each record with a summary of it", () => {
       { asker: { tool: "t", task: "flyingrobots/parley#77" }, view: "what-changed", window },
       { cwd: dir, env },
     ));
-    expect(answer.digest.records.length).toBe(11);
+    // 11 in the window; the first run's 4 are folded into the third's (flyingrobots/parley#79).
+    expect(answer.digest.records.length).toBe(7);
     const byId = loadedById(dir, env);
     const held = heldEntries(dir, env, answer.run);
     expect(held).toEqual(answer.digest.records as unknown as Record<string, unknown>[]);
@@ -2465,7 +2475,7 @@ describe("RD-72 a bytes budget that cannot hold an empty digest declines and nam
     // The size named is exact: under it, the read answers with a digest naming no records…
     const fits = answered(await ask(smallest));
     expect(fits.digest.records).toEqual([]);
-    expect(fits.digest.loss).toEqual({ bound: "count-only", excluded: 30 });
+    expect(fits.digest.loss).toEqual({ bound: "count-only", excluded: 30, folded: 0 });
     expect(fits.digestBytes).toBeLessThanOrEqual(smallest);
     // …and one byte under it, the read declines again.
     expect(declined(await ask(smallest - 1)).decline.bound).toBe("bytes");

@@ -160,8 +160,10 @@ export interface QueryAnswer {
    * The records the digest names, in full: the window ordered by the view — the failure surface
    * of the runs that failed first when the view implies a change, then the view's own surface, then `(t, run, seq)`
    * ascending — and cut at the budget. Never more than `budget.records` of them, and fewer when a
-   * stated `budget.bytes` cuts first. What the bound left out is `counts.excluded`; it is named
-   * nowhere, so reaching it is a wider read, not a drill-down.
+   * stated `budget.bytes` cuts first. The records of a run folded into another of the same
+   * invocation and result are not among them (flyingrobots/parley#79). What the fold and the bound
+   * left out is `counts.excluded`, the fold's share `counts.folded`; it is named nowhere, so
+   * reaching it is a wider or narrower read, not a drill-down.
    */
   readonly records: readonly LoadedRecord[];
   /** The digest this read answered with, exactly as the `parley.lens` record carries it. */
@@ -184,8 +186,10 @@ export interface QueryAnswer {
     readonly inWindow: number;
     /** Records the digest names. */
     readonly answered: number;
-    /** Records the ranking placed beyond the bound. Zero is a count, not an absence (§9). */
+    /** Records of the window the digest does not name, the folded ones included. Zero is a count, not an absence (§9). */
     readonly excluded: number;
+    /** How many of `excluded` were left out because their run was folded into another (flyingrobots/parley#79), not by the bound. */
+    readonly folded: number;
     /** Records whose `t` is not a number, which cannot be placed in a window and are therefore not in the answer. */
     readonly undated: number;
     /** The read's own records, which a read does not answer itself with. */
@@ -654,6 +658,7 @@ export async function queryReceipts(request: QueryRequest, opts: QueryOptions = 
       ranking.outcomes,
     );
     const records = digested.records;
+    const named = new Set(records);
 
     // The last check: the digest is built and only writing it is left. A byte bound that even an
     // empty digest is over is declined here too, beside the deadline when both fail, so a caller
@@ -664,7 +669,7 @@ export async function queryReceipts(request: QueryRequest, opts: QueryOptions = 
         ...recorded,
         decline: declineOnRun(run, query.budget, "digest", true, {
           ...(beforeDigest.passed ? { elapsed: beforeDigest.elapsed } : {}),
-          ...(digested.fits ? {} : { bytes: sufficientBytes(query, { run: run.id, seq }, ranking.records.length, envelope) }),
+          ...(digested.fits ? {} : { bytes: sufficientBytes(query, { run: run.id, seq }, ranking.records.length, envelope, digested.folded) }),
         }),
       };
       return;
@@ -673,12 +678,12 @@ export async function queryReceipts(request: QueryRequest, opts: QueryOptions = 
     run.step(
       digested.excluded === 0
         ? `answered with all ${records.length} ranked record(s): the budget cut nothing`
-        : `answered with ${records.length} of ${ranking.records.length} ranked record(s) and excluded ${digested.excluded}`,
+        : `answered with ${records.length} of ${ranking.records.length} ranked record(s) and excluded ${digested.excluded}${digested.folded === 0 ? "" : `, ${digested.folded} of them folded into a run of the same invocation and result`}`,
       "spec §9: a result is bounded and reports what it excluded, at least as a count, so a later reader cannot mistake a digest for the whole (flyingrobots/parley#50)",
       {
         records_bound: query.budget.records,
         ...(query.budget.bytes === undefined ? {} : { bytes_bound: query.budget.bytes }),
-        named: records.length, excluded: digested.excluded, loss_bound: digested.digest.loss.bound,
+        named: records.length, excluded: digested.excluded, folded: digested.folded, loss_bound: digested.digest.loss.bound,
         digest_bytes: digested.bytes,
       },
     );
@@ -708,12 +713,14 @@ export async function queryReceipts(request: QueryRequest, opts: QueryOptions = 
       digestBytes,
       // The ranking's records stop where the digest does; its outcomes and counts describe the
       // window the digest was drawn from (see `QueryAnswer.ranking`).
-      ranking: { ...ranking, records, ranked: ranking.ranked.slice(0, records.length) },
+      // A folded-away run's records are not in the digest, so the prefix is taken by identity.
+      ranking: { ...ranking, records, ranked: ranking.ranked.filter((r) => named.has(r.record)) },
       counts: {
         scanned: all.length,
         inWindow: ranking.records.length,
         answered: records.length,
         excluded: digested.excluded,
+        folded: digested.folded,
         undated: undated.length,
         own: own.length,
       },

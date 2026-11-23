@@ -58,6 +58,14 @@
 // section names what it dropped in `dropped`. A string is never cut part-way, because a cut
 // argument reads as a different argument. The run's id, outcome, reason and head statement are
 // never dropped: without them the section does not say which run it is or what became of it.
+//
+// **Runs of one invocation with one result are named once** (flyingrobots/parley#79, `fold.ts`).
+// Before the bound is applied, the runs whose `inv` and whole result are equal are folded into
+// their most recent run: the others' records are not named, the representative's section says
+// `folded: {runs, records}`, and `loss.folded` counts every record the fold left out. Those
+// records are in `loss.excluded` too, so the count still accounts for every record not named, and
+// `excluded − folded` is what the budget cut.
+import { foldRuns, type RunFold } from "./fold.ts";
 import type { LoadedRecord } from "./load.ts";
 import type { AcceptedQuery, Asker, Budget, QueryWindow, View } from "./query.ts";
 import type { Outcome } from "./rank.ts";
@@ -118,6 +126,9 @@ export const RUN_SECTION_BYTES = 512;
  * - `outcome`: the window's verdict on the run (`rank.ts`), absent when no outcomes were given.
  * - `reason`: present exactly when `outcome` is `undetermined`.
  * - `head`: `not_in_window` when the window does not hold the run's head; absent when it does.
+ * - `folded`: present on a run that stands for others of one invocation with one result
+ *   (`fold.ts`): how many runs it stands for, itself included, and how many of their records the
+ *   fold left out. Never dropped.
  * - `dropped`: the fields left out to fit `RUN_SECTION_BYTES`, in the order they were dropped.
  */
 export interface RunSection {
@@ -129,6 +140,7 @@ export interface RunSection {
   readonly outcome?: Outcome;
   readonly reason?: UndeterminedReason;
   readonly head?: "not_in_window";
+  readonly folded?: RunFold;
   readonly dropped?: readonly Droppable[];
 }
 
@@ -139,7 +151,14 @@ export interface RunSection {
  */
 export interface Loss {
   readonly bound: LossBound;
+  /** Every record of the window the digest does not name, whatever left it out. */
   readonly excluded: number;
+  /**
+   * How many of `excluded` the fold left out (flyingrobots/parley#79): the records of runs folded
+   * into a representative. It depends on the window alone, never on the budget, and
+   * `excluded − folded` is what the budget cut. Zero is a count, not an absence.
+   */
+  readonly folded: number;
 }
 
 /** The `parley.lens` payload. The writer owns the envelope (§1.3), so `t`, `seq` and `run` are not here. */
@@ -170,8 +189,10 @@ export interface Digested {
   readonly digest: Digest;
   /** The records the digest names, in full and in rank order. */
   readonly records: readonly LoadedRecord[];
-  /** How many records the ranking placed beyond the bound. Zero is a count, not an absence. */
+  /** How many records of the ranking the digest does not name, the folded ones included. Zero is a count, not an absence. */
   readonly excluded: number;
+  /** How many of `excluded` the fold left out rather than the bound (`fold.ts`). */
+  readonly folded: number;
   /** The digest's line in UTF-8 bytes, its newline included, as the writer will write it. */
   readonly bytes: number;
   /**
@@ -206,11 +227,12 @@ const sectionBytes = (section: RunSection) => Buffer.byteLength(JSON.stringify(s
 
 /**
  * What a lens says about one run, read off the window's records for it (`window` may hold other
- * runs' records too; `digestFor` passes only the run's own) and the window's outcomes. The key order is fixed, `run, tool, v, argv, inv,
- * outcome, reason, head, dropped`, and the section is bounded by `RUN_SECTION_BYTES` by dropping
+ * runs' records too; `digestFor` passes only the run's own) and the window's outcomes, with the
+ * run's fold when it stands for others. The key order is fixed, `run, tool, v, argv, inv, outcome,
+ * reason, head, folded, dropped`, and the section is bounded by `RUN_SECTION_BYTES` by dropping
  * whole fields, never by cutting a string.
  */
-export function runSection(run: string, window: readonly LoadedRecord[], outcomes?: Readonly<Record<string, Outcome>>): RunSection {
+export function runSection(run: string, window: readonly LoadedRecord[], outcomes?: Readonly<Record<string, Outcome>>, fold?: RunFold): RunSection {
   const own = window.filter((r) => r.run === run);
   const head = own.find((r) => r.event === "receipt.head");
   const inputs = own.find((r) => r.event === "receipt.inputs" && nonEmpty(r.record.inv));
@@ -237,6 +259,7 @@ export function runSection(run: string, window: readonly LoadedRecord[], outcome
       ...(outcome === undefined ? {} : { outcome }),
       ...(reason === undefined ? {} : { reason }),
       ...(head === undefined ? { head: "not_in_window" as const } : {}),
+      ...(fold === undefined ? {} : { folded: { runs: fold.runs, records: fold.records } }),
       ...(dropped.length === 0 ? {} : { dropped: [...dropped] }),
     } as RunSection;
   };
@@ -277,11 +300,12 @@ export function digestBytes(digest: Digest, envelope: LineEnvelope): number {
 }
 
 /**
- * The digest naming `kept`, the head of a ranking `total` records long, with `runs`, one section
- * per run `kept` names. The one place the lens payload's shape and key order are written, so the
- * smallest digest `sufficientBytes` measures is the digest `digestFor` would write.
+ * The digest naming `kept`, the head of a ranking `total` records long of which the fold left
+ * `folded` out, with `runs`, one section per run `kept` names. The one place the lens payload's
+ * shape and key order are written, so the smallest digest `sufficientBytes` measures is the digest
+ * `digestFor` would write.
  */
-function buildDigest(query: AcceptedQuery, answers: RecordRef, kept: readonly LensEntry[], total: number, runs: readonly RunSection[]): Digest {
+function buildDigest(query: AcceptedQuery, answers: RecordRef, kept: readonly LensEntry[], total: number, runs: readonly RunSection[], folded: number): Digest {
   const excluded = total - kept.length;
   return {
     event: "lens",
@@ -292,7 +316,8 @@ function buildDigest(query: AcceptedQuery, answers: RecordRef, kept: readonly Le
     window: query.window,
     // `none` is a claim that nothing was left out, so it is only ever paired with 0; the schema
     // refuses `none` beside a non-zero count (flyingrobots/parley#46).
-    loss: { bound: excluded === 0 ? "none" : "count-only", excluded },
+    // A fold leaves records out, so a digest that folded anything is never `none`.
+    loss: { bound: excluded === 0 ? "none" : "count-only", excluded, folded },
     runs,
     records: kept,
   };
@@ -300,8 +325,9 @@ function buildDigest(query: AcceptedQuery, answers: RecordRef, kept: readonly Le
 
 /**
  * The smallest `budget.bytes` under which this query's digest, over a ranking `total` records
- * long, can be written at all: the line of a digest naming no records, with that very number as
- * its stated `bytes`. Pure.
+ * long of which the fold leaves `folded` out (`Digested.folded`; 0 when nothing folds), can be
+ * written at all: the line of a digest naming no records, with that very number as its stated
+ * `bytes`. Pure.
  *
  * The digest carries the budget it was bounded by, so the size depends on the digits of the bound
  * itself. The search starts from 1 and takes the size the line would have under the current
@@ -312,10 +338,10 @@ function buildDigest(query: AcceptedQuery, answers: RecordRef, kept: readonly Le
  * The answer is exact for a read of the same question over the same ranking, measured against the
  * same envelope: `digestFor` under it names no records and fits, and one byte less does not.
  */
-export function sufficientBytes(query: AcceptedQuery, answers: RecordRef, total: number, envelope: LineEnvelope): number {
+export function sufficientBytes(query: AcceptedQuery, answers: RecordRef, total: number, envelope: LineEnvelope, folded = 0): number {
   const size = (bytes: number) =>
     // A digest naming no records names no runs either: its `runs` is empty, as `digestFor` writes it.
-    digestBytes(buildDigest({ ...query, budget: { ...query.budget, bytes } }, answers, [], total, []), envelope);
+    digestBytes(buildDigest({ ...query, budget: { ...query.budget, bytes } }, answers, [], total, [], folded), envelope);
   let bytes = 1;
   for (let next = size(bytes); next > bytes; next = size(bytes)) bytes = next;
   return bytes;
@@ -326,7 +352,9 @@ export function sufficientBytes(query: AcceptedQuery, answers: RecordRef, total:
  *
  * Pure: it reads nothing, writes nothing, records nothing, and mutates neither its arguments nor
  * the records in them. `ranked` is the whole of the window in rank order
- * (flyingrobots/parley#49); the digest is its prefix, and `excluded` is the rest of it counted.
+ * (flyingrobots/parley#49). The runs of one invocation with one result are folded first
+ * (`fold.ts`), which needs `outcomes`; the digest is the prefix of what the fold leaves, in the
+ * same order, and `excluded` is the rest of the window counted, the folded records included.
  * `outcomes` is the ranking's verdict per run over that whole window, and each run section carries
  * its run's; without it, no section carries an outcome or a reason. Each section is read off the
  * whole window too, so a head the bound cut from the entries still identifies its run.
@@ -343,8 +371,11 @@ export function digestFor(
   envelope: LineEnvelope,
   outcomes?: Readonly<Record<string, Outcome>>,
 ): Digested {
+  // The fold depends on the window and its outcomes, never on the budget.
+  const folding = foldRuns(ranked, outcomes);
+  const named = folding.records;
   // Built once, so every candidate prefix the byte search measures is cut from the same entries.
-  const entries = ranked.map((record) => lensEntry(record));
+  const entries = named.map((record) => lensEntry(record));
   // One pass over the window groups each run's records, so a section never scans the whole
   // window for its own (RD-80h).
   const byRun = new Map<string, LoadedRecord[]>();
@@ -356,15 +387,15 @@ export function digestFor(
   const sections = new Map<string, RunSection>();
   const sectionOf = (run: string) => {
     let section = sections.get(run);
-    if (section === undefined) sections.set(run, section = runSection(run, byRun.get(run) ?? [], outcomes));
+    if (section === undefined) sections.set(run, section = runSection(run, byRun.get(run) ?? [], outcomes, folding.folds.get(run)));
     return section;
   };
   const build = (keep: number): Digest => {
     const kept = entries.slice(0, keep);
-    return buildDigest(query, answers, kept, ranked.length, [...new Set(kept.map((e) => e.run))].map(sectionOf));
+    return buildDigest(query, answers, kept, ranked.length, [...new Set(kept.map((e) => e.run))].map(sectionOf), folding.folded);
   };
 
-  let keep = Math.min(ranked.length, query.budget.records);
+  let keep = Math.min(named.length, query.budget.records);
   const bytes = query.budget.bytes;
   if (bytes !== undefined && digestBytes(build(keep), envelope) > bytes) {
     // The largest prefix whose line fits. `lo` is a length that is kept rather than one known to
@@ -384,8 +415,9 @@ export function digestFor(
   const size = digestBytes(digest, envelope);
   return {
     digest,
-    records: ranked.slice(0, keep),
+    records: named.slice(0, keep),
     excluded: ranked.length - keep,
+    folded: folding.folded,
     bytes: size,
     fits: bytes === undefined || size <= bytes,
   };

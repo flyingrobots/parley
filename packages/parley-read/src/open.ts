@@ -5,7 +5,7 @@
 // back up: a caller hands in the `(run, seq)` pairs a `parley.lens` names and gets each record in
 // full, with an outcome per id.
 //
-// Three rules, and the reasons for them:
+// Four rules, and the reasons for them:
 //
 //   1. **A drill-down is a recorded read.** It reads history, so by the reasoning of
 //      flyingrobots/parley#48 it states an asker, a view and a window, is refused without them,
@@ -20,6 +20,12 @@
 //   3. **The loader's rulings travel with the record.** Every id whose run resolved carries its
 //      bundle's replay ruling, so a record whose bundle is unavailable for replay still opens — the
 //      failed run's `error` is usually the record a reader most needs — and says so (§2.3, §5.4).
+//   4. **The deadline is a read's.** `budget.ms` is checked as `queryReceipts` checks it, from
+//      the call, after the load and after the ids are opened (flyingrobots/parley#71). A drill-down
+//      past it declines with the same `query.over_budget` error and returns no records: opening
+//      some ids and not others by the clock would make an id's outcome depend on how busy the
+//      machine was, which no caller can act on. `budget.bytes` never declines here, because the
+//      answer is not a line: an id past it is that id's `over_budget` outcome instead (flyingrobots/parley#78).
 //
 // A sidecar's contents are checked by the loader, not here: the declared `bytes` and `sha256` are
 // compared with the stored bytes before the record is restored (§5), and this module reports the
@@ -30,8 +36,8 @@ import type { RecordRef } from "./digest.ts";
 import { loadReceipts, type Bundle, type Load, type LoadedRecord, type Replay, type SidecarResolution } from "./load.ts";
 import { repoReceiptDir, stateReceiptDir } from "./locate.ts";
 import {
-  NO_RETENTION, QUERY_SCHEMA, READER, Tee, planQuery, queryRecord,
-  type AcceptedQuery, type Asker, type QueryOptions, type QueryRefusal, type QueryRequest, type QueryWindow, type View,
+  Deadline, MONOTONIC, NO_RETENTION, QUERY_SCHEMA, READER, Tee, declineOnRun, planQuery, queryRecord,
+  type AcceptedQuery, type Asker, type BudgetDecline, type QueryOptions, type QueryRefusal, type QueryRequest, type QueryWindow, type View,
 } from "./query.ts";
 
 export type OpenRefusalCode = QueryRefusal["code"] | "open.records_missing" | "open.records_invalid";
@@ -52,8 +58,8 @@ export interface OpenRefused {
 
 /**
  * What a caller asks for. The record bound is the ids themselves (`records: n` for `n` ids asked);
- * the one budget a caller may state is `bytes`, the most the opened records may occupy together
- * (flyingrobots/parley#78).
+ * a caller may state `bytes`, the most the opened records may occupy together
+ * (flyingrobots/parley#78), and `ms`, the read's deadline (flyingrobots/parley#71).
  */
 export interface OpenRequest {
   readonly asker?: QueryRequest["asker"];
@@ -62,8 +68,8 @@ export interface OpenRequest {
   readonly note?: string;
   /** The records to open, by `(run, seq)`, as a `parley.lens` names them. */
   readonly records?: readonly { readonly run?: unknown; readonly seq?: unknown }[];
-  /** An optional bound on the size of what opens: whole records up to it, `over_budget` past it. */
-  readonly budget?: { readonly bytes?: number };
+  /** Optional bounds: `bytes` on the size of what opens (whole records up to it, `over_budget` past it), `ms` on the whole drill-down. */
+  readonly budget?: { readonly bytes?: number; readonly ms?: number };
 }
 
 export type OpenOutcomeKind = "opened" | "over_budget" | "sidecar_unavailable" | "run_not_found" | "seq_not_found";
@@ -103,6 +109,7 @@ export interface Opened {
 
 export interface OpenAnswer {
   readonly refused: false;
+  readonly declined: false;
   /** The drill-down's own run, never a run being read. */
   readonly run: string;
   readonly receipt: string;
@@ -112,8 +119,8 @@ export interface OpenAnswer {
   readonly view: View;
   readonly window: QueryWindow;
   readonly note?: string;
-  /** The budget applied and recorded: `{records: n}` for `n` ids asked, with `bytes` when the caller bounded them. */
-  readonly budget: { readonly records: number; readonly bytes?: number };
+  /** The budget applied and recorded: `{records: n}` for `n` ids asked, with `bytes` and `ms` when the caller stated them. */
+  readonly budget: { readonly records: number; readonly bytes?: number; readonly ms?: number };
   /** The ids asked, in the order asked, exactly as recorded. */
   readonly records: readonly RecordRef[];
   /** One outcome per id asked, in the same order. */
@@ -131,7 +138,26 @@ export interface OpenAnswer {
   readonly status: number;
 }
 
-export type OpenOutcome = OpenAnswer | OpenRefused;
+/** A drill-down that ran, was recorded, and passed its deadline. It opened nothing. */
+export interface OpenDeclined {
+  readonly refused: false;
+  readonly declined: true;
+  readonly run: string;
+  readonly receipt: string;
+  readonly query: RecordRef;
+  readonly asker: Asker;
+  readonly view: View;
+  readonly window: QueryWindow;
+  readonly note?: string;
+  readonly budget: { readonly records: number; readonly bytes?: number; readonly ms?: number };
+  readonly records: readonly RecordRef[];
+  readonly decline: BudgetDecline;
+  readonly load: Load;
+  readonly lines: readonly Record<string, unknown>[];
+  readonly status: number;
+}
+
+export type OpenOutcome = OpenAnswer | OpenDeclined | OpenRefused;
 
 /** The same options a read takes: the loader's, plus the reading program's identity and its sinks. */
 export type OpenOptions = QueryOptions;
@@ -153,12 +179,13 @@ export function planOpen(request: OpenRequest): OpenPlan {
   // bound is the caller's, and is validated by the query's own rule for a budget.
   const n = Array.isArray(ids) && ids.length > 0 ? ids.length : 1;
   const bytes = request.budget?.bytes;
+  const ms = request.budget?.ms;
   const plan = planQuery({
     ...(request.asker === undefined ? {} : { asker: request.asker }),
     ...(request.view === undefined ? {} : { view: request.view }),
     ...(request.window === undefined ? {} : { window: request.window }),
     ...(request.note === undefined ? {} : { note: request.note }),
-    budget: { records: n, ...(bytes === undefined ? {} : { bytes }) },
+    budget: { records: n, ...(bytes === undefined ? {} : { bytes }), ...(ms === undefined ? {} : { ms }) },
   });
   const refusals: OpenRefusal[] = plan.refused ? [...plan.refusals] : [];
   if (!Array.isArray(ids) || ids.length === 0) {
@@ -275,10 +302,14 @@ export function openOne(id: RecordRef, bundles: ReadonlyMap<string, Bundle>): Op
  * are never in its answer.
  */
 export async function openRecords(request: OpenRequest, opts: OpenOptions = {}): Promise<OpenOutcome> {
+  const clock = opts.clock ?? MONOTONIC;
+  const started = clock();
   const cwd = resolve(opts.cwd ?? process.cwd());
   const plan = planOpen({ ...request, asker: { ...request.asker, cwd: request.asker?.cwd ?? cwd } });
   if (plan.refused) return plan;
   const { query, records: ids } = plan;
+  const deadline = new Deadline(query.budget.ms, clock, started);
+  const budget = { records: ids.length, ...(query.budget.bytes === undefined ? {} : { bytes: query.budget.bytes }), ...(query.budget.ms === undefined ? {} : { ms: query.budget.ms }) };
 
   const env = opts.env ?? process.env;
   const stdout = new Tee(opts.stdout);
@@ -304,7 +335,7 @@ export async function openRecords(request: OpenRequest, opts: OpenOptions = {}):
     retention: { count: NO_RETENTION },
   });
 
-  let answer: Omit<OpenAnswer, "status" | "lines"> | undefined;
+  let answer: Omit<OpenAnswer, "status" | "lines"> | Omit<OpenDeclined, "status" | "lines"> | undefined;
   const status = await main(spec, [spec.name, "open"], (run) => {
     const seq = run.result({ ...queryRecord(query), records: ids }, QUERY_SCHEMA);
     run.step(
@@ -315,8 +346,25 @@ export async function openRecords(request: OpenRequest, opts: OpenOptions = {}):
 
     const load = loadReceipts({ cwd, env, ...(opts.home === undefined ? {} : { home: opts.home }), ...(opts.sidecars === undefined ? {} : { sidecars: opts.sidecars }), ...(opts.validate === undefined ? {} : { validate: opts.validate }), ...(opts.history === undefined ? {} : { history: opts.history }) });
     // A read does not answer itself: its own bundle is not among those an id can resolve to.
+    const recorded = {
+      refused: false as const, declined: true as const,
+      run: run.id, receipt: run.receiptPath, query: { run: run.id, seq },
+      asker: query.asker, view: query.view, window: query.window,
+      ...(query.note === undefined ? {} : { note: query.note }),
+      budget, records: ids, load,
+    };
+    const afterLoad = deadline.check();
+    if (afterLoad.passed) {
+      answer = { ...recorded, decline: declineOnRun(run, budget, "load", false, { elapsed: afterLoad.elapsed }) };
+      return;
+    }
     const bundles = new Map(load.bundles.filter((b) => b.run !== run.id).map((b) => [b.run, b]));
     const opened = applyBudget(ids.map((id) => openOne(id, bundles)), query.budget.bytes);
+    const afterOpen = deadline.check();
+    if (afterOpen.passed) {
+      answer = { ...recorded, decline: declineOnRun(run, budget, "open", true, { elapsed: afterOpen.elapsed }) };
+      return;
+    }
     const count = (k: OpenOutcomeKind) => opened.filter((o) => o.outcome === k).length;
     const counts = {
       asked: ids.length,
@@ -339,6 +387,7 @@ export async function openRecords(request: OpenRequest, opts: OpenOptions = {}):
 
     answer = {
       refused: false,
+      declined: false,
       run: run.id,
       receipt: run.receiptPath,
       query: { run: run.id, seq },
@@ -346,7 +395,7 @@ export async function openRecords(request: OpenRequest, opts: OpenOptions = {}):
       view: query.view,
       window: query.window,
       ...(query.note === undefined ? {} : { note: query.note }),
-      budget: query.budget.bytes === undefined ? { records: ids.length } : { records: ids.length, bytes: query.budget.bytes },
+      budget,
       records: ids,
       opened,
       counts,
@@ -367,7 +416,12 @@ export async function openRecords(request: OpenRequest, opts: OpenOptions = {}):
       records: ids,
       view: query.view,
       window: query.window,
-      ...(query.budget.bytes === undefined ? {} : { budget: { bytes: query.budget.bytes } }),
+      ...(query.budget.bytes === undefined && query.budget.ms === undefined ? {} : {
+        budget: {
+          ...(query.budget.bytes === undefined ? {} : { bytes: query.budget.bytes }),
+          ...(query.budget.ms === undefined ? {} : { ms: query.budget.ms }),
+        },
+      }),
       asker: { tool: query.asker.tool, ...(query.asker.task === undefined ? {} : { task: query.asker.task }) },
     }),
   });

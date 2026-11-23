@@ -15,6 +15,7 @@ import {
   validator,
   type LoadedRecord,
   type OpenAnswer,
+  type OpenDeclined,
   type OpenOutcome,
   type Opened,
   type QueryAnswer,
@@ -92,11 +93,13 @@ function withSidecar(dir: string, run = RUN_A) {
 
 function opened(outcome: OpenOutcome): OpenAnswer {
   if (outcome.refused) throw new Error(`refused: ${outcome.refusals.map((r) => r.code).join(", ")}`);
+  if (outcome.declined) throw new Error(`declined: ${outcome.decline.problem}`);
   return outcome;
 }
 
 function answered(outcome: QueryOutcome): QueryAnswer {
   if (outcome.refused) throw new Error(`refused: ${outcome.refusals.map((r) => r.code).join(", ")}`);
+  if (outcome.declined) throw new Error(`declined: ${outcome.decline.problem}`);
   return outcome;
 }
 
@@ -542,5 +545,46 @@ describe("RD-60 a byte budget on the drill-down: whole records up to the bound, 
     }
     expect(readdirSync(repoReceipts(dir)).sort()).toEqual(before);
     expect(existsSync(join(env.XDG_STATE_HOME!, "parley"))).toBe(false);
+  });
+});
+
+// flyingrobots/parley#71: the drill-down applies the read's deadline rule. Its clock is called once
+// at the start, once after the load and once after the ids are opened, and a scripted clock
+// answers those calls in order, so nothing here sleeps.
+function scripted(...values: number[]): () => number {
+  let i = 0;
+  return () => values[Math.min(i++, values.length - 1)]!;
+}
+
+describe("RD-74 the drill-down applies the same deadline", () => {
+  test("a drill-down past its deadline declines and opens nothing", async () => {
+    const { dir, env } = scratch();
+    fiveSteps(repoReceipts(dir));
+    const ids = [{ run: RUN_A, seq: 2 }, { run: RUN_A, seq: 3 }];
+    const request = { asker: ASKER, view: "everything", window: WIDE, records: ids, budget: { ms: 40 } };
+
+    const late = await openRecords(request, { cwd: dir, env, clock: scripted(0, 41) });
+    if (late.refused || !late.declined) throw new Error("the drill-down should have declined");
+    const out: OpenDeclined = late;
+    expect(out.status).toBe(2);
+    expect(out.decline.code).toBe("query.over_budget");
+    expect(out.decline.bound).toBe("ms");
+    expect(out.decline.phase).toBe("load");
+    expect(out.decline.measured).toEqual({ ms: 41 });
+    expect(out.decline.atLeast).toEqual({ ms: 41 });
+    expect("opened" in out).toBe(false);
+    const own = loadReceipts({ cwd: dir, env }).bundles.find((b) => b.run === out.run)!;
+    expect(own.status).toBe(2);
+    const query = own.records.find((r) => r.event === "query")!;
+    expect(query.validation.state).toBe("validated");
+    expect((query.record as Record<string, unknown>).budget).toEqual({ records: 2, ms: 40 });
+    const error = own.records.find((r) => r.event === "error")!;
+    expect(error.validation.state).toBe("validated");
+    expect((error.record as Record<string, unknown>).code).toBe("query.over_budget");
+
+    const onTime = opened(await openRecords(request, { cwd: dir, env, clock: scripted(0, 30, 40) }));
+    expect(onTime.status).toBe(0);
+    expect(kinds(onTime)).toEqual(["opened", "opened"]);
+    expect(onTime.budget).toEqual({ records: 2, ms: 40 });
   });
 });

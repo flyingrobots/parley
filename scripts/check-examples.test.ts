@@ -19,9 +19,9 @@ describe("check-examples", () => {
     const vs = check([F("readme-shape.md")], "schemas");
     const bad = only(vs, "example.invalid") as Extract<Verdict, { event: "example.invalid" }>[];
     expect(bad).toHaveLength(1);
-    expect(bad[0].reason).toBe("invalid");
-    expect(bad[0].detail).toContain("paths");
-    expect(bad[0].line).toBe(4);
+    expect(bad[0]?.reason).toBe("invalid");
+    expect(bad[0]?.detail).toContain("paths");
+    expect(bad[0]?.line).toBe(4);
     expect(summary(vs).passed).toBe(false);
   });
 
@@ -30,7 +30,7 @@ describe("check-examples", () => {
     expect(only(vs, "example.ok")).toHaveLength(1);
     const sk = only(vs, "example.skipped") as Extract<Verdict, { event: "example.skipped" }>[];
     expect(sk).toHaveLength(1);
-    expect(sk[0].reason).toBe("tool_owned");
+    expect(sk[0]?.reason).toBe("tool_owned");
     expect(summary(vs).passed).toBe(true);
   });
 
@@ -38,7 +38,7 @@ describe("check-examples", () => {
     const vs = check([F("unlabeled-ellipsis.md")], "schemas");
     const bad = only(vs, "example.invalid") as Extract<Verdict, { event: "example.invalid" }>[];
     expect(bad).toHaveLength(1);
-    expect(bad[0].reason).toBe("parse");
+    expect(bad[0]?.reason).toBe("parse");
   });
 
   test("a labeled abridged example is skipped, not failed", () => {
@@ -51,21 +51,21 @@ describe("check-examples", () => {
     const vs = check([F("illustrative.md")], "schemas");
     expect(only(vs, "example.invalid")).toEqual([]);
     const sk = only(vs, "example.skipped") as Extract<Verdict, { event: "example.skipped" }>[];
-    expect(sk[0].reason).toBe("illustrative");
+    expect(sk[0]?.reason).toBe("illustrative");
   });
 
   test("a schema version that does not exist is a failure", () => {
     const vs = check([F("unknown-version.md")], "schemas");
     const bad = only(vs, "example.invalid") as Extract<Verdict, { event: "example.invalid" }>[];
     expect(bad).toHaveLength(1);
-    expect(bad[0].reason).toBe("unknown_schema");
+    expect(bad[0]?.reason).toBe("unknown_schema");
   });
 
   test("an unlabeled example with no _schema is a failure", () => {
     const vs = check([F("no-schema.md")], "schemas");
     const bad = only(vs, "example.invalid") as Extract<Verdict, { event: "example.invalid" }>[];
     expect(bad).toHaveLength(1);
-    expect(bad[0].reason).toBe("no_schema");
+    expect(bad[0]?.reason).toBe("no_schema");
   });
 
   test("every output line validates against the checker's own schema", () => {

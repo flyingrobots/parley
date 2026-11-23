@@ -32,6 +32,12 @@ rather than moving its version.
   line could not tell a drill-down from a read. The shipped copies in both packages were
   re-synced, which moves no version.
 
+- `parley.query` 1.0.0 (draft), the **description** of `records` and nothing else: it now says
+  `budget.bytes`, when stated on a drill-down, bounds the records opened — whole records in the
+  order asked while their summed size stays within it, and an `over_budget` outcome with no
+  contents for each id past it (flyingrobots/parley#78). `bytes` was already an optional positive
+  integer in the schema, so no constraint moved. Both packages were re-synced; no version moved.
+
 ### Decided
 
 - **How a read states its observer and its purpose** (flyingrobots/parley#46). §9 asks a query for

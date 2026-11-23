@@ -50,7 +50,11 @@ export interface OpenRefused {
   readonly refusals: readonly OpenRefusal[];
 }
 
-/** What a caller asks for. A budget is not taken: the ids are the bound, and the record says so. */
+/**
+ * What a caller asks for. The record bound is the ids themselves (`records: n` for `n` ids asked);
+ * the one budget a caller may state is `bytes`, the most the opened records may occupy together
+ * (flyingrobots/parley#78).
+ */
 export interface OpenRequest {
   readonly asker?: QueryRequest["asker"];
   readonly view?: string;
@@ -58,9 +62,11 @@ export interface OpenRequest {
   readonly note?: string;
   /** The records to open, by `(run, seq)`, as a `parley.lens` names them. */
   readonly records?: readonly { readonly run?: unknown; readonly seq?: unknown }[];
+  /** An optional bound on the size of what opens: whole records up to it, `over_budget` past it. */
+  readonly budget?: { readonly bytes?: number };
 }
 
-export type OpenOutcomeKind = "opened" | "sidecar_unavailable" | "run_not_found" | "seq_not_found";
+export type OpenOutcomeKind = "opened" | "over_budget" | "sidecar_unavailable" | "run_not_found" | "seq_not_found";
 
 /** What the loader established about the bundle an id's run resolved to. */
 export interface BundleRuling {
@@ -83,6 +89,11 @@ export interface Opened {
   readonly held?: LoadedRecord;
   /** The sidecar involved, when the id is one or is stored in one. */
   readonly sidecar?: SidecarResolution;
+  /**
+   * For `over_budget`: the size the record would have occupied, in bytes, as `recordBytes` defines
+   * it. No record, and no part of one, is returned beside it.
+   */
+  readonly bytes?: number;
   /** The bundle's rulings, whenever the id's run resolved. */
   readonly bundle?: BundleRuling;
   /** For any outcome but `opened`: what went wrong, and what a caller can do about it. */
@@ -101,6 +112,8 @@ export interface OpenAnswer {
   readonly view: View;
   readonly window: QueryWindow;
   readonly note?: string;
+  /** The budget applied and recorded: `{records: n}` for `n` ids asked, with `bytes` when the caller bounded them. */
+  readonly budget: { readonly records: number; readonly bytes?: number };
   /** The ids asked, in the order asked, exactly as recorded. */
   readonly records: readonly RecordRef[];
   /** One outcome per id asked, in the same order. */
@@ -108,6 +121,7 @@ export interface OpenAnswer {
   readonly counts: {
     readonly asked: number;
     readonly opened: number;
+    readonly overBudget: number;
     readonly sidecarUnavailable: number;
     readonly runNotFound: number;
     readonly seqNotFound: number;
@@ -135,14 +149,16 @@ export type OpenPlan = { readonly refused: false; readonly query: AcceptedQuery;
  */
 export function planOpen(request: OpenRequest): OpenPlan {
   const ids = request.records;
-  // The budget is the ids: one record per id asked, stated rather than defaulted.
+  // The record bound is the ids: one record per id asked, stated rather than defaulted. A byte
+  // bound is the caller's, and is validated by the query's own rule for a budget.
   const n = Array.isArray(ids) && ids.length > 0 ? ids.length : 1;
+  const bytes = request.budget?.bytes;
   const plan = planQuery({
     ...(request.asker === undefined ? {} : { asker: request.asker }),
     ...(request.view === undefined ? {} : { view: request.view }),
     ...(request.window === undefined ? {} : { window: request.window }),
     ...(request.note === undefined ? {} : { note: request.note }),
-    budget: { records: n },
+    budget: { records: n, ...(bytes === undefined ? {} : { bytes }) },
   });
   const refusals: OpenRefusal[] = plan.refused ? [...plan.refusals] : [];
   if (!Array.isArray(ids) || ids.length === 0) {
@@ -162,6 +178,41 @@ export function planOpen(request: OpenRequest): OpenPlan {
   }
   if (refusals.length > 0 || plan.refused || !Array.isArray(ids)) return { refused: true, refusals };
   return { refused: false, query: plan.query, records: ids.map((r) => ({ run: r.run as string, seq: r.seq as number })) };
+}
+
+/** UTF-8 bytes of a record's JSON as the drill-down returns it, envelope fields and all. */
+export function recordBytes(r: LoadedRecord | undefined): number {
+  return r === undefined ? 0 : Buffer.byteLength(JSON.stringify(r), "utf8");
+}
+
+/**
+ * What an outcome occupies against a byte bound: the `record` and the `held` record it carries,
+ * each by `recordBytes`. A record stored in a sidecar is sized by its contents, which the loader
+ * has already restored into it; the pointer opened by its own `seq` carries both. An outcome that
+ * returns no contents (`sidecar_unavailable`, the not-found pair) costs nothing.
+ */
+export function openedBytes(o: Opened): number {
+  return o.outcome === "opened" ? recordBytes(o.record) + recordBytes(o.held) : 0;
+}
+
+/**
+ * Apply a byte bound to outcomes in the order asked. Each id is judged against what remains, so a
+ * small record after an over-budget one may still fit and nothing is skipped silently; the bound is
+ * inclusive. An over-budget id keeps its bundle's ruling, names its size and holds no contents.
+ */
+export function applyBudget(outcomes: readonly Opened[], bytes: number | undefined): Opened[] {
+  if (bytes === undefined) return [...outcomes];
+  let used = 0;
+  return outcomes.map((o) => {
+    const cost = openedBytes(o);
+    if (cost === 0 || used + cost <= bytes) { used += cost; return o; }
+    return {
+      id: o.id, outcome: "over_budget" as const, bytes: cost,
+      ...(o.bundle === undefined ? {} : { bundle: o.bundle }),
+      problem: `the record occupies ${cost} bytes and ${bytes - used} of the ${bytes}-byte budget remain, so it is not returned: a record is whole or absent`,
+      remedy: "ask for it again alone or under a larger budget.bytes; an id past the bound is not lost, and later ids that fit were still opened",
+    };
+  });
 }
 
 function ruling(bundle: Bundle): BundleRuling {
@@ -265,11 +316,12 @@ export async function openRecords(request: OpenRequest, opts: OpenOptions = {}):
     const load = loadReceipts({ cwd, env, ...(opts.home === undefined ? {} : { home: opts.home }), ...(opts.sidecars === undefined ? {} : { sidecars: opts.sidecars }), ...(opts.validate === undefined ? {} : { validate: opts.validate }), ...(opts.history === undefined ? {} : { history: opts.history }) });
     // A read does not answer itself: its own bundle is not among those an id can resolve to.
     const bundles = new Map(load.bundles.filter((b) => b.run !== run.id).map((b) => [b.run, b]));
-    const opened = ids.map((id) => openOne(id, bundles));
+    const opened = applyBudget(ids.map((id) => openOne(id, bundles)), query.budget.bytes);
     const count = (k: OpenOutcomeKind) => opened.filter((o) => o.outcome === k).length;
     const counts = {
       asked: ids.length,
       opened: count("opened"),
+      overBudget: count("over_budget"),
       sidecarUnavailable: count("sidecar_unavailable"),
       runNotFound: count("run_not_found"),
       seqNotFound: count("seq_not_found"),
@@ -279,7 +331,7 @@ export async function openRecords(request: OpenRequest, opts: OpenOptions = {}):
       `opened ${counts.opened} of ${counts.asked} record(s)`,
       "an id that does not resolve, or whose sidecar cannot be established, is that id's outcome rather than a failure of the read: one broken id must not lose the others",
       {
-        asked: counts.asked, opened: counts.opened, sidecar_unavailable: counts.sidecarUnavailable,
+        asked: counts.asked, opened: counts.opened, over_budget: counts.overBudget, sidecar_unavailable: counts.sidecarUnavailable,
         run_not_found: counts.runNotFound, seq_not_found: counts.seqNotFound,
         replay_unavailable: opened.filter((o) => o.bundle?.replay.unavailable === true).length,
       },
@@ -294,6 +346,7 @@ export async function openRecords(request: OpenRequest, opts: OpenOptions = {}):
       view: query.view,
       window: query.window,
       ...(query.note === undefined ? {} : { note: query.note }),
+      budget: query.budget.bytes === undefined ? { records: ids.length } : { records: ids.length, bytes: query.budget.bytes },
       records: ids,
       opened,
       counts,
@@ -314,6 +367,7 @@ export async function openRecords(request: OpenRequest, opts: OpenOptions = {}):
       records: ids,
       view: query.view,
       window: query.window,
+      ...(query.budget.bytes === undefined ? {} : { budget: { bytes: query.budget.bytes } }),
       asker: { tool: query.asker.tool, ...(query.asker.task === undefined ? {} : { task: query.asker.task }) },
     }),
   });

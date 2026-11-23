@@ -10,6 +10,15 @@ its manifest so it cannot be published by accident.
 
 ### Added
 
+- **A byte budget for the drill-down** (flyingrobots/parley#78): `openRecords` accepts
+  `budget: { bytes }`. Records open whole, in the order asked, while their summed size (UTF-8 bytes
+  of each record's JSON as returned, sidecar contents included) stays within the bound; every id
+  past it is a new `over_budget` outcome carrying `bytes` and no contents, never a truncated
+  record. Each id is judged against what remains, so a small record after an over-budget one may
+  still open; not-found and `sidecar_unavailable` outcomes cost nothing. The recorded
+  `parley.query` and the answer's `budget` carry the bound applied; `counts.overBudget` is new.
+  `recordBytes`, `openedBytes` and `applyBudget` are exported. A malformed bound is refused
+  `query.budget_invalid`.
 - **The drill-down**, `openRecords(request, opts)` (flyingrobots/parley#51): records by the
   `(run, seq)` pairs a `parley.lens` names, each in full, in the order asked, with exactly one
   outcome per id — `opened`, `sidecar_unavailable`, `run_not_found` or `seq_not_found` — and never

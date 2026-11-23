@@ -117,8 +117,9 @@ What got in the way. Each of these is filed:
 - **Repeated runs crowd out everything else.** A test suite repeats the same invocations, and the
   digest named near-identical runs instead of distinct events
   ([flyingrobots/parley#79](https://github.com/flyingrobots/parley/issues/79)).
-- **The drill-down has no byte bound.** Eight footprint results, each embedding a Markdown report,
-  overflowed what the reader's harness would show inline
+- **The drill-down had no byte bound.** Eight footprint results, each embedding a Markdown report,
+  overflowed what the reader's harness would show inline. It now takes `budget.bytes`, and an id
+  past the bound comes back `over_budget` with its size
   ([flyingrobots/parley#78](https://github.com/flyingrobots/parley/issues/78)).
 - **Reading costs the history it reads.** The reader's 14 reads each left a receipt in the same
   directory. The writer's retention counts every receipt there, so footprint's next run would

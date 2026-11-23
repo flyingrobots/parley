@@ -198,7 +198,7 @@ describe("parley-emit-py: the bounded checker against ajv", () => {
     return JSON.parse(p.stdout) as boolean[];
   };
 
-  test("PY-17a the verdicts agree on samples of every shipped draft and on their mutations", () => {
+  test("PY-17a the verdicts agree on samples of eleven drafts and on every single-field mutation of them", () => {
     const samples: Record<string, unknown>[] = [
       { event: "warning", t: 1, seq: 3, run: "r", code: "a.b", problem: "p", _schema: { id: "parley.warning", version: "1.0.0" } },
       { event: "error", t: 1, seq: 4, run: "r", code: "contrast.unsatisfiable", problem: "p", measured: 5.3, limit: 7, remedy: "x", _schema: { id: "parley.error", version: "2.0.0" } },
@@ -226,7 +226,7 @@ describe("parley-emit-py: the bounded checker against ajv", () => {
     const want = cases.map((c) => Boolean(ajv.validate(SCHEMAS.find((s) => s.id === c.id && s.version === c.version)!.schema, c.value)));
     const disagreements = cases.map((c, i) => ({ c, py: got[i], ajv: want[i] })).filter((x) => x.py !== x.ajv);
     expect(disagreements).toEqual([]);
-    expect(cases.length).toBeGreaterThan(500);
+    expect(cases.length).toBeGreaterThan(700);
   }, SLOW);
 });
 

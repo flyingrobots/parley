@@ -1,0 +1,278 @@
+# parley_emit.py
+
+A writer for the [Parley output protocol](../../spec/parley-v0.2.md) in one Python file. A tool
+conforms by defining itself and running its handler under `main`; the writer owns everything the
+protocol asks of a program that is not the program's own result: the bootstrap line, the receipt
+and where it goes, the single sequence across streams, `inv`, redaction, sidecars, hygiene,
+retention, discovery, the `--human` renderer, the top-level handler and the exit status.
+
+It is the second conforming writer, after the TypeScript
+[`@flyingrobots/parley-emit`](../parley-emit/README.md), and it is shaped like it on purpose:
+`define_tool`, `main` and `Run` mirror `defineTool`, `main` and `Run`. Where the two differ, the
+[last section](#how-it-differs-from-the-typescript-writer) says so.
+
+Spec version `0.2.0`. The file's own version is `__version__` and moves with this code; each
+message schema moves on its own (spec §4.4). Standard library only. Python 3.9 or later; the gate
+runs the suite on 3.9. The living reference is
+[docs/topics/parley-emit-py](../../docs/topics/parley-emit-py/README.md); its
+[test plan](../../docs/topics/parley-emit-py/test-plan.md) is the contract ledger.
+
+## Vendor it
+
+There is no install. Copy the one file next to your tool and pin the copy by its digest:
+
+```bash
+cp packages/parley-emit-py/parley_emit.py path/to/your-tool/
+python3 path/to/your-tool/parley_emit.py --vendor-info
+```
+
+`--vendor-info` prints one JSON line (schema: [`vendor-info.schema.json`](vendor-info.schema.json),
+`parley.tooling.vendor_info` 1.0.0) whose `sha256` is the SHA-256 of the file's bytes, whose
+`schemas.commit` is the commit the embedded schemas were copied from, and whose `verify` is a
+`shasum -c` command that checks a copy against the digest. Record the digest beside the copy;
+re-run it after an upgrade, and in your own tests if you want a changed copy to fail them. Add
+`--human` for one line of prose. The file carries no other command-line surface.
+
+The seventeen draft schemas are embedded in the file, byte for byte, pinned by commit and digest
+(spec §4.5: a draft's version string does not identify exact bytes). `SCHEMA_SOURCE` holds the
+pins; `schema_text_digests()` recomputes them from the embedded text, so a copy can check itself.
+
+## The smallest tool
+
+`examples/count.py`, abridged:
+
+```python
+import parley_emit as pe
+
+tool = pe.define_tool(
+    name="count", version="0.1.0",
+    commands={"files": {
+        "intent": "Count the regular files directly under the working directory",
+        "effects": {"reads": ["<cwd>/*"], "writes": [], "network": False, "idempotent": True},
+        "secrets": [],
+        "emits": [{"id": "count.result", "version": "1.0.0", "schema": COUNT}],
+    }},
+    retention={"count": 50},
+    human=lambda line: f"{line['files']} file(s)" if line.get("event") == "result" else None,
+)
+
+def files(run, args):
+    if args:
+        run.error("usage.unknown_argument", f"files takes no arguments, and was given {len(args)}",
+                  remedy="run count files, or count files --help to see the command")
+        return
+    names = sorted(n for n in os.listdir(run.cwd) if os.path.isfile(os.path.join(run.cwd, n)))
+    run.step(f"counted {len(names)} regular file(s)", "only regular files count", {"names": names})
+    run.result({"event": "result", "files": len(names)}, ("count.result", "1.0.0"))
+
+sys.exit(pe.main(tool, ["count", *sys.argv[1:]], files))
+```
+
+Captured from `python3 examples/count.py files` on Python 3.9.6, in a directory holding exactly
+two regular files, with the streams redirected to files outside it and `XDG_STATE_HOME` set, on
+2026-11-23. stdout, three lines:
+
+```jsonl
+{"event":"run","t":1795397578129,"seq":0,"run":"01M830HVCGFWQPW9PME4HKH6HA","tool":"count","v":"0.1.0","inv":"638c446f866624d00aed41b516d92549f87b0197871ae5db312b7edaa8051a16","paths":{"receipt":"/private/tmp/parley-emit-py-readme.eSFw/work/.parley/receipts/01M830HVCGFWQPW9PME4HKH6HA.jsonl"},"_schema":{"id":"parley.run.bootstrap","version":"1.1.1"}}
+{"event":"result","t":1795397578130,"seq":3,"run":"01M830HVCGFWQPW9PME4HKH6HA","files":2,"_schema":{"id":"count.result","version":"1.0.0"}}
+{"event":"end","t":1795397578130,"seq":4,"run":"01M830HVCGFWQPW9PME4HKH6HA","status":0,"receipt":"/private/tmp/parley-emit-py-readme.eSFw/work/.parley/receipts/01M830HVCGFWQPW9PME4HKH6HA.jsonl","redacted":false,"_schema":{"id":"parley.end","version":"1.0.0"}}
+```
+
+The receipt the bootstrap line names:
+
+```jsonl
+{"event":"receipt.head","t":1795397578129,"seq":1,"run":"01M830HVCGFWQPW9PME4HKH6HA","tool":"count","v":"0.1.0","inv":"638c446f866624d00aed41b516d92549f87b0197871ae5db312b7edaa8051a16","argv":["count","files"],"resolved":{"command":"files","args":[]},"inputs":[],"effects":{"reads":["<cwd>/*"],"writes":[],"network":false,"idempotent":true,"bookkeeping":[{"op":"create","scope":"/private/tmp/parley-emit-py-readme.eSFw/work/.parley/receipts/"},{"op":"create","scope":"/private/tmp/parley-emit-py-readme.eSFw/work/.parley/.gitignore"},{"op":"delete","scope":"/private/tmp/parley-emit-py-readme.eSFw/work/.parley/receipts/"},{"op":"create","scope":"/tmp/parley-emit-py-readme.eSFw/state/parley/d1219762df8e6057/receipts/"},{"op":"delete","scope":"/tmp/parley-emit-py-readme.eSFw/state/parley/d1219762df8e6057/receipts/"}]},"_schema":{"id":"parley.receipt.head","version":"2.0.0"}}
+{"event":"receipt.step","t":1795397578130,"seq":2,"run":"01M830HVCGFWQPW9PME4HKH6HA","decision":"counted 2 regular file(s)","because":"directories and special files are not files; only regular files count","detail":{"names":["a.txt","b.txt"]},"_schema":{"id":"parley.receipt.step","version":"1.0.0"}}
+{"event":"result","t":1795397578130,"seq":3,"run":"01M830HVCGFWQPW9PME4HKH6HA","files":2,"_schema":{"id":"count.result","version":"1.0.0"}}
+{"event":"end","t":1795397578130,"seq":4,"run":"01M830HVCGFWQPW9PME4HKH6HA","status":0,"receipt":"/private/tmp/parley-emit-py-readme.eSFw/work/.parley/receipts/01M830HVCGFWQPW9PME4HKH6HA.jsonl","redacted":false,"_schema":{"id":"parley.end","version":"1.0.0"}}
+```
+
+stderr was empty and the exit status was 0. The repository doctor reported the run conforming
+(`bun run doctor --stdout ... --stderr ... --receipt ...`: `CONFORMS 0 violation(s)`). The `inv`
+is the one the TypeScript writer's own README shows for its `count files`: the same question,
+asked of two writers, has one identity.
+
+From the same directory, `count files --frobnicate` exited 2 with one line on stderr:
+
+```jsonl
+{"event":"error","t":1795397578376,"seq":2,"run":"01M830HVM776SSZJ0K8G9FP0AC","code":"usage.unknown_argument","problem":"files takes no arguments, and was given 1","remedy":"run count files, or count files --help to see the command","detail":{"arguments":["--frobnicate"]},"_schema":{"id":"parley.error","version":"2.0.0"}}
+```
+
+and `count files --human` printed `2 file(s)` and nothing else, exit 0.
+
+## The surface
+
+| Name | Job |
+| --- | --- |
+| `define_tool(name=, version=, commands=, retention=, sources=None, human=None)` | Checks the declaration: a non-empty name and version, at least one command, an intent and the four effects per command, a SemVer version on every emitted and error type, a positive retention count. `commands` maps a name to `{intent, effects, secrets?, emits: [{id, version, schema?}], errors?}` |
+| `main(tool, argv, handler, *, cwd, env, home, stdout, stderr, session, now, inputs, resolved)` | Runs one invocation and returns the exit status. `argv` is `[tool.name, *sys.argv[1:]]`; `handler(run, args)` is called with the arguments that are neither the command name nor a writer flag. Nothing raised inside escapes as a traceback |
+| `Run` | `result(record, schema, receipt_extra=None)`, `page(cursor, has_more, record=None, receipt_extra=None)`, `step(decision, because, detail=...)`, `warning(code, problem, **fields)`, `error(code, problem, receipt_extra=None, **fields)`, `input(path, data)`, `finalise_inputs()`, `end(status=None)`; `id`, `cwd`, `receipt_path`, `receipt_dir`, `dry_run`, `ended`, `status`, `sink_failed`. A schema is `("id", "version")` or `{"id": ..., "version": ...}`; diagnostic fields are `remedy`, `remedy_target`, `measured`, `limit`, `retryable` and `detail` |
+| `check_record(value, schema)`, `validate_line(line, extra=None)`, `schema_subset_gap(schema)` | The bounded JSON Schema checker (below) |
+| `SCHEMAS`, `SCHEMA_SOURCE`, `schema_for(pair)`, `schema_text_digests()` | The embedded drafts and their pins |
+| `compute_inv`, `canonical`, `digest_tree`, `digest_input`, `sha256` | The `inv` derivation and its parts |
+| `classify_secrets`, `collect_secret_values`, `redact_argv`, `scrub`, `REDACTED` | Redaction |
+| `repo_root`, `state_base`, `state_receipt_dir`, `bookkeeping_for` | Receipt placement, keyed exactly as `parley-read` looks for it |
+| `ulid`, `FdSink`, `ParleyClosed`, `SCHEMA_IDS`, `SIDECAR_THRESHOLD` | Run ids, the default sink, the error raised after `end`, the writer's schema pairs, the sidecar threshold |
+
+## What the writer does for you
+
+| Spec | Behaviour |
+| --- | --- |
+| §3.1 | Creates the receipt before announcing it; the bootstrap line is the first line on any stream, `seq: 0`, stdout only, before the handler runs |
+| §5, §5.2 | `.parley/receipts/<run>.jsonl` under the initial working directory, after `.parley/.gitignore` holds a line `*` (created whole under a temporary name and linked into place if absent, never overwritten). The receipt goes to `$XDG_STATE_HOME/parley/<repo-hash>/receipts/` instead, with a `receipt.relocated` warning, when the ignore file is a user's without `*` or when the working-directory path would carry a declared secret value; an unwritable working directory falls back silently (the bootstrap line says where). No writable location is `startup.receipt_unwritable`; a state path that would carry the secret too is `startup.secret_in_path`; both exit 3 |
+| §1.3 | One counter per run, under a lock, so threads emitting at once cannot share or skip a `seq`. A record is serialised before it takes a `seq`, so one that is not JSON is raised to the tool and leaves no gap |
+| §2.2 | `inv` exactly as the TypeScript writer derives it (below) |
+| §5.3 | Declared flags, variables and sources replaced with `[redacted]` in `argv`, `resolved`, `inputs` and every later record before any copy leaves the process; longest secret first; a number or boolean whose JSON form is a secret becomes `[redacted]`; a key carrying one is renamed. The head's `redacted` says where; a later surfacing gets a `redaction` event; `end.redacted` aggregates. The envelope and the writer's own identity fields are never scrubbed, a run id or receipt path carrying a secret is never chosen, and a session carrying one is `startup.secret_in_identity`, exit 3 |
+| §5 | A receipt record over 65,536 bytes is stored as `<run>/<seq>.json` beside the receipt with a `sidecar` event in its place; if the sidecar cannot be written the record stays inline and the run closes with a `sink.sidecar_failed` error and status 4 |
+| §5.1 | Retention by count, **per tool** (below) |
+| §4.1, §4.2 | `--schema` and `<command> --help` are runs that emit `command` and `schema` lines and close with `end` |
+| §4.3 | `--dry-run` marks the bootstrap line and head and performs no retention deletion; the handler reads `run.dry_run` |
+| §6, §3.2 | An exception from the handler becomes `uncaught.exception` with the traceback in the receipt copy only (`detail.traceback`), status 2. `SystemExit` with a non-zero code is `uncaught.exit`; `KeyboardInterrupt` is `uncaught.exception`; both close a complete failed receipt with status 2. A raise from `resolved` or `inputs` before the bootstrap line is `startup.arguments_invalid`, exit 3, with the reserved receipt removed. A source resolver that raises means not present. A raising renderer is one `human.renderer_failed` warning and the default rendering from then on. A failure inside the writer itself is `uncaught.writer_failure` after the bootstrap line and `startup.writer_failed` before it |
+| §5.4, §3.3 | stdout and stderr are written with `os.write` on descriptors 1 and 2, the whole line: a partial write continues, and `EAGAIN` on a descriptor someone left non-blocking waits a millisecond and retries. A closed reader (`EPIPE`, `BrokenPipeError`) is a sink failure: an `error` line on the sinks still working and status 4, never a traceback. After `end` nothing is written; emitting raises `ParleyClosed` |
+| §1.2 | Stray output is captured into the receipt (below) |
+| §1.1 | `--human` (alias `--humanize`) renders stdout and stderr through the tool's `human` function, falling back to one line per event; the bootstrap line and a successful `end` render as nothing; the receipt is unchanged |
+
+## Arguments and flags
+
+The command is the first positional argument that names one of the tool's commands; a tool with
+one command needs none. The writer's flags, `--human`, `--humanize`, `--dry-run`, `--schema`,
+`--help` and `-h`, are recognised anywhere and removed from the arguments the handler sees. No
+command named, in a tool with more than one, is `startup.unknown_command`, exit 3.
+`PARLEY_SESSION`, or the `session` argument, is carried as `session`; the writer never invents one.
+
+Where a tool parses the rest of its arguments is its own choice, and the spec does not yet say
+which is right (flyingrobots/parley#91). A `resolved` callback that raises makes a bad argument a
+startup failure, exit 3, with no receipt; a handler that reports one, as `count.py` does, makes it
+a command error, exit 2, with a complete failed receipt that records the mistaken call.
+
+## How `inv` is derived
+
+The TypeScript writer's derivation, byte for byte, which the suite checks by computing both over
+the same preimages: SHA-256, hex, over the canonical JSON (keys sorted, no whitespace, UTF-8) of
+
+```text
+{ tool, v, command, resolved, inputs: [{ path, role?, sha256 }] }
+```
+
+`resolved` and the input descriptors are the redacted ones, so a declared secret enters by name and
+never by value (spec §2.2). Each input's `sha256` is over its bytes; a `tree` input digests every
+regular file under it in sorted path order as `path NUL digest LF`, skipping `.parley` and the
+paths in its `exclude` list. The run id, receipt path, session and clock are not in the preimage.
+With no declared inputs, `inv` covers the tool, version, command and `resolved` only and is on the
+bootstrap line; with inputs it arrives in `receipt.inputs` before `end`, and an unreadable input
+(`input.unreadable`, or `input.unread` for a stdin input the handler never supplied with
+`run.input("-", data)`) omits it. `resolved` is in the preimage, so keep it order-normalised and
+free of volatile values such as the working directory.
+
+## Retention, per tool
+
+A tool states `retention={"count": N}`. When a receipt location holds more than N bundles **whose
+head names this tool**, the oldest beyond N are deleted with their sidecar directories, and the
+deletion is recorded as a `receipt.step`. Another tool's receipts, a reader's included, are never
+counted and never deleted; that is the decision recorded on flyingrobots/parley#75, implemented
+here from the start. A receipt with no `end` is deleted only once it is more than a day old, so a
+run still in flight is never a candidate; a dry run deletes nothing and says what it would have
+deleted. Telling whose a receipt is means reading the first line of each one in the directory on
+every run.
+
+## Stray output
+
+From the moment `main` starts until it returns, `sys.stdout` and `sys.stderr` are replaced with
+objects that put whatever is written to them into the run's receipt, a line at a time, as a step
+`captured stray output` with `detail: {stream, text}`. Text written before the receipt exists, by a
+source resolver for instance, is held and written after the head. The originals are put back when
+`main` returns. This contains `print`, `sys.stdout.buffer.write`, `logging` (whose default handler
+looks `sys.stderr` up when it writes), `warnings`, `traceback.print_exc` and anything else that
+writes through those two names.
+
+What it cannot contain, stated rather than papered over (spec §6):
+
+- **A write to descriptor 1 or 2 itself**: a C extension, `os.write(1, ...)`, a subprocess that
+  inherits the descriptors. Those bytes reach the stream as they are, and a reader quarantines them
+  (§1.4). Pass `stdout=subprocess.PIPE` or `DEVNULL` to a child.
+- **A handler that kept the original stream**: a `logging.StreamHandler` created before `main`
+  started writes where it was pointed.
+- **A library that asks for the descriptor**: the capture's `fileno()` raises
+  `io.UnsupportedOperation`, as `io.StringIO` does, so `faulthandler.enable()` inside a handler
+  raises rather than writing around the capture.
+- **Text written after `end`**, or by a handler that outlives `main`, such as a `logging` handler
+  configured inside it: dropped, since nothing may follow `end`.
+- **A hard crash or a signal**: a segfault in a native module, `SIGKILL`, or `SIGPIPE` if the tool
+  restored its default action (Python ignores it unless told otherwise). Terminal output may be
+  absent; the receipt holds whatever was written.
+
+## The bounded checker
+
+A Python tool has no ajv, and spec §4.4 asks every program to validate its schemas against real
+output in its own tests. `validate_line(line, extra)` checks one emitted line against the schema
+for its exact advertised pair: an embedded draft, or a tool-owned schema passed in `extra` keyed by
+`(id, version)`. A pair it has no schema for is reported, never validated. Under it,
+`check_record(value, schema)` implements the constructs the protocol's own schemas use (`type`,
+`const`, `enum`, `required`, `properties`, `additionalProperties`, `items`, the length, size and
+range bounds, `pattern`, the `json-pointer` format, `not`, `anyOf`, `allOf`, `oneOf`,
+`if`/`then`/`else`) and **reports** a keyword it does not implement, walking the whole schema
+before any value, rather than ignoring it. Patterns are ECMAScript patterns read by Python's `re`:
+`$` is the end of input and `.` excludes the four ECMAScript line terminators, as in JSON Schema.
+The suite checks it agrees with ajv on more than seven hundred samples of eleven drafts and their
+single-field mutations, and that every embedded draft is inside the subset.
+
+## What a receipt can contain
+
+Everything the handler passes to `result`, `page`, `step`, `warning` and `error`, `receipt_extra`
+included; the raw and resolved arguments; input paths and digests; captured stray output; the
+traceback of an exception that escaped the handler; and copies of every result, error and warning.
+Declared secrets are replaced before writing; an undeclared secret is not, so declare it.
+
+## Testing
+
+```bash
+cd packages/parley-emit-py
+python3 -m unittest discover -s tests     # the unittest suite, standard library only
+bun run sync-schemas                       # re-embed the drafts after a schema change
+```
+
+`bun test` at the repository root runs that suite and the oracles that live in TypeScript
+(`test/parley-emit-py.test.ts`): the doctor over captured runs of `examples/count.py`, `parley-read`
+over the receipts they left, ajv against the checker, and `inv` against the TypeScript writer's. A
+stale embedded schema fails the suite.
+
+## How it differs from the TypeScript writer
+
+What it omits:
+
+- **The shared history stream of spec §8** and everything built on it: `PARLEY_HISTORY`, the daily
+  segments and their retention, history transforms, `declaredProjection`, `refuseSuspectedSecrets`
+  and `refuse`. §8 is informative and opt-in; a run of this writer is the run the TypeScript writer
+  makes with no stream configured. `--schema` does not list `parley.history.transform`, because this
+  writer never emits it.
+- **Asynchronous callbacks.** The handler, `resolved`, `inputs`, source resolvers and the renderer
+  are plain functions; `main` is synchronous.
+- **A package registry.** It is not on PyPI; it is vendored by copying, and pinned by digest.
+
+Where it does something different:
+
+- **`--help` lists `parley.startup.failed`** among a command's error types by default, beside
+  `parley.error`, because every command can produce one and §4.2 asks for "every error type it can
+  produce". The TypeScript writer lists `parley.error` only. Which is right is
+  flyingrobots/parley#92.
+- **Capture is of `sys.stdout` and `sys.stderr`**, not of `console`; the limits above are this
+  language's. The TypeScript writer captures `console` and cannot contain a direct descriptor write
+  either.
+- **Records are strict JSON.** A value `json` cannot serialise (a `datetime`, a set, an object) or a
+  `NaN` is raised to the tool (and, from the handler, becomes `uncaught.exception`), where
+  `JSON.stringify` silently drops `undefined` and functions. A diagnostic given a field other than
+  `remedy`, `remedy_target`, `measured`, `limit`, `retryable` and `detail` raises `ValueError`;
+  tool-specific fields go under `detail`.
+- **Exit and interrupt.** `SystemExit` and `KeyboardInterrupt` in the handler have no TypeScript
+  counterpart; they become `uncaught.exit` and `uncaught.exception`, status 2. A tool ends with a
+  status of its own through `run.end(status)`.
+- **A renderer that raised is not called again** for the rest of the run; the TypeScript writer
+  keeps calling it and reports the first failure once.
+- **Retention is per tool**, as flyingrobots/parley#75 decided; the TypeScript writer counts every
+  bundle in the directory until that issue is fixed.
+
+What it does the same way, including where the spec is silent: the declared secrets of every
+command are scrubbed and every command's declared variables that are present are listed in
+`redacted.env`, while only the running command's credential sources are resolved and listed in
+`redacted.sources`. The spec does not say whose declarations count in a tool with several commands;
+that is flyingrobots/parley#93.

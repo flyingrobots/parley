@@ -25,6 +25,7 @@ import {
   type Bundle,
   type LoadedRecord,
   type QueryAnswer,
+  type QueryDeclined,
   type QueryOutcome,
   type QueryRefusal,
   type Ranking,
@@ -763,6 +764,7 @@ const WIDE = { from: 0, to: T0 + 365 * DAY };
 /** Narrow an outcome to the answer, naming the refusal codes when there is one. */
 function answered(outcome: QueryOutcome): QueryAnswer {
   if (outcome.refused) throw new Error(`refused: ${outcome.refusals.map((r) => r.code).join(", ")}`);
+  if (outcome.declined) throw new Error(`declined: ${outcome.decline.problem}`);
   return outcome;
 }
 
@@ -1636,13 +1638,14 @@ describe("RD-21 the digest is bounded by the budget", () => {
     expect(tight.digest.loss.bound).toBe("count-only");
     // The same window, read twice: the bytes bound, not the history, is what moved.
     expect(tight.counts.inWindow).toBe(loose.counts.inWindow);
-    // A bytes budget too small even for an empty digest names no records rather than lying.
-    const none = answered(await queryReceipts(
+    // A bytes budget too small even for an empty digest declines rather than writing a line over
+    // the bound (flyingrobots/parley#71, RD-72).
+    const none = await queryReceipts(
       { asker: { tool: "t" }, view: "everything", window: SEALED, budget: { records: 7, bytes: 1 } },
       { cwd: dir, env },
-    ));
-    expect(none.digest.records).toEqual([]);
-    expect(none.digest.loss).toEqual({ bound: "count-only", excluded: 30 });
+    );
+    expect(none.refused).toBe(false);
+    if (!none.refused) expect(none.declined).toBe(true);
   });
 
   test("what the bound excluded is nowhere in the answer, and the count accounts for all of it", async () => {
@@ -2265,5 +2268,206 @@ describe("RD-50 a lens names each record with a summary of it", () => {
     ]);
     // The digest holds none of the first seeded run's `end`, and its entries still say succeeded.
     expect(held.some((e) => e.run === runId(0) && e.event === "end")).toBe(false);
+  });
+});
+
+// flyingrobots/parley#71: `budget.ms` is a deadline for the whole read, checked between phases,
+// and a read that cannot meet its budget declines with a structured error naming the budget that
+// would. The clock is the read's own and injected, so no case here sleeps or races the wall: the
+// read calls it once at the start and once at each check — after the load, after the ranking,
+// before the digest is written — and a scripted clock answers those calls in order.
+
+/** A clock that answers its calls with `values` in order and keeps answering the last. */
+function scripted(...values: number[]): () => number {
+  let i = 0;
+  return () => values[Math.min(i++, values.length - 1)]!;
+}
+
+/** Narrow an outcome to a decline, naming what came back instead when it is not one. */
+function declined(outcome: QueryOutcome): QueryDeclined {
+  if (outcome.refused) throw new Error(`refused: ${outcome.refusals.map((r) => r.code).join(", ")}`);
+  if (!outcome.declined) throw new Error("the read answered; it should have declined");
+  return outcome;
+}
+
+const stepsOf = (outcome: { lines: readonly Record<string, unknown>[] }) =>
+  outcome.lines.filter((l) => l.event === "receipt.step").map((l) => l.decision as string);
+
+describe("RD-70 budget.ms is a deadline for the whole read, checked between phases", () => {
+  test("an ms deadline met exactly answers", async () => {
+    const { dir, env } = scratch();
+    seedDays(dir, 3);
+    const answer = answered(await queryReceipts(
+      { asker: { tool: "t" }, view: "everything", window: SEALED, budget: { records: 20, ms: 50 } },
+      { cwd: dir, env, clock: scripted(1000, 1020, 1040, 1050) },
+    ));
+    expect(answer.declined).toBe(false);
+    expect(answer.status).toBe(0);
+    expect(answer.digest.budget).toEqual({ records: 20, ms: 50 });
+    expect(answer.lines.some((l) => l.event === "lens")).toBe(true);
+  });
+
+  test("a load that alone passes the deadline declines before ranking", async () => {
+    const { dir, env } = scratch();
+    seedDays(dir, 3);
+    const out = declined(await queryReceipts(
+      { asker: { tool: "t" }, view: "everything", window: SEALED, budget: { records: 20, ms: 50 } },
+      { cwd: dir, env, clock: scripted(0, 80) },
+    ));
+    expect(out.decline.bound).toBe("ms");
+    expect(out.decline.phase).toBe("load");
+    expect(out.decline.measured).toEqual({ ms: 80 });
+    // The ranking and the digest were never run, so 80 ms is what the read needed at least, not
+    // what would have sufficed.
+    expect(out.decline.atLeast).toEqual({ ms: 80 });
+    expect(out.decline.sufficient).toEqual({});
+    expect(stepsOf(out).some((d) => d.startsWith("ranked"))).toBe(false);
+    expect(out.lines.some((l) => l.event === "lens")).toBe(false);
+  });
+
+  test("a deadline passed during the ranking declines before the digest", async () => {
+    const { dir, env } = scratch();
+    seedDays(dir, 3);
+    const out = declined(await queryReceipts(
+      { asker: { tool: "t" }, view: "everything", window: SEALED, budget: { records: 20, ms: 50 } },
+      { cwd: dir, env, clock: scripted(0, 50, 51) },
+    ));
+    expect(out.decline.phase).toBe("rank");
+    expect(out.decline.measured).toEqual({ ms: 51 });
+    expect(out.decline.atLeast).toEqual({ ms: 51 });
+    expect(stepsOf(out).some((d) => d.startsWith("ranked"))).toBe(true);
+    expect(out.lines.some((l) => l.event === "lens")).toBe(false);
+  });
+
+  test("a deadline passed before the digest names the ms that suffices", async () => {
+    const { dir, env } = scratch();
+    seedDays(dir, 3);
+    const out = declined(await queryReceipts(
+      { asker: { tool: "t" }, view: "everything", window: SEALED, budget: { records: 20, ms: 50 } },
+      { cwd: dir, env, clock: scripted(0, 10, 20, 64) },
+    ));
+    expect(out.decline.phase).toBe("digest");
+    expect(out.decline.sufficient).toEqual({ ms: 64 });
+    expect(out.decline.atLeast).toEqual({});
+    // The same read, under the deadline the decline named and the same scripted phases, answers.
+    const again = answered(await queryReceipts(
+      { asker: { tool: "t" }, view: "everything", window: SEALED, budget: { records: 20, ms: out.decline.sufficient.ms! } },
+      { cwd: dir, env, clock: scripted(0, 10, 20, 64) },
+    ));
+    expect(again.status).toBe(0);
+  });
+});
+
+describe("RD-71 a read that declines is a recorded run that ends with a structured error", () => {
+  test("a declined read is a recorded run that ends with a structured error", async () => {
+    const { dir, env } = scratch();
+    seedDays(dir, 3);
+    const out = declined(await queryReceipts(
+      { asker: { tool: "t" }, view: "what-ran", window: SEALED, budget: { records: 5, ms: 50 } },
+      { cwd: dir, env, clock: scripted(0, 75) },
+    ));
+    expect(out.status).toBe(2);
+    const errors = out.lines.filter((l) => l.event === "error");
+    // The error is on stderr; the answer's lines are stdout. Read it back from the receipt.
+    expect(errors).toEqual([]);
+    const own = loadReceipts({ cwd: dir, env }).bundles.find((b) => b.run === out.run)!;
+    expect(own.terminated).toBe(true);
+    expect(own.status).toBe(2);
+    expect(own.defects).toEqual([]);
+    const query = own.records.filter((r) => r.event === "query");
+    expect(query.length).toBe(1);
+    expect(query[0]!.validation.state).toBe("validated");
+    expect(own.records.some((r) => r.event === "lens")).toBe(false);
+    const error = own.records.filter((r) => r.event === "error");
+    expect(error.length).toBe(1);
+    expect(error[0]!.validation.state).toBe("validated");
+    const e = error[0]!.record as Record<string, unknown>;
+    expect(e.code).toBe("query.over_budget");
+    expect(e.measured).toBe(75);
+    expect(e.limit).toBe(50);
+    expect(typeof e.remedy).toBe("string");
+    expect(e.retryable).toBe(true);
+    expect(e.detail).toEqual({
+      bound: "ms",
+      phase: "load",
+      given: { records: 5, ms: 50 },
+      measured: { ms: 75 },
+      sufficient: {},
+      at_least: { ms: 75 },
+    });
+    expect(out.decline.code).toBe("query.over_budget");
+    expect(out.decline.given).toEqual({ records: 5, ms: 50 });
+    expect(out.decline.problem).toBe(e.problem as string);
+    expect(out.decline.remedy).toBe(e.remedy as string);
+  });
+
+  test("a decline is not a refusal: the next read sees it", async () => {
+    const { dir, env } = scratch();
+    seedDays(dir, 2);
+    const out = declined(await queryReceipts(
+      { asker: { tool: "t" }, view: "everything", window: SEALED, budget: { records: 5, ms: 1 } },
+      { cwd: dir, env, clock: scripted(0, 2) },
+    ));
+    expect(out.refused).toBe(false);
+    expect(out.declined).toBe(true);
+    expect(out.run.length).toBeGreaterThan(0);
+    expect(existsSync(out.receipt)).toBe(true);
+    expect("digest" in out).toBe(false);
+    expect(out.query.run).toBe(out.run);
+    const next = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: WIDE, budget: { records: 1000 } }, { cwd: dir, env }));
+    const seen = next.records.filter((r) => r.run === out.run && r.event === "query");
+    expect(seen.length).toBe(1);
+  });
+});
+
+describe("RD-72 a bytes budget that cannot hold an empty digest declines and names the size that would", () => {
+  test("a bytes budget that cannot hold an empty digest declines and names the size that would", async () => {
+    const { dir, env } = scratch();
+    seedDays(dir, 10);
+    const ask = (bytes: number) => queryReceipts(
+      { asker: { tool: "t", cwd: "/work/site" }, view: "everything", window: SEALED, budget: { records: 7, bytes } },
+      { cwd: dir, env },
+    );
+    const out = declined(await ask(1));
+    expect(out.decline.bound).toBe("bytes");
+    expect(out.decline.phase).toBe("digest");
+    const smallest = out.decline.sufficient.bytes!;
+    expect(smallest).toBeGreaterThan(1);
+    expect(out.decline.measured.bytes).toBe(smallest);
+    expect(out.decline.atLeast).toEqual({});
+    expect(out.status).toBe(2);
+    expect(out.lines.some((l) => l.event === "lens")).toBe(false);
+    // The size named is exact: under it, the read answers with a digest naming no records…
+    const fits = answered(await ask(smallest));
+    expect(fits.digest.records).toEqual([]);
+    expect(fits.digest.loss).toEqual({ bound: "count-only", excluded: 30 });
+    expect(fits.digestBytes).toBeLessThanOrEqual(smallest);
+    // …and one byte under it, the read declines again.
+    expect(declined(await ask(smallest - 1)).decline.bound).toBe("bytes");
+  });
+});
+
+describe("RD-73 a read that states no ms has no deadline", () => {
+  test("a read that states no ms has no deadline", async () => {
+    const { dir, env } = scratch();
+    seedDays(dir, 2);
+    const hour = 3_600_000;
+    const slow = () => scripted(0, hour, 2 * hour, 3 * hour);
+    const defaulted = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: SEALED }, { cwd: dir, env, clock: slow() }));
+    expect(defaulted.status).toBe(0);
+    expect(defaulted.budgetDefaulted).toBe(true);
+    const stated = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: SEALED, budget: { records: 3 } }, { cwd: dir, env, clock: slow() }));
+    expect(stated.status).toBe(0);
+  });
+
+  test("an ms no realistic history reaches is met", async () => {
+    const { dir, env } = scratch();
+    seedDays(dir, 5);
+    const answer = answered(await queryReceipts(
+      { asker: { tool: "t" }, view: "everything", window: SEALED, budget: { records: 20, ms: 3_600_000 } },
+      { cwd: dir, env },
+    ));
+    expect(answer.status).toBe(0);
+    expect(answer.digest.records.length).toBe(15);
   });
 });

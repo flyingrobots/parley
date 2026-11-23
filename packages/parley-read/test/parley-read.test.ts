@@ -1637,6 +1637,28 @@ describe("RD-20 the least-projected copy", () => {
     expect(b.defects).toEqual([]);
   });
 
+  test("a projected copy that changed the envelope is still a disagreement", () => {
+    const { dir, env } = scratch();
+    const receipts = repoReceipts(dir);
+    const receipt = join(receipts, `${RUN_A}.jsonl`);
+    writeReceipt(receipts, RUN_A, [{ ...head(RUN_A), seq: 2 }, step(RUN_A, 3, { detail: NAMES }), end(RUN_A, 4, receipt)]);
+    const segment = writeSegment(histDir(dir), "2026-11-22.jsonl", [
+      transformLine(RUN_A, 1, "narrow-names", NARROW_NAMES),
+      { ...head(RUN_A), seq: 2 },
+      { ...step(RUN_A, 3, { detail: NARROWED }), t: 1795326499999 },
+      end(RUN_A, 4, receipt),
+    ]);
+    const bundle = loadReceipts({ cwd: dir, env, history: [segment] }).bundles[0]!;
+    // §8 lets a projection narrow the body; it never changes the envelope, so §1.3 still holds.
+    const disagreement = bundle.defects.filter((d) => d.code === "copies.disagree");
+    expect(disagreement.length).toBe(1);
+    expect(disagreement[0]!.section).toBe("§1.3");
+    expect(disagreement[0]!.problem).toContain("on t");
+    expect(bundle.records.find((r) => r.seq === 3)!.t).toBe(1795326412352);
+    expect(detailOf(atSeq(bundle, 3))).toEqual(NAMES);
+    expect(bundle.projections[0]!.superseded).toEqual([3]);
+  });
+
   test("a history segment that cannot be read is reported, not thrown", () => {
     const { dir, env } = scratch();
     plainReceipt(repoReceipts(dir), RUN_A);

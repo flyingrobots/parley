@@ -138,6 +138,10 @@ The spec and each message schema are versioned separately from this package.
   depends on which file was read first — the failure mode the issue names, held by a case that
   puts the projected copy in the location read first and then the other way round.
 
+  **A projection narrows the body, never the envelope.** A projected copy that disagrees with the
+  record on `event`, `t` or `_schema` is still §1.3's `copies.disagree` defect, reported whichever
+  copy the preference returned: §8 permits a narrower body, not a different event.
+
   **The edge §8 leaves open: two projected copies of one event, by different transforms.** Neither
   is the less projected one, so the reader does not guess. They are folded as §1.3 copies in an
   order stated by the transform's name, its digest and the file, and a disagreement between them

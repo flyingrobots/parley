@@ -156,6 +156,11 @@ The rule, per `(run, seq)`:
 | Only projected copies, all by one transform | that body, `projected: true`, with `projectedBy` naming the transform |
 | Only projected copies, by different transforms | §1.3's fold over them in a stated order — the transform's name, then its digest, then the file — with every transform named on the record and a disagreement reported as `copies.projected_disagree` |
 
+§8 lets a projection narrow the **body**; it never changes the envelope. A projected copy that
+disagrees with the record on `event`, `t` or `_schema` is therefore §1.3's defect in whatever wrote
+it — a `copies.disagree`, reported whichever copy the preference returned — and only a disagreement
+on a body field between two projections is `copies.projected_disagree`.
+
 A `seq` an unprojected copy carries and a projected copy does not is **withheld** by that
 transform. It is on the note by number, so it is not a gap of unknown cause, and a `seq` the
 projected copy accounted for with a `sidecar` event is carried rather than withheld (§5).

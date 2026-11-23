@@ -19,6 +19,9 @@ its manifest so it cannot be published by accident.
   reported as a `copies.disagree` defect, which it never was. A record whose only copy is a
   projection's is returned with `projected: true` and `projectedBy` naming the transforms.
   Identical copies dedupe exactly as before.
+- §8 lets a projection narrow the body and never the envelope, so a projected copy that disagrees
+  with the record on `event`, `t` or `_schema` is still §1.3's `copies.disagree` defect, reported
+  whichever copy the preference returned.
 - Two projected copies of one event, by different transforms, are the edge the rule cannot settle:
   neither is the less projected one, so they are folded as §1.3 copies in an order stated by the
   transform's name, its digest and the file — never the order the files were read in — and a

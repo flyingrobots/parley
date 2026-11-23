@@ -25,7 +25,7 @@ import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { sha256 } from "@flyingrobots/parley-emit";
 import { readFileLines } from "./lines.ts";
 import { isFile, receiptLocations, type LocateOptions, type ReceiptLocation, type Where } from "./locate.ts";
-import { validator, type Validation, type Validator } from "./validate.ts";
+import { ENVELOPE, validator, type Validation, type Validator } from "./validate.ts";
 
 // ---- what a load reports ------------------------------------------------------------------
 
@@ -439,9 +439,19 @@ const SIDECAR_SECTION = "§5";
  * Two projected copies of one `(run, seq)` are the edge the rule cannot settle: neither is the
  * less projected one. They are folded under §1.3 as copies, in an order stated by the transform's
  * name, its digest and the file — never the order the files were read in, which is the failure
- * mode this rule exists to remove — and a disagreement between them is reported under its own
- * code, because two views of one record were never required to agree.
+ * mode this rule exists to remove — and a disagreement between them on a body field is reported
+ * under its own code, because two views of one record were never required to agree.
+ *
+ * §8 lets a projection narrow the **body**. It never changes the envelope, so a projected copy
+ * that disagrees on `event`, `t` or `_schema` is §1.3's defect in whatever wrote it and is
+ * reported as one, whichever copy the preference returned.
  */
+const ENVELOPE_KEYS: ReadonlySet<string> = new Set<string>(ENVELOPE);
+
+function envelopeDefect(key: string, r: Raw, run: string): Defect {
+  return defect("copies.disagree", "§1.3", r.file, r.line, `seq ${r.seq}: a projected copy disagrees with the record on ${key}, which a projection never changes`, { run });
+}
+
 function foldProjections(run: string, raw: readonly Raw[], held: Map<number, Held>, defects: Defect[], sole: boolean): Note[] {
   const projected = raw
     .filter((r): r is Raw & { projection: Transform } => r.projection !== undefined)
@@ -462,15 +472,20 @@ function foldProjections(run: string, raw: readonly Raw[], held: Map<number, Hel
     }
     seen.copies += 1;
     if (seen.projectedBy.length === 0) {
-      if (!same(seen.base, r.obj)) note.superseded.push(r.seq);
+      for (const key of ENVELOPE) {
+        if (!(key in r.obj) || !(key in seen.base) || stable(seen.base[key]) === stable(r.obj[key])) continue;
+        defects.push(envelopeDefect(key, r, run));
+      }
+      if (!same(seen.base, r.obj) && !note.superseded.includes(r.seq)) note.superseded.push(r.seq);
       continue;
     }
     if (!seen.projectedBy.includes(r.projection.name)) seen.projectedBy.push(r.projection.name);
     for (const [key, value] of Object.entries(r.obj)) {
       if (!(key in seen.base)) { seen.base[key] = value; continue; }
-      if (stable(seen.base[key]) !== stable(value)) {
-        defects.push(defect("copies.projected_disagree", "§8", r.file, r.line, `seq ${r.seq}: two projections of one event disagree on ${key}, and neither copy is the less projected one, so neither is preferred`, { run }));
-      }
+      if (stable(seen.base[key]) === stable(value)) continue;
+      defects.push(ENVELOPE_KEYS.has(key)
+        ? envelopeDefect(key, r, run)
+        : defect("copies.projected_disagree", "§8", r.file, r.line, `seq ${r.seq}: two projections of one event disagree on ${key}, and neither copy is the less projected one, so neither is preferred`, { run }));
     }
   }
   return [...notes.values()];

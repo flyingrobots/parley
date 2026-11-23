@@ -43,3 +43,8 @@ writer side exists; its example lives in [docs/topics/parley-emit](../docs/topic
 
 `scripts/schemas.test.ts` holds the invariants every file here must satisfy, and
 `bun run check` validates every example in the repository against these files.
+
+`parley.graphql` states the same 17 messages in Wesley SDL. **It is not their source:** the JSON
+Schemas here are, until flyingrobots/parley#119 generates them from it. `scripts/sdl-agreement.test.ts`
+holds the SDL to these files, so a change to a message is made in both
+([Message SDL](../docs/topics/message-sdl/README.md), [Changing a message](../docs/workflows/change-a-message/README.md)).

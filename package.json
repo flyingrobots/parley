@@ -11,6 +11,9 @@
     "doctor": "bun run scripts/doctor.ts",
     "typecheck": "tsc -p tsconfig.json && tsc -p packages/parley-emit/tsconfig.json && tsc -p packages/parley-read/tsconfig.json"
   },
+  "config": {
+    "wesley": "0.3.0-alpha.4"
+  },
   "devDependencies": {
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1",

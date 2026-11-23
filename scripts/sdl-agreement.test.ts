@@ -73,8 +73,8 @@ describe("SDL derivation refuses what it cannot translate faithfully (SDL-6)", (
 
   test("SDL-6c: an object type that is neither open nor closed", () => {
     const ir = tiny();
-    typeOf(ir, "SchemaRef").directives = {};
-    expect(() => deriveSchemas(ir)).toThrow(/SchemaRef.*@parley_open.*@parley_closed/);
+    delete typeOf(ir, "Tiny").directives.parley_open;
+    expect(() => deriveSchemas(ir)).toThrow(/Tiny.*@parley_open.*@parley_closed/);
   });
 
   test("SDL-6d: a rule naming a field the type does not have", () => {
@@ -182,7 +182,7 @@ if (gate.kind === "skip") {
     });
 
     test("SDL-3b: a required field made optional in the SDL only", () => {
-      failsWith(lowerEdited("redacted: Boolean!\n  \"End's", "redacted: Boolean @parley_optional\n  \"End's"), "parley.end", "/required");
+      failsWith(lowerEdited("redacted: Boolean!", "redacted: Boolean @parley_optional"), "parley.end", "/required");
     });
 
     test("SDL-3c: an enum value changed in the SDL only", () => {

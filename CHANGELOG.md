@@ -21,6 +21,9 @@ the entry under it names each schema version it releases, and those are separate
 
 ### Changed
 
+- Both release workflows stage a version on npm (`npm stage publish`) for the owner to approve, in
+  place of `npm publish` (flyingrobots/parley#85). `@flyingrobots/parley-emit` 0.2.3 is the first
+  version released that way; no schema or spec text changes.
 - `scripts/sdl-to-json-schema.ts`, the transitional SDL derivation, now refuses SDL it cannot
   represent instead of passing it: an unknown argument on a known directive, a duplicate field or
   type definition, a nested list, a list-valued `@parley_message_ref` or list member of its type,

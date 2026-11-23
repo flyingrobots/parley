@@ -13,7 +13,7 @@
     },
     "packages/parley-emit": {
       "name": "@flyingrobots/parley-emit",
-      "version": "0.2.2",
+      "version": "0.2.3",
     },
     "packages/parley-emit-py": {
       "name": "@flyingrobots/parley-emit-py",

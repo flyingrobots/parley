@@ -19,7 +19,19 @@ The tag starts `.github/workflows/release-parley-emit.yml`, which:
 | --- | --- |
 | `sanity` | Refuses a tag whose version differs from `package.json` or has no changelog heading; checks the manifest fields; runs `bun test`, `bun run check`, `bun run typecheck`; refuses a stale `src/schemas.ts`; dry-runs the pack; fails if `npm publish --dry-run` reports that it would rewrite or remove anything in the manifest, if the packed `package.json` differs from the repository's, or if any dependency uses a `workspace:` range |
 | `release` | Creates the GitHub release named after the tag, with the changelog section as notes and the tarball plus `SHA256SUMS` attached |
-| `publish` | In the `npm` environment, publishes with OIDC provenance through npm's trusted publishing; no token lives in the repository |
+| `publish` | In the `npm` environment, stages the version with `npm stage publish` and OIDC provenance through npm's trusted publishing; no token lives in the repository. Nothing is installable yet |
+
+**A release ends with the owner's approval.** The trusted publisher is allowed to stage and nothing
+else, so a workflow cannot put code in front of users on its own. The owner lists what is waiting
+and approves it with their one-time password, or does the same on the package's **Staged Packages**
+tab on npmjs.com:
+
+```bash
+npm stage list @flyingrobots/parley-emit
+npm stage approve <stage-id>
+```
+
+These commands need an interactive login and cannot be run from CI.
 
 The tarball on the GitHub release and the one on npm are the same bytes; compare the digest when
 in doubt.
@@ -28,10 +40,11 @@ in doubt.
 
 The repository has a GitHub environment named `npm`. On npmjs.com, the package's settings carry a
 trusted publisher pointing at this repository and workflow (owner `flyingrobots`, repository
-`parley`, workflow `release-parley-emit.yml`, environment `npm`). Without that entry the publish
-job fails with an authentication error and nothing is published; the GitHub release still exists
-and can be published by hand with `npm publish --access public` from `packages/parley-emit` at
-the tagged commit.
+`parley`, workflow `release-parley-emit.yml`, environment `npm`), with **Allow `npm publish`** and
+**Allow `npm dist-tag`** both unchecked, so it may run `npm stage publish` and nothing else. A
+workflow that runs `npm publish` against it is refused with `OIDC permission denied for this
+action`. Without the entry the publish job fails and nothing is staged; the GitHub release still
+exists.
 
 ## Packages that depend on it
 
@@ -42,4 +55,6 @@ otherwise ([releasing parley-read](../release-parley-read/README.md)).
 ## The first release
 
 `0.1.0` (tag `parley-emit-v0.1.0`, 2026-11-22) was published by hand before this workflow
-existed, with the GitHub release created the same way.
+existed, with the GitHub release created the same way. `0.2.0`, `0.2.1` and `0.2.2` were tagged and
+released on GitHub but never reached npm: their workflow ran `npm publish`, which the trusted
+publisher refuses. `0.2.3` is the first version staged.

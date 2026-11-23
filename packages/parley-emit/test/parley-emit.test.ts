@@ -212,6 +212,9 @@ describe("PE-5 retention", () => {
 });
 
 describe("PE-26 retention is per tool", () => {
+  // Each test makes 64 or 65 full runs and checks each with the doctor, which takes seconds on a
+  // loaded machine; the default 5 s budget made them fail under load with nothing wrong.
+  const SLOW_RUNS = 60_000;
   const body = () => {};
   const names = (d: string) => readdirSync(d).filter((f) => f.endsWith(".jsonl")).sort();
   async function populate(dir: string, env: Record<string, string>) {
@@ -229,7 +232,7 @@ describe("PE-26 retention is per tool", () => {
     expect(other.every((p) => existsSync(p))).toBe(true);
     expect(names(join(dir, ".parley", "receipts")).length).toBe(64);
     expect(last.receiptLines.some((o) => o.event === "receipt.step" && /retention/.test(String(o.decision)))).toBe(false);
-  });
+  }, SLOW_RUNS);
 
   test("the tool's own excess is still expired, oldest first, and a neighbour's receipts are never counted", async () => {
     const { dir, env } = scratch();
@@ -241,7 +244,7 @@ describe("PE-26 retention is per tool", () => {
     expect(other.every((p) => existsSync(p))).toBe(true);
     expect(names(join(dir, ".parley", "receipts")).length).toBe(64);
     expect(next.violations).toEqual([]);
-  });
+  }, SLOW_RUNS);
 
   test("a file whose head cannot be read is not the tool's and is left alone", async () => {
     const { dir, env } = scratch();

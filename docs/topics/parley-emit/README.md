@@ -28,7 +28,7 @@ it. This page is the reference for what the package does on `main`; the package
 
 1. Classify the declared secrets of every command into flags, variables and logical sources;
    collect the values flags and variables carry from `argv` and the environment; call the selected
-   command's source resolvers (spec §5.3); a resolver that throws means not present. Choose a run
+   command's source resolvers, and never another command's (spec §5.3, flyingrobots/parley#93); a resolver that throws means not present. Choose a run
    id that carries none of those values; a session that carries one is
    `startup.secret_in_identity`, exit 3; the tool's name and version are public and printed as
    they are.
@@ -39,7 +39,11 @@ it. This page is the reference for what the package does on `main`; the package
    neither, one `startup.failed` line on stderr (`startup.receipt_unwritable`, or
    `startup.secret_in_path` when the state path would carry the secret too) and exit 3 (§3.2, §5,
    §5.2, §5.3). A throw from the tool's `resolved` or `inputs` callback here is
-   `startup.arguments_invalid`, exit 3, and the reservation is removed.
+   `startup.arguments_invalid`, exit 3, and the reservation is removed. This is the side of the
+   §3.2 boundary a tool checks its arguments on when it checks them in `resolved`; one that
+   reports a bad argument from the handler with `run.error` makes it a command error, exit 2,
+   with a complete failed receipt (flyingrobots/parley#91). `examples/count.ts` checks in
+   `resolved`.
 3. Resolve the shared history stream (§8): the directory `PARLEY_HISTORY` names, or the known
    state path `$XDG_STATE_HOME/parley/history` when it already exists, and open the day's
    segment for appending. With neither, or with `PARLEY_HISTORY` switched off, there is no
@@ -54,8 +58,9 @@ it. This page is the reference for what the package does on `main`; the package
    deleting only bundles whose receipt ends with `end` or that are incomplete and older than a
    day, and expire the stream's segments by age; record each decision as a step
    (§5, §5.1, §4.3, §8).
-6. Discovery: emit `command` lines and `schema` lines, then `end` (§4.1, §4.2); a throw while
-   emitting them is an `error` line and the run still ends. Otherwise run the handler. Every
+6. Discovery: emit `command` lines and `schema` lines, then `end` (§4.1, §4.2); a command that
+   declares no `errors` lists `parley.error` and `parley.startup.failed` (flyingrobots/parley#92);
+   a throw while emitting them is an `error` line and the run still ends. Otherwise run the handler. Every
    `console` function is captured into the receipt from the start of `main`, buffered until the
    head exists; direct descriptor writes and timers after `end` are the named exceptions.
 7. An uncaught throw becomes `error` with code `uncaught.exception`, its stack in the receipt copy

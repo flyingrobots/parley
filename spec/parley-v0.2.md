@@ -319,6 +319,12 @@ is a startup failure too (§3.1 makes creation a precondition of the bootstrap l
 `3`, not `4`. There is no receipt and no `end`.
 This is the one line a run may emit without a bootstrap line before it.
 
+The bootstrap line is the boundary for a usage error (an unknown flag, a bad value, a missing
+argument). One found before it is a startup failure: this one line and exit `3`. One found after it
+is a command error: a complete failed receipt and exit `2` (§3.4, §6). Where a program checks its
+arguments decides which, so a program **MUST** document where it checks them, and **SHOULD** check
+them before the bootstrap line, because a mistaken call did no work and a receipt of it is noise.
+
 ### 3.3 The terminal event
 
 A run that bootstrapped **MUST** close with an `end` event, the final logical event of the run,
@@ -359,8 +365,8 @@ named exceptions to the two-copy guarantee.
 | Status | Meaning |
 | --- | --- |
 | `0` | The command completed and succeeded. |
-| `2` | The command failed and reported a structured error (§6). |
-| `3` | Setup failed before the bootstrap line; the only output is the §3.2 diagnostic. |
+| `2` | The command failed and reported a structured error (§6), a usage error found after the bootstrap line included (§3.2). |
+| `3` | Setup failed before the bootstrap line, a usage error found there included; the only output is the §3.2 diagnostic. |
 | `4` | Protocol output, receipt writing or finalisation failed, including a failure while writing the bootstrap line. Whatever remained possible through working sinks was preserved, subject to the immutable `end`: a run whose bootstrap write failed still closes its receipt with `end` carrying `4`, since the receipt was created first (§3.1). |
 | signal-derived | Termination by signal: the documented exception. Terminal output may be absent. |
 | other | Tool-owned and documented by the tool. A tool **MUST NOT** redefine `0`, `2`, `3` or `4`. |
@@ -395,7 +401,9 @@ discovery, and a caller that cannot find out what questions a tool answers will 
 source and guess; the `command` lines are the answer.
 
 `app <command> --help` **MUST** emit the `command` line for that command, then a `schema` line for
-its success output and one for **every error type it can produce**.
+its success output and one for **every error type it can produce**. Every command can produce a
+startup failure (§3.2), so that list includes `parley.startup.failed` beside the command's own error
+types.
 
 ```json
 {"event":"schema","t":1795326412402,"seq":2,"run":"01JD3KR2A7B4C9D1E6F3G8H5J2",
@@ -657,19 +665,23 @@ collide unless the program redacts. Privacy wins:
   **before** the receipt head is written, wherever the receipt would carry it. An argument given as
   its own `argv` element becomes `[redacted]`; one given as `--name=value` becomes
   `--name=[redacted]`, so the flag stays visible; a secret embedded in a longer value, such as a
-  path, is replaced within it.
+  path, is replaced within it. A secret is declared when any of the program's commands declares it,
+  whichever command runs, since a value passed to the wrong command is still a secret.
 - The head's `redacted` field **MUST** be present, and non-empty, whenever any declared secret was
   supplied to the run, and absent otherwise. Whether a declared argument or variable was supplied
   is known from `argv` and the environment; a declared credential source is supplied when the
-  program has a credential from it, and the program **MUST** resolve every declared source before
-  the head is written, so that presence is known in time rather than discovered after the head
-  can no longer say so. It records
-  every redaction in the head: in `argv` (as indexes), in `resolved` (as JSON Pointers, RFC 6901),
-  in `inputs` (as indexes), in the environment (as the names of declared variables that were
-  present, whether or not the receipt carried their values) and in `sources` (the logical names
-  of credential sources that were present, such as `netrc`). A declared secret that reaches a
-  later receipt line is replaced there too; that line needs no entry on the head, because the
-  head already says the receipt is partial.
+  program has a credential from it, and the program **MUST** resolve every source the running
+  command declares before the head is written, so that presence is known in time rather than
+  discovered after the head can no longer say so. It records every redaction in the head: in `argv`
+  (as indexes), in `resolved` (as JSON Pointers, RFC 6901), in `inputs` (as indexes), in the
+  environment (as the names of variables any command declares that were present, whether or not the
+  receipt carried their values) and in `sources` (the logical names of the running command's
+  credential sources that were present, such as `netrc`). It **MUST NOT** resolve a source only
+  another command declares: scrubbing reaches every command's declarations, because a secret in the
+  environment can leak through a command that did not declare it, while resolving another command's
+  source runs side effects the call never asked for. A declared secret that reaches a later receipt
+  line is replaced there too; that line needs no entry on the head, because the head already says
+  the receipt is partial.
 - It **MAY** redact more than it declared, in the head or in any later line, by replacing the value
   before the record is written and recording it with a `redaction` event (below), which for the
   head names `in: 1`. Name-based redaction misses odd names and pattern-based redaction misses odd

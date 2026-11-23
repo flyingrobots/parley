@@ -147,7 +147,7 @@ a tool checks its arguments decides which side of it a mistake falls on, and the
 which. Checking before it is preferred, because a mistaken call did no work and a receipt of it is
 noise. With this writer that means the `resolved` callback: one that raises makes a bad argument a
 startup failure, `startup.arguments_invalid`, exit 3, with no receipt, and that is what
-`count.py` does, as the TypeScript example's tool does. A handler that reports a bad argument with
+`count.py` does, as `examples/count.ts` does. A handler that reports a bad argument with
 `run.error` makes it a command error instead, exit 2, with a complete failed receipt.
 
 ## How `inv` is derived
@@ -256,10 +256,6 @@ What it omits:
 
 Where it does something different:
 
-- **`--help` lists `parley.startup.failed`** among a command's error types by default, beside
-  `parley.error`, because every command can produce one and §4.2 asks for "every error type it can
-  produce". That reading was decided on flyingrobots/parley#92; the TypeScript writer, which lists
-  `parley.error` only, is being brought in line there.
 - **Capture is of `sys.stdout` and `sys.stderr`**, not of `console`; the limits above are this
   language's. The TypeScript writer captures `console` and cannot contain a direct descriptor write
   either.
@@ -279,4 +275,7 @@ Where it does something different:
 What it does the same way: the declared secrets of every command are scrubbed and every
 command's declared variables that are present are listed in `redacted.env`, while only the running
 command's credential sources are resolved and listed in `redacted.sources` — scrub widely,
-resolve narrowly, as decided in flyingrobots/parley#93.
+resolve narrowly, as decided in flyingrobots/parley#93. And `--help` lists `parley.startup.failed`
+among a command's error types by default, beside `parley.error`, because every command can produce
+one and §4.2 asks for "every error type it can produce", as decided on flyingrobots/parley#92; the
+suite checks that `count.py` and `count.ts` list the same types.

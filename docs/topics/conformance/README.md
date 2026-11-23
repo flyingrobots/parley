@@ -28,6 +28,7 @@ Capture stdout and stderr separately and pass the receipt the bootstrap line ann
 | R7 | §3.3, §3.4 | The last line on stdout and in the receipt is `end`, with the run's final `seq`; nothing follows it; status 2 has a structured error and status 0 has none. |
 | R8 | §3.3 | `end.redacted` matches the receipt: the head's `redacted` or any `redaction` event. |
 | R9 | §5 | Every result, error and warning has a copy or a sidecar in the receipt. |
+| R10 | §4.2 | A discovery run (stdout carries a `command` line) that ends with status 0 carries a `schema` line for `parley.startup.failed`, an error type every command can produce. A discovery run that failed part-way is not checked. |
 
 ## Checking a receipt alone
 

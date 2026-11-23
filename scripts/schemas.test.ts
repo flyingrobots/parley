@@ -318,7 +318,13 @@ describe("schemas/", () => {
       expect(lens({ ...okLens, runs: [{ run: "q", head: "in_window" }] })).toBe(false);
       expect(lens({ ...okLens, runs: [{ ...section, dropped: ["argv", "inv"] }] })).toBe(true);
       expect(lens({ ...okLens, runs: [{ ...section, dropped: [] }] })).toBe(false);
-      expect(lens({ ...okLens, runs: [{ ...section, dropped: ["argv", "inv", "v", "tool", "argv"] }] })).toBe(false);
+      // Five droppable fields since flyingrobots/parley#90, so a sixth name must repeat one.
+      expect(lens({ ...okLens, runs: [{ ...section, dropped: ["resolved", "argv", "inv", "v", "tool"] }] })).toBe(true);
+      expect(lens({ ...okLens, runs: [{ ...section, dropped: ["resolved", "argv", "inv", "v", "tool", "argv"] }] })).toBe(false);
+      // A section may carry the head's resolved, an object of the tool's own shape (flyingrobots/parley#90).
+      expect(lens({ ...okLens, runs: [{ ...section, resolved: { command: "footprint", base_commit: "fb09508" } }] })).toBe(true);
+      expect(lens({ ...okLens, runs: [{ ...section, resolved: "HEAD~1..HEAD" }] })).toBe(false);
+      expect(lens({ ...okLens, runs: [{ ...section, resolved: ["HEAD~1", "HEAD"] }] })).toBe(false);
       expect(lens({ ...okLens, runs: [{ ...section, dropped: ["run"] }] })).toBe(false);
     });
     test("a page with has_more needs a cursor; the last page does not (§7.2)", () => {

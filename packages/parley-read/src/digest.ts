@@ -53,9 +53,17 @@
 // window's own records, the same ones the ranking was given, so it cannot drift from the head it
 // summarises; a run whose head the window does not hold still gets a section, saying so.
 //
+// **A section says what the run compared** (flyingrobots/parley#90). `argv` says `HEAD~1..HEAD`;
+// only the head's `resolved`, the interpretation after defaults and environment (§5), says which
+// two commits that was. So a section carries `resolved` too, copied whole off the head and already
+// redacted there (§5.3). It is the tool's own shape, so the reader chooses none of its keys: a
+// subset picked by name would be one tool's field names living in the reader, and a declared
+// subset could drift from the head it summarises.
+//
 // **A section is bounded** by `RUN_SECTION_BYTES`: when its serialised JSON is larger, whole
-// fields are dropped, `argv` first, then `inv`, then `v`, then `tool`, until it fits, and the
-// section names what it dropped in `dropped`. A string is never cut part-way, because a cut
+// fields are dropped, `resolved` first, then `argv`, `inv`, `v` and `tool`, until it fits, and the
+// section names what it dropped in `dropped`. `resolved` goes first because it is the largest and
+// the tool's own shape, while `argv` is the protocol's. A string is never cut part-way, because a cut
 // argument reads as a different argument. The run's id, outcome, reason and head statement are
 // never dropped: without them the section does not say which run it is or what became of it.
 //
@@ -110,7 +118,7 @@ export const UNDETERMINED_REASONS = ["no_end_in_window", "end_status_unusable"] 
 export type UndeterminedReason = (typeof UNDETERMINED_REASONS)[number];
 
 /** The fields a section may drop to fit `RUN_SECTION_BYTES`, in the order they are dropped. */
-export const DROPPABLE = ["argv", "inv", "v", "tool"] as const;
+export const DROPPABLE = ["resolved", "argv", "inv", "v", "tool"] as const;
 export type Droppable = (typeof DROPPABLE)[number];
 
 /** The most UTF-8 bytes one run section's serialised JSON takes, unless its undroppable fields alone exceed it. */
@@ -122,6 +130,7 @@ export const RUN_SECTION_BYTES = 512;
  *
  * - `tool`, `v`, `argv`: the run's `receipt.head` as the loader read it, when the window holds the
  *   head; `argv` is already redacted there (§5.3).
+ * - `resolved`: the head's `resolved`, whole, when it is a JSON object; redacted there too (§5.3).
  * - `inv`: the head's, or else the window's `receipt.inputs` for the run (§2.2).
  * - `outcome`: the window's verdict on the run (`rank.ts`), absent when no outcomes were given.
  * - `reason`: present exactly when `outcome` is `undetermined`.
@@ -136,6 +145,7 @@ export interface RunSection {
   readonly tool?: string;
   readonly v?: string;
   readonly argv?: readonly string[];
+  readonly resolved?: Readonly<Record<string, unknown>>;
   readonly inv?: string;
   readonly outcome?: Outcome;
   readonly reason?: UndeterminedReason;
@@ -228,8 +238,8 @@ const sectionBytes = (section: RunSection) => Buffer.byteLength(JSON.stringify(s
 /**
  * What a lens says about one run, read off the window's records for it (`window` may hold other
  * runs' records too; `digestFor` passes only the run's own) and the window's outcomes, with the
- * run's fold when it stands for others. The key order is fixed, `run, tool, v, argv, inv, outcome,
- * reason, head, folded, dropped`, and the section is bounded by `RUN_SECTION_BYTES` by dropping
+ * run's fold when it stands for others. The key order is fixed, `run, tool, v, argv, resolved, inv,
+ * outcome, reason, head, folded, dropped`, and the section is bounded by `RUN_SECTION_BYTES` by dropping
  * whole fields, never by cutting a string.
  */
 export function runSection(run: string, window: readonly LoadedRecord[], outcomes?: Readonly<Record<string, Outcome>>, fold?: RunFold): RunSection {
@@ -237,6 +247,7 @@ export function runSection(run: string, window: readonly LoadedRecord[], outcome
   const head = own.find((r) => r.event === "receipt.head");
   const inputs = own.find((r) => r.event === "receipt.inputs" && nonEmpty(r.record.inv));
   const argv = head?.record.argv;
+  const resolved = head?.record.resolved;
   const inv = nonEmpty(head?.record.inv) ? head.record.inv : inputs?.record.inv as string | undefined;
   const outcome = outcomes?.[run];
   const reason: UndeterminedReason | undefined = outcome !== "undetermined"
@@ -246,6 +257,7 @@ export function runSection(run: string, window: readonly LoadedRecord[], outcome
     ...(nonEmpty(head?.record.tool) ? { tool: head.record.tool } : {}),
     ...(nonEmpty(head?.record.v) ? { v: head.record.v } : {}),
     ...(Array.isArray(argv) && argv.every((a) => typeof a === "string") ? { argv } : {}),
+    ...(resolved !== null && typeof resolved === "object" && !Array.isArray(resolved) ? { resolved } : {}),
     ...(inv === undefined ? {} : { inv }),
   };
   const build = (dropped: readonly Droppable[]): RunSection => {
@@ -255,6 +267,7 @@ export function runSection(run: string, window: readonly LoadedRecord[], outcome
       ...kept("tool"),
       ...kept("v"),
       ...kept("argv"),
+      ...kept("resolved"),
       ...kept("inv"),
       ...(outcome === undefined ? {} : { outcome }),
       ...(reason === undefined ? {} : { reason }),

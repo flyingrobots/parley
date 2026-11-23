@@ -179,10 +179,8 @@ function whenSchema(t: IRType, a: Args, types: Map<string, IRType>, message?: Me
   if (typeof a.guarded !== "boolean") fail(`${t.name}: @parley_when needs guarded: true or false`);
   // Walk the path; the last step is the trigger, and its parent holds the fields the rule names.
   let owner = t;
-  const owners: IRType[] = [];
   for (const [i, step] of path.entries()) {
     const f = (owner.fields ?? []).find((x) => x.name === step) ?? fail(`@parley_when names ${owner.name}.${step}, which does not exist`);
-    owners.push(owner);
     if (i < path.length - 1) {
       const next = types.get(f.type.base);
       if (!next || next.kind !== "OBJECT" || f.type.isList) fail(`@parley_when path ${path.join(".")}: ${owner.name}.${step} is not an object`);
@@ -368,9 +366,12 @@ export function lowerSdl(bin: string, path: string): IR {
 export function findWesley(): { bin: string; version: string } | null {
   const bin = process.env.WESLEY || Bun.which("wesley");
   if (!bin) return null;
-  const r = Bun.spawnSync([bin, "--version"]);
-  if (r.exitCode !== 0) return null;
-  return { bin, version: r.stdout.toString().trim() };
+  try {
+    const r = Bun.spawnSync([bin, "--version"]);
+    return r.exitCode === 0 ? { bin, version: r.stdout.toString().trim() } : null;
+  } catch {
+    return null; // $WESLEY names nothing runnable
+  }
 }
 
 export type Gate = { kind: "run"; bin: string } | { kind: "skip"; reason: string } | { kind: "fail"; reason: string };

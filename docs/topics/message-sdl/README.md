@@ -72,7 +72,7 @@ ships, flyingrobots/parley#119 replaces the directive with Wesley's canonical fo
 | `@parley_minItems(value)` | field | `minItems` | flyingrobots/wesley#857 |
 | `@parley_maxItems(value)` | field | `maxItems` | flyingrobots/wesley#857 |
 | `@parley_minProperties(value)` | field | `minProperties` | flyingrobots/wesley#857 |
-| `@parley_exclusive(fields)` | object | `not: {type: object, required: fields, properties: {f: {type}}}`: at most one is present | flyingrobots/wesley#857 |
+| `@parley_exclusive(fields)` | object | `not: {type: object, required: fields, properties: {f: {type}}}`: at most one of exactly two is present; the derivation refuses any other number of names, because `not` of all present lets two of three through | flyingrobots/wesley#857 |
 | `@parley_any_non_empty(fields)` | object | `anyOf`, one branch per field requiring it as a non-empty array | flyingrobots/wesley#857 |
 | `@parley_when(path, equals, guarded, require, forbidOtherwise, set)` | object | `if` the field at `path` is `const` `equals`, `then` the named sibling fields are required with their shape, or hold the `set` values; `else: {not: then}` with `forbidOtherwise`; `guarded` lists the path's fields as required in `if` | flyingrobots/wesley#857 |
 

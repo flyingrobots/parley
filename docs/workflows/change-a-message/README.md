@@ -16,8 +16,11 @@ the source, every change is made in both, in the same commit.
    release moves the top-level file to a new draft version and names it under `## [Unreleased]`
    in `CHANGELOG.md`. A description-only change is a patch, an optional field added is a minor
    version, and a required field added, a field removed or a constraint narrowed is a major
-   version (spec §4.5). Change the version in three places: the schema's `$id`, its
-   `_schema.version` `const`, and the `version:` of the message's `@parley_message` in the SDL.
+   version (spec §4.5). Change the version everywhere it is held: the schema's `$id`, its
+   `_schema.version` `const`, the `version:` of the message's `@parley_message` in the SDL, and
+   the pair each writer stamps on emitted lines, which is a hand-kept table in
+   `packages/parley-emit/src/run.ts` and another in `packages/parley-emit-py/parley_emit.py`
+   (search for the message id).
 2. **Edit the JSON Schema.**
 3. **Make the same edit in the SDL**, using the directive the page above lists for the keyword. A
    required field has `!`, and an optional one has no `!` and carries `@parley_optional`.

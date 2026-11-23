@@ -8,6 +8,8 @@
 // writes its output anywhere. Each interim directive stands for one Wesley issue
 // (INTERIM_DIRECTIVES); docs/topics/message-sdl/README.md says what each one renders as.
 
+import { readFileSync } from "node:fs";
+
 /** The Wesley IR shape this module reads (the `version` field of `wesley schema lower --json`). */
 export const WESLEY_IR_VERSION = "1.0.0";
 const DIALECT = "https://json-schema.org/draft/2020-12/schema";
@@ -39,6 +41,31 @@ export const INTERIM_DIRECTIVES: Record<string, string> = {
   parley_when: "flyingrobots/wesley#857",
 };
 
+/** The arguments each interim directive declares in schemas/parley.graphql; any other is refused. */
+export const DIRECTIVE_ARGS: Record<string, string[]> = {
+  parley_message: ["id", "version", "title"],
+  parley_int64: [],
+  parley_scalar: ["json"],
+  parley_optional: [],
+  parley_const: ["string", "int", "bool"],
+  parley_message_ref: [],
+  parley_enum: ["values"],
+  parley_open: [],
+  parley_closed: [],
+  parley_pattern: ["regex"],
+  parley_minLength: ["value"],
+  parley_format: ["name"],
+  parley_minimum: ["value"],
+  parley_maximum: ["value"],
+  parley_not_equal: ["int"],
+  parley_minItems: ["value"],
+  parley_maxItems: ["value"],
+  parley_minProperties: ["value"],
+  parley_exclusive: ["fields"],
+  parley_any_non_empty: ["fields"],
+  parley_when: ["path", "equals", "guarded", "require", "forbidOtherwise", "set"],
+};
+
 const ON_OBJECT = new Set(["parley_message", "parley_open", "parley_closed", "parley_exclusive", "parley_any_non_empty", "parley_when"]);
 const ON_SCALAR = new Set(["parley_int64", "parley_scalar"]);
 const STRING_CONSTRAINTS: Record<string, [keyword: string, arg: string]> = {
@@ -55,7 +82,7 @@ const LIST_CONSTRAINTS: Record<string, [keyword: string, arg: string]> = {
   parley_maxItems: ["maxItems", "value"],
 };
 
-export interface IRTypeRef { base: string; nullable: boolean; isList: boolean; listItemNullable?: boolean }
+export interface IRTypeRef { base: string; nullable: boolean; isList: boolean; listItemNullable?: boolean; listWrappers?: { nullable: boolean }[] }
 export interface IRField { name: string; description?: string; type: IRTypeRef; directives: Record<string, unknown> }
 export interface IRType {
   name: string;
@@ -81,7 +108,10 @@ function arg(directives: Record<string, unknown>, name: string, where: string): 
   const d = directives[name];
   if (d === undefined) return undefined;
   if (Array.isArray(d)) fail(`${where}: @${name} is repeated`);
-  return d === true ? {} : (d as Args);
+  const args = d === true ? {} : (d as Args);
+  const known = DIRECTIVE_ARGS[name] ?? [];
+  for (const k of Object.keys(args)) if (!known.includes(k)) fail(`${where}: @${name} has no argument ${k}`);
+  return args;
 }
 
 /** Derive one JSON Schema value per `@parley_message` type, keyed by message id. */
@@ -131,7 +161,10 @@ function objectSchema(t: IRType, types: Map<string, IRType>, message?: Message):
   if (required.length) s.required = required;
   if (closed) s.additionalProperties = false;
   const properties: Schema = {};
-  for (const f of fields) properties[f.name] = fieldSchema(t, f, types, message);
+  for (const f of fields) {
+    if (f.name in properties) fail(`${t.name}.${f.name} is declared twice`);
+    properties[f.name] = fieldSchema(t, f, types, message);
+  }
   s.properties = properties;
 
   const set = (keyword: string, value: Json, rule: string) => {
@@ -144,6 +177,8 @@ function objectSchema(t: IRType, types: Map<string, IRType>, message?: Message):
   if (exclusive) {
     // At most one of these fields: `not` of all of them present, each stated by its JSON type.
     const names = exclusive.fields as string[];
+    // `not` of all of them present is "at most one" only for two names; for three it lets two through.
+    if (names.length !== 2) fail(`@parley_exclusive on ${t.name} names ${names.length} fields; the rendering is exactly two`);
     const props: Schema = {};
     for (const n of names) {
       const p = properties[field(n, "parley_exclusive").name] as Schema;
@@ -202,6 +237,7 @@ function whenSchema(t: IRType, a: Args, types: Map<string, IRType>, message?: Me
   }
 
   const require = (a.require ?? []) as string[];
+  if (a.forbidOtherwise === true && require.length !== 1) fail(`${t.name}: @parley_when forbidOtherwise forbids one required field; \`not\` of several would only forbid all of them together`);
   const sets = (a.set ?? {}) as Record<string, Json>;
   if (!require.length && !Object.keys(sets).length) fail(`${t.name}: @parley_when requires or sets nothing`);
   let then: Schema = { type: "object" };
@@ -213,12 +249,18 @@ function whenSchema(t: IRType, a: Args, types: Map<string, IRType>, message?: Me
     props[n] = { const: v };
   }
   then.properties = props;
-  for (let i = path.length - 2; i >= 0; i--) then = { type: "object", properties: { [path[i]!]: then } };
+  // The forbidden form must name each ancestor as required, or an object without the parent would
+  // satisfy `then` vacuously and `not` would reject it.
+  let forbidden = then;
+  for (let i = path.length - 2; i >= 0; i--) {
+    then = { type: "object", properties: { [path[i]!]: then } };
+    forbidden = { type: "object", required: [path[i]!], properties: { [path[i]!]: forbidden } };
+  }
 
   const out: Schema = { if: ifs, then };
   if (a.forbidOtherwise === true) {
-    if (!require.length || Object.keys(sets).length) fail(`${t.name}: @parley_when forbidOtherwise applies to required fields only`);
-    out.else = { not: then };
+    if (Object.keys(sets).length) fail(`${t.name}: @parley_when forbidOtherwise applies to required fields only`);
+    out.else = { not: forbidden };
   }
   return out;
 }
@@ -231,7 +273,9 @@ function checkValue(v: Json, field: Schema, where: string) {
     : field.type === "boolean" ? typeof v === "boolean"
     : field.type === "integer" ? Number.isInteger(v)
     : false;
-  if (!ok) fail(`${where} is ${JSON.stringify(v)}, which the field cannot hold`);
+  const within = ok && (typeof v !== "number" || ((field.minimum === undefined || v >= (field.minimum as number)) && (field.maximum === undefined || v <= (field.maximum as number)) && !("not" in field && (field.not as Schema).const === v)))
+    && (typeof v !== "string" || ((field.minLength === undefined || v.length >= (field.minLength as number)) && (field.pattern === undefined || new RegExp(field.pattern as string, "u").test(v))));
+  if (!within) fail(`${where} is ${JSON.stringify(v)}, which the field cannot hold`);
 }
 
 function fieldSchema(t: IRType, f: IRField, types: Map<string, IRType>, message?: Message): Schema {
@@ -241,6 +285,7 @@ function fieldSchema(t: IRType, f: IRField, types: Map<string, IRType>, message?
   if (f.type.nullable && !optional) fail(`${where} is nullable but not marked @parley_optional; null is never a legal Parley value, so an optional field is absent when unset`);
   if (!f.type.nullable && optional) fail(`${where} is non-null and marked @parley_optional`);
   if (f.type.isList && f.type.listItemNullable !== false) fail(`${where}: list items are never null`);
+  if ((f.type.listWrappers?.length ?? 0) > 1) fail(`${where}: a nested list type has no JSON Schema rendering here`);
 
   let s: Schema;
   const literal = arg(d, "parley_const", where);
@@ -255,6 +300,7 @@ function fieldSchema(t: IRType, f: IRField, types: Map<string, IRType>, message?
     s = { const: value as Json };
   } else if (ref) {
     if (!message) fail(`${where}: @parley_message_ref outside a message`);
+    if (f.type.isList) fail(`${where}: @parley_message_ref needs a single object, not a list`);
     s = messageRef(where, types.get(f.type.base), types, message);
   } else if (enumValues) {
     if (f.type.base !== "String" || f.type.isList) fail(`${where}: @parley_enum is for a String field whose values are not GraphQL names`);
@@ -303,7 +349,7 @@ function messageRef(where: string, ref: IRType | undefined, types: Map<string, I
   if (!ref || ref.kind !== "OBJECT") fail(`${where}: @parley_message_ref needs an object type`);
   const names = (ref.fields ?? []).map((f) => f.name).join(",");
   if (names !== "id,version" || !arg(ref.directives, "parley_closed", ref.name)) fail(`${where}: @parley_message_ref needs a closed type of exactly id and version, not ${ref.name}(${names})`);
-  for (const f of ref.fields!) if (f.type.base !== "String" || f.type.nullable || Object.keys(f.directives).length) fail(`${ref.name}.${f.name} must be a bare String!`);
+  for (const f of ref.fields!) if (f.type.base !== "String" || f.type.isList || f.type.nullable || Object.keys(f.directives).length) fail(`${ref.name}.${f.name} must be a bare String!`);
   const s = objectSchema(ref, types);
   const props = s.properties as Record<string, Schema>;
   for (const [name, value] of [["id", message.id], ["version", message.version]] as const) {
@@ -357,6 +403,7 @@ export function agreement(id: string, sdl: unknown, schema: unknown): string[] {
 
 /** Lower an SDL file to IR with the given wesley binary. */
 export function lowerSdl(bin: string, path: string): IR {
+  assertUniqueTypes(readFileSync(path, "utf8"), path);
   const r = Bun.spawnSync([bin, "schema", "lower", "--schema", path, "--json"]);
   if (r.exitCode !== 0) throw new Error(`wesley schema lower --schema ${path} exited ${r.exitCode}: ${r.stderr.toString()}${r.stdout.toString()}`);
   return JSON.parse(r.stdout.toString()) as IR;
@@ -388,4 +435,10 @@ export function wesleyGate(found: { bin: string; version: string } | null, pin: 
 }
 
 /** Refuse an SDL text that defines one type name twice; Wesley merges the two without a word. */
-export function assertUniqueTypes(_sdl: string, _path: string): void {}
+export function assertUniqueTypes(sdl: string, path: string): void {
+  const seen = new Set<string>();
+  for (const m of sdl.matchAll(/^(?:type|interface|enum|union|scalar|input)\s+(\w+)/gm)) {
+    if (seen.has(m[1]!)) fail(`${path}: type ${m[1]} is defined twice; Wesley would merge the definitions silently`);
+    seen.add(m[1]!);
+  }
+}

@@ -13,7 +13,7 @@ with a freshness test once Wesley generates them.
 | SDL-3 | The agreement is a real oracle: a change on either side alone fails, and the failure names the message and the JSON Pointer of the field | — |
 | SDL-4 | Wesley is pinned exactly in one place; the test runs only that version and fails with a clear message on any other; without the binary it skips visibly on a workstation and fails in CI | — |
 | SDL-5 | Every interim directive is declared in the SDL with the Wesley issue that will replace it, the derivation knows exactly that set, and the docs list the same directives with the same issues | — |
-| SDL-6 | The derivation refuses SDL it cannot translate faithfully rather than guessing: an unknown `parley_` directive, a nullable field not marked absent-when-unset, an object type that is neither open nor closed, an unknown field named by a rule | — |
+| SDL-6 | The derivation refuses SDL it cannot translate faithfully rather than guessing: an unknown `parley_` directive, a nullable field not marked absent-when-unset, an object type that is neither open nor closed, an unknown field named by a rule, an unknown argument on a known directive, a duplicate field or type definition, a nested list, a list-valued message reference, a rule the rendering under-enforces, a rule literal its field cannot hold | — |
 
 | ID | Case | Oracle | Evidence | Status |
 | --- | --- | --- | --- | --- |
@@ -36,3 +36,13 @@ with a freshness test once Wesley generates them.
 | SDL-6b | Hand-built IR with a nullable field lacking `@parley_optional` | the derivation throws naming the type and field | `sdl-agreement.test.ts` `SDL-6b: a nullable field not marked @parley_optional` | implemented |
 | SDL-6c | Hand-built IR with an object type carrying neither `@parley_open` nor `@parley_closed` | the derivation throws naming the type | `sdl-agreement.test.ts` `SDL-6c: an object type that is neither open nor closed` | implemented |
 | SDL-6d | Hand-built IR with a rule naming a field the type does not have | the derivation throws naming the rule and the field | `sdl-agreement.test.ts` `SDL-6d: a rule naming a field the type does not have` | implemented |
+| SDL-6e | Hand-built IR with `@parley_minLength(value: 2, maximum: 3)` | throws naming the field and `maximum`; `value: 2` alone derives | `sdl-agreement.test.ts` `SDL-6e: an unknown argument on a known directive` | implemented |
+| SDL-6f | Hand-built IR declaring a field twice | throws naming the field | `sdl-agreement.test.ts` `SDL-6f: a field declared twice` | implemented |
+| SDL-6g | SDL text defining one type twice (also through `lowerSdl` with the real binary) | throws before Wesley merges them; `extend type` and the real file pass | `sdl-agreement.test.ts` `SDL-6g: a type defined twice is refused before Wesley merges the two` and `SDL-6g: lowering an SDL that defines a type twice is refused before Wesley merges it` | implemented |
+| SDL-6h | IR with two list wrappers on a field | throws naming the field | `sdl-agreement.test.ts` `SDL-6h: a nested list type` | implemented |
+| SDL-6i | IR with a list-valued `@parley_message_ref` | throws naming the field | `sdl-agreement.test.ts` `SDL-6i: a list-valued @parley_message_ref` | implemented |
+| SDL-6j | IR whose message-reference type has a list member | throws naming the member | `sdl-agreement.test.ts` `SDL-6j: a list-typed member of the message reference type` | implemented |
+| SDL-6k | `@parley_exclusive` over two, then three names | two derives; three throws | `sdl-agreement.test.ts` `SDL-6k: @parley_exclusive over three names, which `not` of all present would under-enforce` | implemented |
+| SDL-6l | A guarded `forbidOtherwise` rule on a nested path, validated with Ajv | an object without the parent is valid; the rule still forbids and requires where it applies | `sdl-agreement.test.ts` `SDL-6l: a guarded forbid rule does not reject an object that omits the rule's parent` | implemented |
+| SDL-6m | `forbidOtherwise` with two required fields | throws | `sdl-agreement.test.ts` `SDL-6m: forbidOtherwise with two required fields, which `not` of both would under-enforce` | implemented |
+| SDL-6n | A `set` literal of `-1` for a field with `minimum: 0` | throws; `0` derives | `sdl-agreement.test.ts` `SDL-6n: a rule literal that violates the field's own constraints` | implemented |

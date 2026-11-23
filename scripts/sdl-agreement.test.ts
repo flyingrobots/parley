@@ -12,6 +12,7 @@ import { join } from "node:path";
 import Ajv2020 from "ajv/dist/2020.js";
 import { schemaFiles } from "./check-examples.ts";
 import {
+  DIRECTIVE_ARGS,
   INTERIM_DIRECTIVES,
   WESLEY_IR_VERSION,
   agreement,
@@ -180,9 +181,10 @@ describe("SDL derivation refuses what it cannot translate faithfully (SDL-6)", (
 describe("the Wesley pin (SDL-4)", () => {
   test("SDL-4a: the pin is one exact version, and another version fails naming both", () => {
     expect(pin).toMatch(/^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$/);
-    const g = wesleyGate({ bin: "/x/wesley", version: "0.3.0-alpha.5" }, pin, false);
+    const other = pin === "9.9.9" ? "9.9.8" : "9.9.9"; // valid, and never the pin
+    const g = wesleyGate({ bin: "/x/wesley", version: other }, pin, false);
     expect(g.kind).toBe("fail");
-    if (g.kind === "fail") expect(g.reason).toContain(`0.3.0-alpha.5`), expect(g.reason).toContain(pin);
+    if (g.kind === "fail") expect(g.reason).toContain(other), expect(g.reason).toContain(pin);
     expect(wesleyGate({ bin: "/x/wesley", version: pin }, pin, true)).toEqual({ kind: "run", bin: "/x/wesley" });
   });
 
@@ -225,6 +227,11 @@ describe("interim directives are declared, known and documented (SDL-5)", () => 
     });
     expect([...declared.keys()].sort()).toEqual(Object.keys(INTERIM_DIRECTIVES).sort());
     for (const [name, issues] of declared) expect({ name, issues }).toEqual({ name, issues: [INTERIM_DIRECTIVES[name]!] });
+
+    // The arguments the derivation accepts are the ones the SDL declares.
+    const declaredArgs = Object.fromEntries([...sdl.matchAll(/^directive @(parley_\w+)(?:\(([^)]*)\))?/gm)]
+      .map((m) => [m[1]!, (m[2] ?? "").split(",").map((a) => a.split(":")[0]!.trim()).filter(Boolean)] as const));
+    expect(declaredArgs).toEqual(DIRECTIVE_ARGS);
 
     const doc = readFileSync("docs/topics/message-sdl/README.md", "utf8");
     const rows = new Map<string, string>();
@@ -280,11 +287,20 @@ if (gate.kind === "skip") {
       expect(diffs.some((d) => d.startsWith(`${id}: ${pointer}:`))).toBe(true);
     };
 
+    // Mutate a copy of the lowered IR by type and field name, so a routine edit to a message's
+    // wording or limits cannot break the fixture; the real-file agreement stays in SDL-2a.
+    const mutated = (f: (ir: IR) => void): IR => {
+      const copy = structuredClone(ir);
+      f(copy);
+      return copy;
+    };
+    const fieldOf = (ir: IR, type: string, field: string) => ir.types.find((t) => t.name === type)!.fields!.find((x) => x.name === field)!;
+
     test("SDL-3a: a minLength changed in the SDL only", () => {
-      failsWith(lowerEdited(
-        `"The execution this line belongs to (spec §2.1)."\n  run: String! @parley_minLength(value: 1)\n  "The exit status`,
-        `"The execution this line belongs to (spec §2.1)."\n  run: String! @parley_minLength(value: 2)\n  "The exit status`,
-      ), "parley.end", "/properties/run/minLength");
+      failsWith(mutated((m) => {
+        const d = fieldOf(m, "End", "run").directives;
+        d.parley_minLength = { value: (d.parley_minLength as { value: number }).value + 1 };
+      }), "parley.end", "/properties/run/minLength");
     });
 
     test("SDL-3b: a required field made optional in the SDL only", () => {
@@ -307,8 +323,16 @@ if (gate.kind === "skip") {
     });
 
     test("SDL-3f: a description edited in the SDL only", () => {
-      const from = `"What is wrong, in one sentence."\n  problem: String! @parley_minLength(value: 1)\n  "The value observed, when the failure is a threshold."\n  measured: JSON @parley_optional\n  "The threshold that was not met."\n  limit: JSON @parley_optional\n  "The lever to pull. Omit rather than invent one."\n  remedy: String @parley_optional\n  "What the remedy applies to."\n  remedy_target: String @parley_optional\n  retryable: Boolean @parley_optional`;
-      failsWith(lowerEdited(from, from.replace("in one sentence.", "in a sentence.")), "parley.error", "/properties/problem/description");
+      failsWith(mutated((m) => {
+        const f = fieldOf(m, "Error", "problem");
+        f.description = `${f.description} (edited)`;
+      }), "parley.error", "/properties/problem/description");
+    });
+
+    test("SDL-6g: lowering an SDL that defines a type twice is refused before Wesley merges it", () => {
+      const p = join(dir, "dup.graphql");
+      writeFileSync(p, `${sdl}\ntype End {\n  extra: String\n}\n`);
+      expect(() => lowerSdl(bin, p)).toThrow(/type End is defined twice/);
     });
 
     test("SDL-3g: the hand-written schema changed alone", () => {

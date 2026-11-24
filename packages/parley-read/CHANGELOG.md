@@ -5,6 +5,14 @@ on its own; the spec and each message schema move separately (spec §4.4).
 
 ## [Unreleased]
 
+### Changed
+
+- The shipped copies of the draft `parley.query` 1.1.0 and `parley.lens` 1.1.0 carry the
+  descriptions the pre-freeze review reworded (flyingrobots/parley#146; the root `CHANGELOG.md`
+  lists each). Descriptions only: no constraint, no emitted line and no behaviour changes. Three
+  tests now hold sentences those descriptions state: the order of `stands_for` (RD-110i), that a
+  byte budget never shortens it (RD-110j), and that it names runs and not `seq`s (RD-110k).
+
 ## [0.2.0] — 2026-11-24
 
 A fold could hide a run whose result differed, and said only how many runs it stood for

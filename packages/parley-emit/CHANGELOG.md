@@ -9,7 +9,8 @@ on its own; the spec and each message schema move separately (spec §4.4).
 
 - The embedded copies of the draft `parley.query` 1.1.0 and `parley.lens` 1.1.0 carry the
   descriptions the pre-freeze review reworded (flyingrobots/parley#146; the root `CHANGELOG.md`
-  lists each). Descriptions only: no constraint and no emitted line changes.
+  lists each): descriptions, and `minLength: 1` on a `stands_for` entry of the lens. No emitted
+  line changes.
 
 ## [0.4.0] — 2026-11-24
 

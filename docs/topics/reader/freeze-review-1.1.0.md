@@ -4,18 +4,17 @@
 
 1. Four descriptions in the two drafts promised more than the reader does or left a rule
    unstated. They are reworded in the same pull request as this page
-   ([findings 1 to 5](#findings)); no constraint, field or version moved.
+   ([findings 1 to 5](#findings)); no field or version moved.
 2. The release notes must not say that 1.1.0 "removes or narrows nothing" without qualification.
    One statement the released `parley.lens` 1.0.0 makes about `loss.folded` does not hold of a
    1.1.0 line ([finding 6](#6-lossfolded-no-longer-depends-on-the-window-alone)). The
    `Unreleased` entry in `CHANGELOG.md` now says so, and
    [the compatibility statement](#the-compatibility-statement-the-release-should-make) below is
    the corrected one.
-
-One further change is the owner's to accept or decline before the freeze, and is not made here
-because it is a constraint and not wording:
-[an empty string is a valid `stands_for` entry](#7-an-empty-string-is-a-valid-stands_for-entry).
-It does not block the recommendation.
+3. An empty string was a valid `stands_for` entry. The items now have `minLength: 1`, as every
+   other run id in the two schemas has
+   ([finding 7](#7-an-empty-string-was-a-valid-stands_for-entry)). This is the one constraint
+   the review changed, on a field 1.0.0 does not define.
 
 No finding shows the reader contradicting what a schema should say, so no bug is filed and the
 released-schema hotfix is not needed.
@@ -85,7 +84,7 @@ reviewed" is the draft at `04f213c`; "now" is after this pull request.
 | L2 | `fold`: "Echoed from the query, present exactly when the query states it" | (c) | yes | RD-110d; probe P4 |
 | L3 | `fold`: "false: the read folded nothing, so loss.folded is 0 and no runs section carries folded because none was allowed to, not because no runs repeated." | (c) | yes | RD-110d; probe P4 |
 | L4 | `fold`: "Two results over one window, one folded and one not, are not comparable, so a lens says which it is." | (a) | yes; it gives the reason and commits to nothing more | — |
-| L5 | `runs[].folded.stands_for`: `type: array`, `minItems: 1`, `items.type: string`, optional | (c) | yes, with [finding 7](#7-an-empty-string-is-a-valid-stands_for-entry) for the owner | RD-110h; probe P7 |
+| L5 | `runs[].folded.stands_for`: `type: array`, `minItems: 1`, `items.type: string`, optional | (c) | **no**: an empty string was a valid entry. `minLength: 1` added to the items ([finding 7](#7-an-empty-string-was-a-valid-stands_for-entry)) | RD-110h; probe P7 |
 | L6 | `stands_for`: "The run ids of the other runs this section stands for, this run excluded, most recent first, so that their records can be opened by (run, seq) or read under a window that holds them" | (c) | **no**: the order has no stated rule, and "opened by (run, seq)" needs a `seq` the lens does not give. Reworded ([finding 3](#3-stands_for-its-order-and-what-it-does-not-give)) | RD-110f, RD-110i, RD-110k; probes P1, P6 |
 | L7 | `stands_for`: "As many as others." | (c) | yes; now also says a schema cannot check it | RD-110f; probe P1 |
 | L8 | `stands_for`: "Optional so that a line written under 1.0.0, which listed none, has the same shape; parley-read always writes it, never drops it to fit the section's bound and does not count it against that bound." | (c) | yes for the commitments. The reason given for "optional" was reworded: a 1.0.0 line is validated against 1.0.0 whatever 1.1.0 requires, and a minor may add only optional fields (§4.5) | RD-110g |
@@ -99,8 +98,9 @@ reviewed" is the draft at `04f213c`; "now" is after this pull request.
 | L16 | `runs[].folded`: 1.0.0's sentence removed: "The folded runs' ids are not listed, to keep the line small: a read of a window that holds one of them without this run, or a load of the window, finds them." | (c), the other side of L15 | yes | RD-110f |
 
 **Counts.** 24 differences: 2 identity, 2 of class (a), 2 of class (b), 18 of class (c). Of the
-18 commitments, 14 were precise enough to freeze as reviewed and 4 were not (Q4, L6, L9, L13).
-One class (b) sentence, L12, was incomplete. All five are reworded and freezable now. The
+18 commitments, 13 were precise enough to freeze as reviewed and 5 were not (Q4, L5, L6, L9,
+L13). One class (b) sentence, L12, was incomplete. Four of the five and L12 are reworded, L5
+gained a constraint, and all are freezable now. The
 rewording also changed two sentences that 1.0.0 and the draft shared, which the tables above do
 not list because they did not differ: the first sentence of `loss.folded`
 ([finding 1](#1-a-budget-can-leave-a-folds-names-out-of-the-lens)) and "A run with no inv, and a
@@ -282,18 +282,25 @@ not preserve something 1.0.0 said: a consumer of 1.0.0 was told the number is a 
 window. See [the version question](#is-110-the-right-version-under-spec-45). No wording change;
 the release notes changed.
 
-### 7. An empty string is a valid `stands_for` entry
+### 7. An empty string was a valid `stands_for` entry
 
-**Schema text.** `stands_for`: `{"type": "array", "minItems": 1, "items": {"type": "string"}}`.
-Every other run id in the two schemas is `{"type": "string", "minLength": 1}`.
+**Schema text, as reviewed.** `stands_for`: `{"type": "array", "minItems": 1, "items": {"type":
+"string"}}`. Every other run id in the two schemas is `{"type": "string", "minLength": 1}`.
 
-**Behaviour.** Probe P7: a 1.1.0 lens with `stands_for: [""]` validates. So does one whose
-`stands_for` is longer than `others`, which no schema can refuse and the description now says.
+**Behaviour.** Probe P7, as reviewed: a 1.1.0 lens with `stands_for: [""]` validated. So does
+one whose `stands_for` is longer than `others`, which no schema can refuse and the description
+now says.
 
-**Verdict.** The reader never writes an empty id. The schema, once frozen, accepts one forever.
-Adding `minLength: 1` to the items is a constraint on a field 1.0.0 did not define, so it is free
-in a draft and impossible after the freeze without a major version. Recommended, and left for the
-owner because this review was limited to wording.
+**Verdict.** The reader never writes an empty id. The schema, once frozen, would have accepted
+one forever. `minLength: 1` on the items is a constraint on a field 1.0.0 did not define, so it
+is free in a draft and impossible after the freeze without a major version.
+
+**Fix made.** The review first left this to the owner, because it is a constraint and not
+wording. It was then decided and made in the same pull request: the items are `{"type":
+"string", "minLength": 1}`, and the SDL field carries `@parley_minLength(value: 1)`. The test
+`the reader validates the released 1.0.0 lines beside the 1.1.0 ones` (RD-110h) asserts that
+`stands_for: [""]` is invalid; it was committed failing before the schema changed. Probe P7 after
+the change is [captured below](#captured-probe-output). No line the reader writes is affected.
 
 ### 8. What was checked and stands
 
@@ -368,7 +375,7 @@ does not carry over.
 > partial, never as validated (spec §4.5). 1.0.0 is open, so a 1.0.0 query may carry a `fold` of
 > any type, and a 1.0.0 lens may carry a `fold` of any type or a `stands_for` of any shape in a
 > section's `folded`. 1.1.0 would reject a `fold` that is not a boolean and a `stands_for` that
-> is empty or not an array of strings. A 1.1.0 schema is therefore not a check of a 1.0.0 line.
+> is empty, is not an array of strings or holds an empty string. A 1.1.0 schema is therefore not a check of a 1.0.0 line.
 >
 > **The version also says which fold produced the line.** A 1.0.0 lens was folded without
 > comparing results, so its `folded` can stand for a run whose result differed
@@ -402,7 +409,8 @@ What a reader without the 1.1.0 schemas reports, captured (probe P7):
 
 Captured on 2026-11-24 from throwaway scripts run with Bun against
 `packages/parley-read/src/index.ts`, first at `04f213c` and again, byte for byte the same, after
-the rewording. Run ids are shown by their last digits. Lines are verbatim; rows not cited above
+the rewording. One P7 line changed when `minLength: 1` was added, and both captures of it are
+shown. Run ids are shown by their last digits. Lines are verbatim; rows not cited above
 are left out, and nothing else is abridged.
 
 P1, the order of `stands_for`:
@@ -480,7 +488,8 @@ P6, opening a folded run at the representative's `seq`, and a drill-down given `
 {"probe":"P6.drill_down_fold","refused":false,"query_line_has_fold":false,"query_schema":{"id":"parley.query","version":"1.1.0"},"validation":"validated"}
 ```
 
-P7, one line validated against each schema. "1.0.0 line" is stamped 1.0.0; "restamped" is the
+P7, one line validated against each schema. The empty-id line appears twice: first as reviewed,
+then after `minLength: 1` was added. "1.0.0 line" is stamped 1.0.0; "restamped" is the
 same line stamped 1.1.0, which isolates the field from the version `const`:
 
 ```jsonl illustrative
@@ -495,6 +504,7 @@ same line stamped 1.1.0, which isolates the field from the version `const`:
 {"probe":"P7.validate","line":"lens folded.stands_for=\"all\"","1.0.0 line under 1.0.0":"valid","the same 1.0.0 line under 1.1.0":["/runs/0/folded/stands_for must be array","/_schema/version must be equal to constant"],"restamped 1.1.0 under 1.1.0":["/runs/0/folded/stands_for must be array"]}
 {"probe":"P7.validate","line":"lens folded.stands_for=[7]","1.0.0 line under 1.0.0":"valid","the same 1.0.0 line under 1.1.0":["/runs/0/folded/stands_for/0 must be string","/_schema/version must be equal to constant"],"restamped 1.1.0 under 1.1.0":["/runs/0/folded/stands_for/0 must be string"]}
 {"probe":"P7.validate","line":"lens folded.stands_for=[\"\"] (an empty id)","1.0.0 line under 1.0.0":"valid","the same 1.0.0 line under 1.1.0":["/_schema/version must be equal to constant"],"restamped 1.1.0 under 1.1.0":"valid"}
+{"probe":"P7.validate","line":"lens folded.stands_for=[\"\"] (an empty id)","1.0.0 line under 1.0.0":"valid","the same 1.0.0 line under 1.1.0":["/runs/0/folded/stands_for/0 must NOT have fewer than 1 characters","/_schema/version must be equal to constant"],"restamped 1.1.0 under 1.1.0":["/runs/0/folded/stands_for/0 must NOT have fewer than 1 characters"]}
 {"probe":"P7.validate","line":"lens folded.stands_for longer than others","1.0.0 line under 1.0.0":"valid","the same 1.0.0 line under 1.1.0":["/_schema/version must be equal to constant"],"restamped 1.1.0 under 1.1.0":"valid"}
 {"probe":"P7.validate","line":"lens folded without stands_for","1.0.0 line under 1.0.0":"valid","the same 1.0.0 line under 1.1.0":["/_schema/version must be equal to constant"],"restamped 1.1.0 under 1.1.0":"valid"}
 {"probe":"P7.reader_with_both","lens_1_0_0_line":"validated","lens_1_0_0_line_with_string_fold":"validated","query_1_0_0_line_with_string_fold":"validated","query_1_1_0_line_with_string_fold":"invalid"}

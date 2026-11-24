@@ -31,7 +31,8 @@ the entry under it names each schema version it releases, and those are separate
   from `@flyingrobots/parley-read` 0.2.0: runs fold only when their result records are equal too,
   and under a view whose surface holds decision records, those as well, so the fold depends on
   the view as well as the window. 1.0.0 stays released and unchanged (flyingrobots/parley#133).
-  Changed in place by the pre-freeze review (flyingrobots/parley#146), descriptions only:
+  Changed in place by the pre-freeze review (flyingrobots/parley#146), descriptions and one
+  constraint on the new field:
   - `runs[].folded` names the views exactly: `receipt.step` is compared under `how-it-decided`
     and `everything`, `cache.hit` under those two and `what-ran`. It said the first two only.
   - `runs[].folded` says result records are compared one for one in `seq` order, that a read's
@@ -45,6 +46,9 @@ the entry under it names each schema version it releases, and those are separate
     absent.
   - `loss.folded` says it counts every record the fold left out, so the sections'
     `folded.records` sum to less than it when the budget cut a run that stands for others.
+  - One constraint: a `stands_for` entry has `minLength: 1`, as every other run id in the schema
+    has, so `[""]` no longer validates. The field is new in this draft, so nothing released
+    narrows.
 - Both are minor versions: each adds optional fields, removes no field and narrows no constraint
   (spec §4.5). One statement the released lens schema makes does not hold of a 1.1.0 line: it says
   `loss.folded` depends on the window alone, and in 1.1.0 it depends on the view and on `fold`

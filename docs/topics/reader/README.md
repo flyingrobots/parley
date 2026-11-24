@@ -131,7 +131,7 @@ the view, and results computed under different budgets are not comparable. It al
   ([flyingrobots/parley#79](https://github.com/flyingrobots/parley/issues/79),
   [flyingrobots/parley#100](https://github.com/flyingrobots/parley/issues/100),
   [flyingrobots/parley#133](https://github.com/flyingrobots/parley/issues/133)). Two runs whose
-  results differ are never one, and a read that states `fold: false` folds nothing; the lens then
+  results in the window differ are not one, and a read that states `fold: false` folds nothing; the lens then
   echoes `fold`. A fold is named only in the section of the run that stands for it, so when the
   budget names no record of that run the lens reports the fold as a count in `loss.folded` and by
   no id. The exact criterion is

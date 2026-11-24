@@ -85,6 +85,15 @@ the package changelogs say which were published.
   snapshotted for this release the sentence said every record was compared without `session`; a
   review of the release found that false of a tool's record, and the sentence, the snapshot and
   the reader were corrected before anything was merged or published (flyingrobots/parley#146). Decision records are compared under the views named above.
+- `runs[].folded` says the comparison is of the records the window holds. A run only partly
+  inside the window is compared by that part, so runs that stand for one another under one
+  window can differ under a wider one. A section marks such a run with `head: "not_in_window"`
+  or with `outcome: "undetermined"` and `reason: "no_end_in_window"`; a run the window shows to
+  have failed carries neither when only its `end` is outside. As first snapshotted for this
+  release the description said two runs whose results differ "never stand for one another" and
+  that "a redacted run" never stands for another; a later review found both false at a window
+  edge, and the sentences and the snapshot were corrected before anything was merged or
+  published. The reader's behaviour did not change.
 - `runs[].folded` and `stands_for` state the order: the latest `t` among a run's records in the
   window, then the greater run id, a run with no dated record last.
 - `stands_for` names runs and not their records' `seq`. A schema cannot check its length against

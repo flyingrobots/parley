@@ -453,9 +453,12 @@ That line is 1,380 bytes. Eight things in it are the whole feature:
   second section stands for both: `folded: {"others": 1, "records": 4, …}`, this run and one other
   like it whose 4 records are not named (flyingrobots/parley#100), and `loss.folded` says 4 of
   the 7 excluded were left out by that fold rather than by the budget (flyingrobots/parley#79). The
-  failed run shares the `inv` and not the result, so it is never folded into them. Nor would two
+  failed run shares the `inv` and not the result, so it is not folded into them. Nor would two
   runs that both succeeded with different `count.result` records be: every result record is part
-  of what must be equal (flyingrobots/parley#133). See
+  of what must be equal (flyingrobots/parley#133). All of this is judged on the records the
+  window holds. A run only partly inside the window is compared by that part, so two runs can
+  fold under one window and differ under a wider one; `fold: false`, or a window that holds the
+  runs whole, shows them apart. See
   [runs of one invocation](../../docs/topics/parley-read/README.md#runs-of-one-invocation-are-named-once).
 - **A fold names what it stands for.** `stands_for` holds the first run's id,
   `01M86XC5FZQZY4F1EW9HNJKD7M`, so its records open by `(run, seq)` like any the digest names.

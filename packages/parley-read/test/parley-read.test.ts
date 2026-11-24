@@ -3529,3 +3529,99 @@ describe("RD-110 a fold never hides a record that differs", () => {
     expect(all.filter((r) => r.run === runId(1)).map((r) => [r.seq, r.event]).slice(1, 3)).toEqual([[2, "receipt.step"], [3, "result"]]);
   });
 });
+
+describe("RD-112 a fold compares what the window holds, and a run only partly inside it says so", () => {
+  // The documented behaviour, pinned at both edges of a window (parley.lens 1.1.0, runs[].folded):
+  // a run's result records are compared as the window holds them. Two runs of one `inv` whose
+  // records in the window agree fold, even when their receipts differ outside it, and the
+  // section of the run that stands for the other says the window did not hold that run whole.
+  const HOUR = 3_600_000;
+  const inputsLine = (run: string, seq: number, t: number, inv: string) => ({ event: "receipt.inputs", t, seq, run, inputs: [{ path: "a.txt", sha256: "a".repeat(64) }], inv, _schema: { id: "parley.receipt.inputs", version: "1.0.0" } });
+  const read = async (dir: string, env: Record<string, string>, window: { from: number; to: number }, fold?: boolean) => {
+    const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window, budget: { records: 100 }, ...(fold === undefined ? {} : { fold }) }, { cwd: dir, env }));
+    const lens = lensRecord(dir, env, answer.run);
+    expect(lens.validation.state).toBe("validated");
+    return lens.record as unknown as { runs: Record<string, unknown>[]; loss: Record<string, unknown>; records: Record<string, unknown>[] };
+  };
+
+  test("the window closes inside two runs whose records so far agree: they fold, and the section says no end is in the window", async () => {
+    const { dir, env } = scratch();
+    const receipts = repoReceipts(dir);
+    // A answers 1 and, five hours on, 2. B answers 1 and stops.
+    const a = join(receipts, `${runId(1)}.jsonl`), b = join(receipts, `${runId(2)}.jsonl`);
+    writeReceipt(receipts, runId(1), [{ ...head(runId(1), { inv: "inv_edge" }), t: T0 }, { ...toolResult(runId(1), 2, { value: 1 }), t: T0 + 1 }, { ...toolResult(runId(1), 3, { value: 2 }), t: T0 + 5 * HOUR }, { ...end(runId(1), 4, a), t: T0 + 5 * HOUR + 1 }]);
+    writeReceipt(receipts, runId(2), [{ ...head(runId(2), { inv: "inv_edge" }), t: T0 + 100 }, { ...toolResult(runId(2), 2, { value: 1 }), t: T0 + 101 }, { ...end(runId(2), 3, b), t: T0 + 6 * HOUR }]);
+
+    const cut = await read(dir, env, { from: 0, to: T0 + HOUR });
+    expect(cut.runs.length).toBe(1);
+    expect(cut.runs[0]).toMatchObject({ run: runId(2), outcome: "undetermined", reason: "no_end_in_window", folded: { others: 1, records: 2, stands_for: [runId(1)] } });
+    expect("head" in cut.runs[0]!).toBe(false);
+    expect(cut.loss).toEqual({ bound: "count-only", excluded: 2, folded: 2 });
+
+    // The control: the same receipts under a window that holds both runs whole do not fold.
+    const whole = await read(dir, env, { from: 0, to: T0 + DAY });
+    expect(whole.runs.map((r) => [r.run, r.outcome, "folded" in r])).toEqual([[runId(1), "succeeded", false], [runId(2), "succeeded", false]]);
+    expect(whole.loss).toEqual({ bound: "none", excluded: 0, folded: 0 });
+
+    // And fold false over the cut window names both.
+    const unfolded = await read(dir, env, { from: 0, to: T0 + HOUR }, false);
+    expect(unfolded.runs.map((r) => r.run)).toEqual([runId(1), runId(2)]);
+    expect(unfolded.loss.folded).toBe(0);
+  });
+
+  test("the window opens after one run's first result: they fold on what follows, and the section says the head is not in the window", async () => {
+    const { dir, env } = scratch();
+    const receipts = repoReceipts(dir);
+    // A answers 1, then (inside the window) settles its inputs, answers 2 and ends. B answers only 2.
+    const a = join(receipts, `${runId(1)}.jsonl`), b = join(receipts, `${runId(2)}.jsonl`);
+    writeReceipt(receipts, runId(1), [{ ...head(runId(1)), t: T0 }, { ...toolResult(runId(1), 2, { value: 1 }), t: T0 + 1 }, inputsLine(runId(1), 3, T0 + 2 * HOUR, "inv_edge"), { ...toolResult(runId(1), 4, { value: 2 }), t: T0 + 2 * HOUR + 1 }, { ...end(runId(1), 5, a), t: T0 + 2 * HOUR + 2 }]);
+    writeReceipt(receipts, runId(2), [{ ...head(runId(2)), t: T0 + 100 }, inputsLine(runId(2), 2, T0 + 3 * HOUR, "inv_edge"), { ...toolResult(runId(2), 3, { value: 2 }), t: T0 + 3 * HOUR + 1 }, { ...end(runId(2), 4, b), t: T0 + 3 * HOUR + 2 }]);
+
+    const cut = await read(dir, env, { from: T0 + HOUR, to: T0 + DAY });
+    expect(cut.runs.length).toBe(1);
+    expect(cut.runs[0]).toMatchObject({ run: runId(2), head: "not_in_window", inv: "inv_edge", outcome: "succeeded", folded: { others: 1, records: 3, stands_for: [runId(1)] } });
+    expect("reason" in cut.runs[0]!).toBe(false);
+    expect(cut.loss).toEqual({ bound: "count-only", excluded: 3, folded: 3 });
+
+    // The control: under a window that holds both runs whole, the first result shows and they do not fold.
+    const whole = await read(dir, env, { from: 0, to: T0 + DAY });
+    expect(whole.runs.map((r) => [r.run, "head" in r, "folded" in r])).toEqual([[runId(1), false, false], [runId(2), false, false]]);
+    expect(whole.loss.folded).toBe(0);
+  });
+  test("two runs the window shows to have failed fold across its closing edge, and the section does not say the end is outside", async () => {
+    const { dir, env } = scratch();
+    const receipts = repoReceipts(dir);
+    const errorLine = (run: string, seq: number, t: number) => ({ event: "error", t, seq, run, code: "count.unreadable", problem: "it failed", _schema: { id: "parley.error", version: "2.0.0" } });
+    // Both fail at once and answer 1; A goes on to answer 2 before it ends, outside the window.
+    const a = join(receipts, `${runId(1)}.jsonl`), b = join(receipts, `${runId(2)}.jsonl`);
+    writeReceipt(receipts, runId(1), [{ ...head(runId(1), { inv: "inv_edge" }), t: T0 }, errorLine(runId(1), 2, T0 + 1), { ...toolResult(runId(1), 3, { value: 1 }), t: T0 + 2 }, { ...toolResult(runId(1), 4, { value: 2 }), t: T0 + 5 * HOUR }, { ...end(runId(1), 5, a, { status: 2 }), t: T0 + 5 * HOUR + 1 }]);
+    writeReceipt(receipts, runId(2), [{ ...head(runId(2), { inv: "inv_edge" }), t: T0 + 100 }, errorLine(runId(2), 2, T0 + 101), { ...toolResult(runId(2), 3, { value: 1 }), t: T0 + 102 }, { ...end(runId(2), 4, b, { status: 2 }), t: T0 + 6 * HOUR }]);
+
+    const cut = await read(dir, env, { from: 0, to: T0 + HOUR });
+    expect(cut.runs.length).toBe(1);
+    expect(cut.runs[0]).toMatchObject({ run: runId(2), outcome: "failed", folded: { others: 1, records: 3, stands_for: [runId(1)] } });
+    // A failure is established by the error alone, so nothing in the section marks the missing end.
+    expect("reason" in cut.runs[0]!).toBe(false);
+    expect("head" in cut.runs[0]!).toBe(false);
+
+    const whole = await read(dir, env, { from: 0, to: T0 + DAY });
+    expect(whole.runs.map((r) => [r.run, r.outcome, "folded" in r])).toEqual([[runId(1), "failed", false], [runId(2), "failed", false]]);
+  });
+  test("a run redacted only after the window closes folds: the window shows nothing redacted", async () => {
+    const { dir, env } = scratch();
+    const receipts = repoReceipts(dir);
+    const redaction = (run: string, seq: number, t: number, inSeq: number) => ({ event: "redaction", t, seq, run, in: inSeq, at: "/note", _schema: { id: "parley.redaction", version: "1.0.0" } });
+    // A's head carries no `redacted`; five hours on a secret surfaces, and its end says redacted.
+    const a = join(receipts, `${runId(1)}.jsonl`), b = join(receipts, `${runId(2)}.jsonl`);
+    writeReceipt(receipts, runId(1), [{ ...head(runId(1), { inv: "inv_edge" }), t: T0 }, { ...toolResult(runId(1), 2, { value: 1 }), t: T0 + 1 }, { ...toolResult(runId(1), 3, { value: 1, note: "[redacted]" }), t: T0 + 5 * HOUR }, redaction(runId(1), 4, T0 + 5 * HOUR, 3), { ...end(runId(1), 5, a, { redacted: true }), t: T0 + 5 * HOUR + 1 }]);
+    writeReceipt(receipts, runId(2), [{ ...head(runId(2), { inv: "inv_edge" }), t: T0 + 100 }, { ...toolResult(runId(2), 2, { value: 1 }), t: T0 + 101 }, { ...end(runId(2), 3, b), t: T0 + 6 * HOUR }]);
+
+    const cut = await read(dir, env, { from: 0, to: T0 + HOUR });
+    expect(cut.runs.length).toBe(1);
+    expect(cut.runs[0]).toMatchObject({ run: runId(2), outcome: "undetermined", reason: "no_end_in_window", folded: { others: 1, records: 2, stands_for: [runId(1)] } });
+
+    // Under a window that holds the redaction, the redacted run does not fold.
+    const whole = await read(dir, env, { from: 0, to: T0 + DAY });
+    expect(whole.runs.map((r) => [r.run, "folded" in r])).toEqual([[runId(1), false], [runId(2), false]]);
+  });
+});

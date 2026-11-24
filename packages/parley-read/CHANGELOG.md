@@ -23,7 +23,17 @@ commit of that release, and carry the wording the pre-freeze review settled
   view and every budget. Runs now fold only when every result record is equal too: the tool's own
   records, each `page`, each `sidecar`'s `bytes` and `sha256` and a read's own `lens`, in `seq`
   order, as canonical JSON without the envelope's `t`, `seq` and `run`, and a read's own `lens`
-  also without its `session` and the `query` it names (RD-110a, RD-110b).
+  also without its `session` and the `query` it names (RD-110a, RD-110b). The comparison is of
+  the records the window holds, as every part of the fold is: a run only partly inside the window
+  is compared by that part, so two runs whose records in the window agree fold even when their
+  receipts differ outside it, and a wider window or `fold: false` shows them apart. That is
+  unchanged behaviour, now pinned at both edges of a window, for two failed runs and for a run redacted after the
+  window closes (RD-112),
+  and `parley.lens` 1.1.0's `runs[].folded` description says it: as first written for this
+  release it said two runs whose results differ "never stand for one another", which a window
+  edge makes false. A section marks a run the window did not hold whole with `head:
+  "not_in_window"` or `outcome: "undetermined"` and `reason: "no_end_in_window"`; a run the
+  window shows to have failed carries neither when only its `end` is outside.
 - **A tool's own `session` field is part of what the fold compares.** As first written for
   this version the comparison left out a top-level `session` from every record. `session` is
   identity only on the protocol lines whose schemas define it (spec §2.1), of which the fold

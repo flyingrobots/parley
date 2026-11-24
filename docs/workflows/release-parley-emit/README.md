@@ -83,6 +83,9 @@ the checked tarball and repacks nothing. But the token the job gets by OIDC can 
 `npm stage publish` and no other `stage` subcommand (`npm help stage`: "Shortlived tokens cannot
 run npm stage subcommands"), so the job cannot list, view or download what it staged, and cannot
 record the stage id in the report. The comparison after staging is made by a person with a login.
+What `npm stage download` and `npm stage view` print was not exercised when this was written:
+they need a staged package and a login. If `npm stage view <stage-id>` shows a `shasum` or an
+`integrity`, those are the report's `artifact.sha1` and `artifact.integrity`.
 
 ## What the workflow cannot verify
 

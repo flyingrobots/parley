@@ -60,7 +60,13 @@ The writer stamps neither message, so no emitted line changes. `--vendor-info` r
   spec's exemption for a program that holds no schema document), so it is not a fix.
 - Scope, stated: only a record the scrub changed is checked. A record already invalid in the
   same way and a record of a type declared with no `schema` document, which spec §5.3 exempts,
-  are written as before. Writer-built records are never checked.
+  are written as before. Writer-built records (the head, `end`,
+  `redaction`, `sidecar`, `receipt.inputs`, discovery lines, the writer's own warnings and its
+  redaction errors) are never checked. They stay valid because their scrub is narrower, and this
+  is exactly what it leaves alone: the envelope; field names; numbers and booleans; the strings
+  under `sha256`, `inv`, `tool`, `v`, `name`, `id`, `version`, `code`, `op` and `error`; the
+  head's `redacted` object, written as built; and a `schema` line's document. Every other string
+  in a writer-built record is scrubbed (the next entry).
 - `run.error` marks the run as having reported an error once the line is out, not before.
 - **A schema the checker cannot evaluate is `redaction.schema_unchecked`, whatever makes it
   unevaluable** (spec §5.3). The rule above held for a keyword outside the subset. A `pattern`
@@ -83,6 +89,26 @@ The writer stamps neither message, so no emitted line changes. `--vendor-info` r
   The TypeScript writer evaluates `\p{Lu}`, a named group, a back-reference and a lookbehind of
   any width with its runtime's engine. Where both evaluate a schema they give the same verdict; a
   test compares them over 96 patterns and 51 malformed or well-formed keywords.
+- **The protocol's own words in a writer-built record are never scrubbed** (spec §5.3). With
+  a declared secret whose value was `create` or `delete`, `--help` and `--schema` published a
+  `parley.command` line whose `effects.bookkeeping[].op` had become `[redacted]`, which the
+  released schema rejects, with exit status 0. The same coincidence reached further: a secret
+  equal to a field name (`paths`, `tool`, `status`, `op`, `inputs`) renamed that field in the
+  bootstrap line, the head, `end` or a discovery line; `input` or `unreadable` broke the `error`
+  token of `receipt.inputs`; and a secret equal to a recorded JSON Pointer broke the head's
+  `redacted.resolved`. Now a writer-built record keeps its field names, a bookkeeping `op`, an
+  input's `error` token and the head's `redacted` pointers whatever the secret is. They are
+  public words of the protocol, so nothing a tool supplied is exposed; a secret's value is
+  still replaced wherever it is the tool's data, in those same records. Every line of every run
+  under 46 such secrets, with `--help`, `--schema` and an ordinary command, validates against
+  its released snapshot.
+- `run.input_unreadable(path, code)` records `input.unreadable` in place of a `code` that carries a
+  declared secret value, since a code is never scrubbed. The `schema.unavailable` warning of
+  discovery is writer-built, as the writer's other warnings are.
+- Not changed, and stated: an input's `role` is the tool's declaration and is scrubbed, so the
+  secret `stdin` gives a `role` of `[redacted]`, which its schema accepts. `uncaught.exception`
+  and the writer's own steps still travel as a tool's records do, so a secret equal to one of
+  their field names withholds them (flyingrobots/parley#161).
 - **A `.parley/.gitignore` negation the writer cannot evaluate exactly counts as one that
   matches** (spec §5.2). The check for a negation that can re-include `receipts/` read a bracket
   expression holding a POSIX class, such as `![[:alpha:]]eceipts`, as a different pattern, and compared a line holding a NUL byte whole where git

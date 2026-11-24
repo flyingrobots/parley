@@ -200,14 +200,17 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
   const resolved = scrub(resolvedRaw, secretValues, "", resolvedPointers);
   const { argv: argvRedacted, indexes: argvIndexes } = redactArgv(argv, secretValues, allNames.flags);
   const inputPointers: string[] = [];
-  const inputDescriptors = scrub(inputs.map((i) => ({ path: i.path, ...(i.role ? { role: i.role } : {}) })), secretValues, "", inputPointers) as { path: string; role?: string }[];
+  // `path` and `role` are the writer's field names here and are never renamed; their values are the tool's and are scrubbed.
+  const inputDescriptors = scrub(inputs.map((i) => ({ path: i.path, ...(i.role ? { role: i.role } : {}) })), secretValues, "", inputPointers, { keys: false }) as { path: string; role?: string }[];
   const inputIndexes = inputPointers.map((p) => Number(p.split("/")[1]));
   const redacted: Record<string, unknown> = {};
   if (argvIndexes.length) redacted.argv = argvIndexes;
   if (resolvedPointers.length) redacted.resolved = resolvedPointers;
   if (inputIndexes.length) redacted.inputs = [...new Set(inputIndexes)];
-  if (presentEnv.length) redacted.env = presentEnv;
-  if (presentSources.length) redacted.sources = presentSources;
+  // The head writes `redacted` as built here (Run.head), so the two lists of names are scrubbed
+  // here, as the head's scrub used to scrub them; the indexes and pointers above need none.
+  if (presentEnv.length) redacted.env = scrub(presentEnv, secretValues);
+  if (presentSources.length) redacted.sources = scrub(presentSources, secretValues);
   const headRedacted = Object.keys(redacted).length > 0;
   const inv = inputs.length === 0 && command ? computeInv({ tool: spec.name, v: spec.version, command: commandName!, resolved, inputs: [] }) : undefined;
 
@@ -297,7 +300,8 @@ function discover(run: Run, spec: ToolSpec, discovery: "schema" | "help", comman
     if (discovery === "schema") WRITER_SCHEMAS.forEach(add);
     for (const t of types.values()) {
       const doc = t.schema ?? SCHEMAS.find((s) => s.id === t.id && s.version === t.version)?.schema;
-      if (!doc) { run.warning({ code: "schema.unavailable", problem: `no schema document for ${t.id}@${t.version}`, remedy: "declare the schema on the emitted type" }); continue; }
+      // The writer's own warning, so writer-built: its code and field names are not scrubbed.
+      if (!doc) { run.writerWarning({ code: "schema.unavailable", problem: `no schema document for ${t.id}@${t.version}`, remedy: "declare the schema on the emitted type" }); continue; }
       run.describe({ event: "schema", id: t.id, version: t.version, schema: doc }, SCHEMA_IDS.schema, "schema");
     }
     run.end(0);

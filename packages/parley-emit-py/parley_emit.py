@@ -45,7 +45,22 @@ _INCOMPLETE_GRACE_MS = 24 * 60 * 60 * 1000
 # occur in except by coincidence of hex, and the public identity a writer-built record carries (the
 # tool's name and version, a command's name, a schema's id and version, and the code of a diagnostic
 # the writer itself raises). A tool's own diagnostic is not writer-built; its code is scrubbed.
-DIGEST_KEYS = frozenset(["sha256", "inv", "tool", "v", "name", "id", "version", "code"])
+#
+# `op` is the same kind of thing: a bookkeeping entry's operation is one of the protocol's own
+# tokens (`create`, `append`, `delete`), which `parley.command` enumerates. A declared secret whose
+# value is `create` is a coincidence with a public word, and replacing the word would publish a
+# line the released schema rejects.
+#
+# `error` is an input descriptor's diagnostic code, whose pattern `parley.receipt.inputs` states:
+# the writer's own `input.unreadable` or `input.unread`, or a code the tool gave
+# `input_unreadable`, which is replaced by the writer's token there if it carries a declared secret
+# value. No other writer-built record has a field of that name.
+#
+# What a writer-built record's scrub leaves alone, in full: the string under each key here; its
+# numbers and booleans; its field names (`rename_keys`); the head's `redacted` object and a
+# `schema` line's document (`verbatim`); and the envelope. Every other string in it is scrubbed.
+DIGEST_KEYS = frozenset(["sha256", "inv", "tool", "v", "name", "id", "version", "code", "op", "error"])
+_INPUT_UNREADABLE = "input.unreadable"
 
 SCHEMA_IDS: Dict[str, Dict[str, str]] = {
     "bootstrap": {"id": "parley.run.bootstrap", "version": "1.1.1"},
@@ -428,11 +443,16 @@ def _escape_pointer(key: str) -> str:
 
 
 def scrub(value: Any, values: Set[str], pointer: str = "", found: Optional[List[str]] = None,
-          skip_keys: Optional[frozenset] = None, scalars: bool = True) -> Any:
+          skip_keys: Optional[frozenset] = None, scalars: bool = True, rename_keys: bool = True) -> Any:
     """A deep copy of `value` with every secret replaced, recording the RFC 6901 pointer of each
     place that changed. Strings are replaced within; a number or boolean whose JSON form is a
     secret becomes `[redacted]` (a PIN parsed to a number is still the PIN); a key carrying a
-    secret is renamed, and the pointer recorded is the renamed key's."""
+    secret is renamed, and the pointer recorded is the renamed key's.
+
+    A writer-built record passes `skip_keys`, `scalars=False` and `rename_keys=False`: its field
+    names (`paths`, `status`, `op`) are the protocol's, named by the released schema, and renaming
+    one would publish a line that schema rejects. A tool's object that reaches a writer-built
+    record (`resolved`) was scrubbed in full, keys included, before the record was built."""
     if found is None:
         found = []
     if not values:
@@ -448,19 +468,19 @@ def scrub(value: Any, values: Set[str], pointer: str = "", found: Optional[List[
             return REDACTED
         return value
     if isinstance(value, (list, tuple)):
-        return [scrub(v, values, f"{pointer}/{i}", found, skip_keys, scalars) for i, v in enumerate(value)]
+        return [scrub(v, values, f"{pointer}/{i}", found, skip_keys, scalars, rename_keys) for i, v in enumerate(value)]
     if isinstance(value, dict):
         out: Record = {}
         for k, v in value.items():
             jk = _json_key(k)
-            key = replace_secrets(jk, values)
+            key = replace_secrets(jk, values) if rename_keys else jk
             p = f"{pointer}/{_escape_pointer(key)}"
             if key != jk:
                 found.append(p)
             if skip_keys is not None and jk in skip_keys and isinstance(v, str):
                 out[key] = v
             else:
-                out[key] = scrub(v, values, p, found, skip_keys, scalars)
+                out[key] = scrub(v, values, p, found, skip_keys, scalars, rename_keys)
         return out
     return value
 
@@ -1517,11 +1537,14 @@ class Run:
     def _scrub_payload(self, payload: Record, found: List[str], writer: bool, verbatim: Optional[str] = None) -> Record:
         """Scrub everything but the event name and, for a writer-built record, the one field
         named by `verbatim`: the schema document of a `schema` line, a static declaration a
-        secret cannot reach (spec section 5.3, flyingrobots/parley#111)."""
+        secret cannot reach (spec section 5.3, flyingrobots/parley#111), or the head's
+        `redacted`, which holds indexes, JSON Pointers and names the caller has already
+        scrubbed. A writer-built record's field names are never renamed."""
         rest = {k: v for k, v in payload.items() if k != "event" and k != verbatim}
-        scrubbed = scrub(rest, self._secrets, "", found, DIGEST_KEYS if writer else None, not writer)
+        scrubbed = scrub(rest, self._secrets, "", found, DIGEST_KEYS if writer else None, not writer, not writer)
         if verbatim is not None and verbatim in payload:
-            scrubbed = {**scrubbed, verbatim: payload[verbatim]}
+            # Put back in its own place, so the record's key order is the one it was built with.
+            scrubbed = {k: (payload[k] if k == verbatim else scrubbed[k]) for k in payload if k != "event"}
         return scrubbed if "event" not in payload else {"event": payload["event"], **scrubbed}
 
     def _emit(self, to: Mapping[str, bool], payload: Record, schema: SchemaRef, receipt_extra: Optional[Record] = None,
@@ -1547,9 +1570,9 @@ class Run:
                         raise ValueError(f"receipt_extra[{k!r}] differs from the record's {k!r}; the copies of an event must agree on every field they share (spec section 1.3)")
             # A tool's record the scrub changed is validated as each sink would receive it, before
             # any copy is written and before a seq is taken (spec section 5.3,
-            # flyingrobots/parley#131). A writer-built record is never checked: its scalars are not
-            # scrubbed and its identity fields are skipped, and the error this raises is itself
-            # writer-built, so it cannot raise another.
+            # flyingrobots/parley#131). A writer-built record is never checked; what its scrub
+            # leaves alone so that it stays valid is listed at DIGEST_KEYS. The error this raises
+            # is itself writer-built, so it cannot raise another.
             t: Optional[int] = None
             if not writer and (found or extra_found):
                 t = max(0, int(self._now()))
@@ -1703,7 +1726,11 @@ class Run:
         self._emit({"stdout": True}, rec, SCHEMA_IDS["bootstrap"], writer=True, defer=True)
 
     def _head(self, fields: Record) -> None:
-        self._emit({"receipt": True}, {"event": "receipt.head", **fields}, SCHEMA_IDS["head"], writer=True, no_sidecar=True)
+        """The receipt head. `redacted` is written as the caller built it: its JSON Pointers are
+        locations in the already-scrubbed `resolved`, and a second scrub of a pointer as a string
+        could only damage it (a secret equal to `/token` would turn the pointer `/token` into
+        something that is not a pointer)."""
+        self._emit({"receipt": True}, {"event": "receipt.head", **fields}, SCHEMA_IDS["head"], writer=True, no_sidecar=True, verbatim="redacted")
 
     def _flush_deferred(self) -> None:
         held, self._deferred = self._deferred, []
@@ -1797,7 +1824,7 @@ class Run:
             self._unread.pop(path, None)
             return data
 
-    def input_unreadable(self, path: str, code: str = "input.unreadable") -> None:
+    def input_unreadable(self, path: str, code: str = _INPUT_UNREADABLE) -> None:
         """Say that the program could not read a declared input, so the writer records it with
         `error` and no digest, and omits `inv`, rather than reading the path itself at
         finalisation and digesting bytes the program never saw (spec section 2.2,
@@ -1813,7 +1840,9 @@ class Run:
             if not isinstance(code, str) or not CODE.match(code):
                 raise ValueError(f"code {code!r} is not two or more dot-separated lowercase segments (spec section 6)")
             self._supplied.pop(path, None)
-            self._unread[path] = code
+            # A code is never scrubbed, so one that carries a declared secret value is not
+            # recorded: the writer's own token stands in for it (spec section 5.3).
+            self._unread[path] = _INPUT_UNREADABLE if carries_secret(code, self._secrets) else code
 
     def _descriptor(self, decl: Mapping[str, Any]) -> Record:
         code = self._unread.get(decl["path"])
@@ -1830,7 +1859,7 @@ class Run:
                 return []
             self._inputs_settled = True
             raw = [self._descriptor(i) for i in self._inputs]
-            inputs = scrub(raw, self._secrets, "", [], DIGEST_KEYS, False)
+            inputs = scrub(raw, self._secrets, "", [], DIGEST_KEYS, False, False)
             inv = compute_inv(self.tool, self.v, self._command, self._resolved, inputs)
             payload: Record = {"event": "receipt.inputs", "inputs": inputs}
             if inv:
@@ -2085,7 +2114,9 @@ def _main(tool: Tool, argv: List[str], handler: Callable[[Run, List[str]], Any],
     resolved_v = scrub(resolved_raw, secret_values, "", resolved_pointers)
     argv_redacted, argv_indexes = redact_argv(argv, secret_values, all_names["flags"])
     input_pointers: List[str] = []
-    descriptors = scrub([{"path": d["path"], **({"role": d["role"]} if d.get("role") else {})} for d in decls], secret_values, "", input_pointers)
+    # `path` and `role` are the writer's field names here and are never renamed; their values are
+    # the tool's and are scrubbed.
+    descriptors = scrub([{"path": d["path"], **({"role": d["role"]} if d.get("role") else {})} for d in decls], secret_values, "", input_pointers, rename_keys=False)
     input_indexes = sorted({int(p.split("/")[1]) for p in input_pointers})
     redacted: Record = {}
     if argv_indexes:
@@ -2094,10 +2125,12 @@ def _main(tool: Tool, argv: List[str], handler: Callable[[Run, List[str]], Any],
         redacted["resolved"] = resolved_pointers
     if input_indexes:
         redacted["inputs"] = input_indexes
+    # The head writes `redacted` as built here (Run._head), so the two lists of names are scrubbed
+    # here, as the head's scrub used to scrub them; the indexes and pointers above need none.
     if present_env:
-        redacted["env"] = present_env
+        redacted["env"] = scrub(present_env, secret_values)
     if present_sources:
-        redacted["sources"] = present_sources
+        redacted["sources"] = scrub(present_sources, secret_values)
     head_redacted = bool(redacted)
     inv = compute_inv(tool.name, tool.version, command_name, resolved_v, []) if (not decls and command) else None
 
@@ -2211,7 +2244,8 @@ def _discover(run: Run, tool: Tool, discovery: str, command_name: Optional[str],
     for (sid, ver), t in types.items():
         doc = t.get("schema") or schema_for((sid, ver))
         if doc is None:
-            run.warning("schema.unavailable", f"no schema document for {sid}@{ver}", remedy="declare the schema on the emitted type")
+            # The writer's own warning, so writer-built: its code and field names are not scrubbed.
+            run.writer_warning("schema.unavailable", f"no schema document for {sid}@{ver}", remedy="declare the schema on the emitted type")
             continue
         run._describe({"event": "schema", "id": sid, "version": ver, "schema": doc}, SCHEMA_IDS["schema"], verbatim="schema")
     run.end(0)

@@ -25,8 +25,25 @@ const ENVELOPE_KEYS = ["t", "seq", "run", "_schema"] as const;
  * not writer-built and its `code` is scrubbed like anything else. Tool-supplied values that
  * reach a writer-built record (`resolved`, input descriptors) are scrubbed in full before it is
  * built.
+ *
+ * `op` is the same kind of thing: a bookkeeping entry's operation is one of the protocol's own
+ * tokens (`create`, `append`, `delete`), which `parley.command` enumerates. A declared secret
+ * whose value is `create` is a coincidence with a public word, and replacing the word would
+ * publish a line the released schema rejects.
+ *
+ * `error` is an input descriptor's diagnostic code, whose pattern `parley.receipt.inputs` states:
+ * the writer's own `input.unreadable` or `input.unread`, or a code the tool gave
+ * `inputUnreadable`, which is replaced by the writer's token there if it carries a declared
+ * secret value. No other writer-built record has a field of that name.
+ *
+ * What a writer-built record's scrub leaves alone, in full: the string under each key here; its
+ * numbers and booleans; its field names (`ScrubOptions.keys`); the head's `redacted` object and
+ * a `schema` line's document (`verbatim`); and the envelope. Every other string in it is
+ * scrubbed.
  */
-export const DIGEST_KEYS = new Set(["sha256", "inv", "tool", "v", "name", "id", "version", "code"]);
+export const DIGEST_KEYS = new Set(["sha256", "inv", "tool", "v", "name", "id", "version", "code", "op", "error"]);
+/** The code recorded for a declared input the program could not read, when it gives none. */
+const INPUT_UNREADABLE = "input.unreadable";
 
 export const SCHEMA_IDS = {
   bootstrap: { id: "parley.run.bootstrap", version: "1.1.1" },
@@ -428,14 +445,16 @@ export class Run {
    * Scrub a payload's values. `event` is envelope, named by the writer or the tool's schema, and is
    * never a secret. For a writer-built record, the one field named by `verbatim` is left as it is:
    * the schema document of a `schema` line, a static declaration a secret cannot reach (§5.3,
-   * flyingrobots/parley#111).
+   * flyingrobots/parley#111), or the head's `redacted`, which holds indexes, JSON Pointers and
+   * names the caller has already scrubbed. A writer-built record's field names are never renamed.
    */
   private scrubPayload(payload: Record_, found: string[], writer: boolean, verbatim?: string): Record_ {
     const { event, ...all } = payload;
     const rest: Record_ = { ...all };
     if (verbatim !== undefined) delete rest[verbatim];
-    let scrubbed = scrub(rest, this.init.secretValues, "", found, writer ? { skipKeys: DIGEST_KEYS, scalars: false } : {}) as Record_;
-    if (verbatim !== undefined && verbatim in all) scrubbed = { ...scrubbed, [verbatim]: all[verbatim] };
+    let scrubbed = scrub(rest, this.init.secretValues, "", found, writer ? { skipKeys: DIGEST_KEYS, scalars: false, keys: false } : {}) as Record_;
+    // Put back in its own place, so the record's key order is the one it was built with.
+    if (verbatim !== undefined && verbatim in all) scrubbed = Object.fromEntries(Object.keys(all).map((k) => [k, k === verbatim ? all[k] : scrubbed[k]]));
     return event === undefined ? scrubbed : { event, ...scrubbed };
   }
 
@@ -457,8 +476,8 @@ export class Run {
     }
     // A tool's record the scrub changed is validated as each sink would receive it, before any
     // copy is written and before a seq is taken (§5.3, flyingrobots/parley#131). A writer-built
-    // record is never checked: its scalars are not scrubbed and its identity fields are skipped,
-    // and the error this raises is itself writer-built, so it cannot raise another.
+    // record is never checked; what its scrub leaves alone so that it stays valid is listed at
+    // DIGEST_KEYS. The error this raises is itself writer-built, so it cannot raise another.
     let t: number | undefined;
     if (how.writer !== true && (found.length > 0 || extraFound.length > 0)) {
       t = this.init.now();
@@ -628,8 +647,13 @@ export class Run {
     this.step(`the shared stream's copy of this run is a projection by ${p.name}`, `a history transform is configured, so the stream copy is narrowed and says so: seq ${this.projectionSeq} is its parley.history.transform line, which reaches the stream alone and is why this receipt has no line at that seq. The transform's source digests to ${p.sha256}. The receipt is never projected (§8, informative)`);
   }
 
-  /** Internal: the receipt head, receipt only, never a sidecar (§5). */
-  head(fields: Record_): void { this.emit({ to: { receipt: true }, writer: true, noSidecar: true }, { event: "receipt.head", ...fields }, SCHEMA_IDS.head); }
+  /**
+   * Internal: the receipt head, receipt only, never a sidecar (§5). `redacted` is written as the
+   * caller built it: its JSON Pointers are locations in the already-scrubbed `resolved`, and a
+   * second scrub of a pointer as a string could only damage it (a secret equal to `/token` would
+   * turn the pointer `/token` into something that is not a pointer).
+   */
+  head(fields: Record_): void { this.emit({ to: { receipt: true }, writer: true, noSidecar: true, verbatim: "redacted" }, { event: "receipt.head", ...fields }, SCHEMA_IDS.head); }
 
   /** Internal: a discovery line (§4.1), a writer-built record describing public identity. */
   describe(record: Record_, schema: SchemaRef, verbatim?: string): number { return this.emit({ to: { stdout: true, receipt: true }, writer: true, ...(verbatim !== undefined ? { verbatim } : {}) }, record, schema); }
@@ -721,14 +745,16 @@ export class Run {
    * digesting bytes the program never saw (§2.2, flyingrobots/parley#110). Refused for a path
    * that is not a declared input, and once the inputs are settled.
    */
-  inputUnreadable(path: string, code = "input.unreadable"): void {
+  inputUnreadable(path: string, code = INPUT_UNREADABLE): void {
     if (this.closed) throw new ParleyClosed();
     if (this.inputsSettled) throw new TypeError("the inputs are already settled; call inputUnreadable before finaliseInputs or end (spec §2.2)");
     if (!this.init.inputs.some((i) => i.path === path)) throw new TypeError(`${JSON.stringify(path)} is not a declared input of this run`);
     if (!CODE.test(code)) throw new TypeError(`code ${JSON.stringify(code)} is not two or more dot-separated lowercase segments (spec §6)`);
     this.supplied.delete(path);
     this.read.delete(path);
-    this.unread.set(path, code);
+    // A code is never scrubbed, so one that carries a declared secret value is not recorded: the
+    // writer's own token stands in for it (§5.3).
+    this.unread.set(path, carriesSecret(code, this.init.secretValues) ? INPUT_UNREADABLE : code);
   }
 
   /** Digest the declared inputs and emit `receipt.inputs` with `inv` once settled (§2.2). Idempotent; `end` calls it. */
@@ -742,7 +768,7 @@ export class Run {
       return digestInput(this.cwd, i, this.supplied.get(i.path));
     });
     // The preimage and the record both take the redacted descriptors (§2.2: no secret value in inv).
-    const inputs = scrub(raw, this.init.secretValues, "", [], { skipKeys: DIGEST_KEYS, scalars: false }) as InputDescriptor[];
+    const inputs = scrub(raw, this.init.secretValues, "", [], { skipKeys: DIGEST_KEYS, scalars: false, keys: false }) as InputDescriptor[];
     const inv = computeInv({ tool: this.tool, v: this.v, command: this.init.command, resolved: this.init.resolved, inputs });
     this.emit({ to: { receipt: true }, writer: true }, { event: "receipt.inputs", inputs, ...(inv ? { inv } : {}) }, SCHEMA_IDS.inputs);
     return inputs;

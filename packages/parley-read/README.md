@@ -19,18 +19,17 @@ quarantine, §5.4's unterminated tail, §1.3's `(run, seq)`, §4.5 and §4.6 on 
 and §5 on sidecars — because the cases §6 calls unconstrainable will happen, and a reader that
 aborts on the first stray byte is broken by exactly the case the spec admits.
 
-Spec version `0.2.0`. The package version moves with this code; each message schema moves on its
+Spec version `0.2.1`. The package version moves with this code; each message schema moves on its
 own (spec §4.4). The schemas it ships are the repository's top-level files and every released
 snapshot of another version, copied from `schemas/` at the commit recorded in `src/schemas.ts`,
 byte-identical by test (spec §4.5). Fifteen are the versions released with spec `0.2.0`;
-`parley.query` and `parley.lens` are at draft 1.1.0, with their released 1.0.0 shipped beside them
+`parley.query` and `parley.lens` are at 1.1.0, released with spec `0.2.1`, with their released 1.0.0 shipped beside them
 so lines an earlier reader wrote still validate (flyingrobots/parley#133).
 
-This is a library with no command, for Bun 1.2 or later. This tree is version 0.2.0, which is not
-tagged yet; 0.1.1 is the latest release (tag `parley-read-v0.1.1`), on npm once the owner approves
-it ([docs/workflows/release-parley-read](../../docs/workflows/release-parley-read/README.md)).
-`bun add @flyingrobots/parley-read` installs the released version with `@flyingrobots/parley-emit`
-`^0.2.4`.
+This is a library with no command, for Bun 1.2 or later. This is version 0.2.0 (tag
+`parley-read-v0.2.0`), on npm once the owner approves it
+([docs/workflows/release-parley-read](../../docs/workflows/release-parley-read/README.md)).
+`bun add @flyingrobots/parley-read` installs it with `@flyingrobots/parley-emit` `^0.4.0`.
 Inside this repository it is the workspace package `@flyingrobots/parley-read`.
 
 ## Loading a directory's receipts

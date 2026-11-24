@@ -40,7 +40,7 @@ suite and `bun run typecheck` checks it strictly, over `src`, `scripts` and `tes
 | `receiptLocations(opts)`, `repoReceiptDir(cwd)`, `stateReceiptDir(opts)` | Where receipts are for a working directory, each location reported present or absent |
 | `LineBuffer`, `splitLines`, `readFileLines`, `CHUNK_BYTES` | Newline buffering: bytes in, complete lines out, the unterminated tail kept apart |
 | `validator(schemas?)`, `schemaRef`, `envelopeGaps`, `ENVELOPE`, `PROTOCOL_PREFIX` | Exact-pair validation, and the version-independent core a partial check uses |
-| `SCHEMAS`, `SCHEMA_SOURCE` | The seventeen schemas the package ships, the released versions of spec `0.2.0`'s release, with the commit and digest of each |
+| `SCHEMAS`, `SCHEMA_SOURCE` | The nineteen schemas the package ships: each message at its current released version, and the released 1.0.0 of `parley.query` and `parley.lens` beside their 1.1.0, with the commit and digest of each |
 | `QUARANTINE_CODES` | Which defect codes are a kept line rather than a judgement about a record |
 | `isDirectory`, `isFile` | The two existence questions the loader asks, exported because callers ask them too |
 
@@ -269,10 +269,10 @@ no other version's schema is ever run over a line and called validation.
 
 That is nineteen schemas. Fifteen messages are at the version released with spec `0.2.0` (the root
 `CHANGELOG.md`), each byte-identical to its snapshot (§4.6). `parley.query` and `parley.lens` are
-at draft 1.1.0 (flyingrobots/parley#133), and their released 1.0.0 snapshots are shipped beside
+at 1.1.0, released with spec `0.2.1` (flyingrobots/parley#133), and their released 1.0.0 snapshots are shipped beside
 them: a history holds the reads an earlier reader recorded, and those lines advertise 1.0.0, so
 without its schema they would load `partial`. The package records the commit and digests it
-copied, so a draft it ships is identified by its bytes (§4.5).
+copied (§4.5).
 
 ## Making a read
 

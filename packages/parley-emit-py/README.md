@@ -11,7 +11,7 @@ It is the second conforming writer, after the TypeScript
 `define_tool`, `main` and `Run` mirror `defineTool`, `main` and `Run`. Where the two differ, the
 [last section](#how-it-differs-from-the-typescript-writer) says so.
 
-Spec version `0.2.0`. The file's own version is `__version__` and moves with this code; each
+Spec version `0.2.1`. The file's own version is `__version__` and moves with this code; each
 message schema moves on its own (spec §4.4). Standard library only. Python 3.9 or later; the gate
 runs the suite on 3.9. The living reference is
 [docs/topics/parley-emit-py](../../docs/topics/parley-emit-py/README.md); its
@@ -33,8 +33,9 @@ python3 path/to/your-tool/parley_emit.py --vendor-info
 re-run it after an upgrade, and in your own tests if you want a changed copy to fail them. Add
 `--human` for one line of prose. The file carries no other command-line surface.
 
-The seventeen schemas released with spec `0.2.0` are embedded in the file, byte for byte, pinned by
-commit and digest (spec §4.5: a later draft's version string would not identify exact bytes). `SCHEMA_SOURCE` holds the
+The seventeen schemas at their current released versions (fifteen as released with spec `0.2.0`,
+`parley.query` and `parley.lens` at the 1.1.0 released with spec `0.2.1`) are embedded in the
+file, byte for byte, pinned by commit and digest (spec §4.5). `SCHEMA_SOURCE` holds the
 pins; `schema_text_digests()` recomputes them from the embedded text, so a copy can check itself.
 
 ## The smallest tool

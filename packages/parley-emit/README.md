@@ -6,8 +6,9 @@ program that is not the program's own result: the bootstrap line, the receipt an
 the single sequence across streams, `inv`, redaction, sidecars, retention, discovery, the
 `--human` renderer, the top-level handler and the exit status.
 
-Spec version `0.2.0`. Package version moves with this code; each message schema moves on its own
-(spec §4.4). The schemas this package ships are the versions released with spec `0.2.0`, copied from
+Spec version `0.2.1`. Package version moves with this code; each message schema moves on its own
+(spec §4.4). The schemas this package ships are the current released versions (fifteen as released
+with spec `0.2.0`, `parley.query` and `parley.lens` at the 1.1.0 released with spec `0.2.1`), copied from
 `schemas/` at the commit recorded in `src/schemas.ts`, byte-identical by test (spec §4.5).
 
 ## Install

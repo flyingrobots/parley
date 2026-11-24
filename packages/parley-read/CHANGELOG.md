@@ -5,22 +5,15 @@ on its own; the spec and each message schema move separately (spec §4.4).
 
 ## [Unreleased]
 
-### Changed
-
-- The shipped copies of the draft `parley.query` 1.1.0 and `parley.lens` 1.1.0 carry the
-  descriptions the pre-freeze review reworded (flyingrobots/parley#146; the root `CHANGELOG.md`
-  lists each): descriptions, and `minLength: 1` on a `stands_for` entry, so a 1.1.0 lens whose
-  `stands_for` holds an empty string now loads `invalid` (RD-110h). The reader never wrote one;
-  no emitted line and no other behaviour changes. Three
-  tests now hold sentences those descriptions state: the order of `stands_for` (RD-110i), that a
-  byte budget never shortens it (RD-110j), and that it names runs and not `seq`s (RD-110k).
-
 ## [0.2.0] — 2026-11-24
 
 A fold could hide a run whose result differed, and said only how many runs it stood for
 (flyingrobots/parley#133). This version changes what folds, lets a read turn the fold off, and
-names the folded runs. It emits `parley.query` and `parley.lens` at **1.1.0**, which are drafts in
-this repository until the root `CHANGELOG.md` releases them; it still reads 1.0.0 lines.
+names the folded runs. It emits `parley.query` and `parley.lens` at **1.1.0**, released with spec
+`0.2.1` (the root `CHANGELOG.md`); it still reads 1.0.0 lines. The copies it ships are pinned to the
+commit of that release, and carry the wording the pre-freeze review settled
+(flyingrobots/parley#146): a 1.1.0 lens whose `stands_for` holds an empty string loads `invalid`
+(RD-110h), and three tests hold sentences the descriptions state (RD-110i to RD-110k).
 
 ### Fixed
 

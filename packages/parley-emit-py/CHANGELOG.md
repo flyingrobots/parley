@@ -10,13 +10,6 @@ release's digest is recorded on its GitHub release (tag `parley-emit-py-vX.Y.Z`)
 
 ## [Unreleased]
 
-### Changed
-
-- The embedded copies of the draft `parley.query` 1.1.0 and `parley.lens` 1.1.0 carry the
-  descriptions the pre-freeze review reworded (flyingrobots/parley#146; the root `CHANGELOG.md`
-  lists each): descriptions, and `minLength: 1` on a `stands_for` entry of the lens. No emitted
-  line changes.
-
 ## [0.3.0] — 2026-11-24
 
 The writer no longer publishes a record that redaction made invalid under its declared schema
@@ -24,6 +17,10 @@ The writer no longer publishes a record that redaction made invalid under its de
 run that used to end with status 0 and an invalid line now ends with status 4 and a structured
 error.** The file's digest moves with the file, so a tool that vendors it copies the new file and
 pins the new digest.
+
+The schemas it ships are released: `parley.query` and `parley.lens` are the 1.1.0 that spec
+`0.2.1` released (the root `CHANGELOG.md`), in place of 1.0.0, pinned to the commit of that release.
+The writer stamps neither message, so no emitted line changes. `--vendor-info` reports spec `0.2.1`.
 
 ### Fixed
 
@@ -55,9 +52,9 @@ pins the new digest.
 
 ### Changed
 
-- The embedded schemas were re-synced: `parley.query` and `parley.lens` are the draft 1.1.0
-  (flyingrobots/parley#133) in place of 1.0.0. The writer stamps neither message, so no emitted
-  line changes; the file's digest moves.
+- The embedded schemas hold `parley.query` 1.1.0 and `parley.lens` 1.1.0
+  (flyingrobots/parley#133), as released with spec `0.2.1`, in place of 1.0.0. The writer stamps
+  neither message, so no emitted line changes; the file's digest moves.
 
 ## [0.2.0] — 2026-11-24
 

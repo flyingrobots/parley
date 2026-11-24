@@ -36,7 +36,7 @@ import type { RecordRef } from "./digest.ts";
 import { loadReceipts, type Bundle, type Load, type LoadedRecord, type Replay, type SidecarResolution } from "./load.ts";
 import { repoReceiptDir, stateReceiptDir } from "./locate.ts";
 import {
-  Deadline, MONOTONIC, NO_RETENTION, QUERY_SCHEMA, READER, Tee, declineOnRun, planQuery, queryRecord,
+  Deadline, MONOTONIC, NO_RETENTION, QUERY_SCHEMA, READER, Tee, declineOnRun, planQuery, queryRecord, shipped,
   type AcceptedQuery, type Asker, type BudgetDecline, type QueryOptions, type QueryRefusal, type QueryRequest, type QueryWindow, type View,
 } from "./query.ts";
 
@@ -329,7 +329,7 @@ export async function openRecords(request: OpenRequest, opts: OpenOptions = {}):
           idempotent: true,
         },
         secrets: [],
-        emits: [{ ...QUERY_SCHEMA }],
+        emits: [shipped(QUERY_SCHEMA)],
       },
     },
     retention: { count: NO_RETENTION },

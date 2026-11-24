@@ -20,13 +20,17 @@ and §5 on sidecars — because the cases §6 calls unconstrainable will happen,
 aborts on the first stray byte is broken by exactly the case the spec admits.
 
 Spec version `0.2.0`. The package version moves with this code; each message schema moves on its
-own (spec §4.4). The schemas it ships are the versions released with spec `0.2.0`, copied from
-`schemas/` at the commit recorded in `src/schemas.ts`, byte-identical by test (spec §4.5).
+own (spec §4.4). The schemas it ships are the repository's top-level files and every released
+snapshot of another version, copied from `schemas/` at the commit recorded in `src/schemas.ts`,
+byte-identical by test (spec §4.5). Fifteen are the versions released with spec `0.2.0`;
+`parley.query` and `parley.lens` are at draft 1.1.0, with their released 1.0.0 shipped beside them
+so lines an earlier reader wrote still validate (flyingrobots/parley#133).
 
-This is a library with no command, for Bun 1.2 or later. Version 0.1.1 is released (tag
-`parley-read-v0.1.1`) and on npm once the owner approves it
-([docs/workflows/release-parley-read](../../docs/workflows/release-parley-read/README.md));
-`bun add @flyingrobots/parley-read` installs it with `@flyingrobots/parley-emit` `^0.2.4`.
+This is a library with no command, for Bun 1.2 or later. This tree is version 0.2.0, which is not
+tagged yet; 0.1.1 is the latest release (tag `parley-read-v0.1.1`), on npm once the owner approves
+it ([docs/workflows/release-parley-read](../../docs/workflows/release-parley-read/README.md)).
+`bun add @flyingrobots/parley-read` installs the released version with `@flyingrobots/parley-emit`
+`^0.2.4`.
 Inside this repository it is the workspace package `@flyingrobots/parley-read`.
 
 ## Loading a directory's receipts
@@ -227,10 +231,11 @@ itself a parley tool can hand one straight to `run.error`:
 | `budget` | Verbatim, defaulted to `{"records": 20}` and the answer says it defaulted | **The bound.** `records` bounds how many records the answer names; `bytes` bounds the digest's line; `ms` is a deadline for the whole read (below) |
 | `window` | Verbatim, two timestamps inclusive at both ends | Yes: the answer is the records inside it, ordered by the view, with `(t, run, seq)` ascending as the last part of the key |
 | `note` | Verbatim | Never parsed |
+| `fold` | Only when stated, a boolean; anything else is refused `query.fold_invalid` | `false` turns [the fold](../../docs/topics/parley-read/README.md#runs-of-one-invocation-are-named-once) off, and the lens echoes it. Absent or `true`, runs of one invocation with one result are named once |
 
 ### The digest, and what it left out
 
-The first response is a **`parley.lens` 1.0.0 record** — the message decided in
+The first response is a **`parley.lens` 1.1.0 record** — the message decided in
 [flyingrobots/parley#46](https://github.com/flyingrobots/parley/issues/46), not a new one. It goes
 through the writer onto the read's stream and into the read's receipt, so the digest is evidence
 and the loader reads it back `validated` against that exact pair. It names the query it answers by
@@ -305,6 +310,10 @@ statement of the order are in
 [the living reference](../../docs/topics/parley-read/README.md#how-the-purpose-orders-the-answer).
 
 ## A captured read
+
+This capture and the ranking after it were made on 2026-11-22 with the library as it then was,
+which stamped `parley.query` 1.0.0; 0.2.0 stamps 1.1.0 and reads these lines as they are, against the
+released 1.0.0 schema it still ships. The digest further down was captured again at 0.2.0.
 
 Two runs of the writer's own `count` example in one directory, then one `queryReceipts` over it
 asking what ran in the last day, on 2026-11-22. The read's own receipt holds five lines; this is
@@ -408,18 +417,18 @@ Four things in that order are the whole feature:
 ## A captured digest
 
 Three runs of the same kind, made afresh, then one read with `budget: {"records": 4}` over the day's
-window on 2026-11-22. The first and third runs are the same invocation with the same result, so the
-digest names the third for both. Eleven records are in the window and the digest names four of
-them, so it says `excluded: 7`, and `folded: 4` of those are the first run's.
-These are the two lines that read's own receipt holds, byte for byte — `bun run check` validates
-both against the shipped schemas:
+window on 2026-11-24, with the library at 0.2.0. The first and third runs are the same invocation
+with the same result, so the digest names the third for both. Eleven records are in the window and
+the digest names four of them, so it says `excluded: 7`, and `folded: 4` of those are the first
+run's. These are the two lines that read's own receipt holds, captured byte for byte; `bun run check`
+validates both against the shipped schemas:
 
 ```jsonl
-{"event":"query","t":1795401942789,"seq":2,"run":"01M834Q1QWPS7W7F2HA0DAG6DA","asker":{"tool":"claude-code","cwd":"/var/folders/wt/s8clst9955x1l0qblsl4925w0000gn/T/parley-digest-readme.vtwlJT/work","task":"flyingrobots/parley#100"},"view":"what-changed","budget":{"records":4},"window":{"from":1795315542778,"to":1795401942778},"note":"about to change the counter; what has it done here","_schema":{"id":"parley.query","version":"1.0.0"}}
-{"event":"lens","t":1795401942844,"seq":6,"run":"01M834Q1QWPS7W7F2HA0DAG6DA","query":{"run":"01M834Q1QWPS7W7F2HA0DAG6DA","seq":2},"asker":{"tool":"claude-code","cwd":"/var/folders/wt/s8clst9955x1l0qblsl4925w0000gn/T/parley-digest-readme.vtwlJT/work","task":"flyingrobots/parley#100"},"view":"what-changed","budget":{"records":4},"window":{"from":1795315542778,"to":1795401942778},"loss":{"bound":"count-only","excluded":7,"folded":4},"runs":[{"run":"01M834Q1KEMCBN373NYE1BV2BG","tool":"count","v":"0.1.0","argv":["count","files"],"resolved":{"command":"files","args":[]},"inv":"638c446f866624d00aed41b516d92549f87b0197871ae5db312b7edaa8051a16","outcome":"failed"},{"run":"01M834Q1QFYZZ3CMXZ0SKE600Z","tool":"count","v":"0.1.0","argv":["count","files"],"resolved":{"command":"files","args":[]},"inv":"638c446f866624d00aed41b516d92549f87b0197871ae5db312b7edaa8051a16","outcome":"succeeded","folded":{"others":1,"records":4}}],"records":[{"run":"01M834Q1KEMCBN373NYE1BV2BG","seq":2,"event":"error","t":1795401942649,"code":"uncaught.exception"},{"run":"01M834Q1KEMCBN373NYE1BV2BG","seq":3,"event":"end","t":1795401942649},{"run":"01M834Q1QFYZZ3CMXZ0SKE600Z","seq":3,"event":"result","t":1795401942776},{"run":"01M834Q1KEMCBN373NYE1BV2BG","seq":1,"event":"receipt.head","t":1795401942647}],"_schema":{"id":"parley.lens","version":"1.0.0"}}
+{"event":"query","t":1795528464056,"seq":2,"run":"01M86XC5NMR9X2V680WDVN2SMY","asker":{"tool":"claude-code","cwd":"/var/folders/wt/s8clst9955x1l0qblsl4925w0000gn/T/parley-digest-readme.u7t50l/work","task":"flyingrobots/parley#133"},"view":"what-changed","budget":{"records":4},"window":{"from":1795442064050,"to":1795528464050},"note":"about to change the counter; what has it done here","_schema":{"id":"parley.query","version":"1.1.0"}}
+{"event":"lens","t":1795528464084,"seq":6,"run":"01M86XC5NMR9X2V680WDVN2SMY","query":{"run":"01M86XC5NMR9X2V680WDVN2SMY","seq":2},"asker":{"tool":"claude-code","cwd":"/var/folders/wt/s8clst9955x1l0qblsl4925w0000gn/T/parley-digest-readme.u7t50l/work","task":"flyingrobots/parley#133"},"view":"what-changed","budget":{"records":4},"window":{"from":1795442064050,"to":1795528464050},"loss":{"bound":"count-only","excluded":7,"folded":4},"runs":[{"run":"01M86XC5JPS28JG7Z8KSMDD3YM","tool":"count","v":"0.1.0","argv":["count","files"],"resolved":{"command":"files","args":[]},"inv":"638c446f866624d00aed41b516d92549f87b0197871ae5db312b7edaa8051a16","outcome":"failed"},{"run":"01M86XC5NDPD38JFMHZNVEA30A","tool":"count","v":"0.1.0","argv":["count","files"],"resolved":{"command":"files","args":[]},"inv":"638c446f866624d00aed41b516d92549f87b0197871ae5db312b7edaa8051a16","outcome":"succeeded","folded":{"others":1,"records":4,"stands_for":["01M86XC5FZQZY4F1EW9HNJKD7M"]}}],"records":[{"run":"01M86XC5JPS28JG7Z8KSMDD3YM","seq":2,"event":"error","t":1795528463963,"code":"uncaught.exception"},{"run":"01M86XC5JPS28JG7Z8KSMDD3YM","seq":3,"event":"end","t":1795528463963},{"run":"01M86XC5NDPD38JFMHZNVEA30A","seq":3,"event":"result","t":1795528464049},{"run":"01M86XC5JPS28JG7Z8KSMDD3YM","seq":1,"event":"receipt.head","t":1795528463962}],"_schema":{"id":"parley.lens","version":"1.1.0"}}
 ```
 
-That line is 1,336 bytes. Seven things in it are the whole feature:
+That line is 1,380 bytes. Eight things in it are the whole feature:
 
 - **It names the four best-ranked records of what it may name**, and nothing else: the failing
   run's `error` and status-2 `end` first, then the successful run's `count.result`, then the
@@ -442,11 +451,24 @@ That line is 1,336 bytes. Seven things in it are the whole feature:
   `{"command":"files","args":[]}` here, and for a tool that resolves `HEAD~1..HEAD` the two
   commits it compared (flyingrobots/parley#90). Like the summary, it counts against `budget.bytes`.
 - **A repeat is said once too.** The two runs that `succeeded` share an `inv` and a result, so the
-  second section stands for both: `folded: {"others": 1, "records": 4}`, this run and one other
+  second section stands for both: `folded: {"others": 1, "records": 4, …}`, this run and one other
   like it whose 4 records are not named (flyingrobots/parley#100), and `loss.folded` says 4 of
   the 7 excluded were left out by that fold rather than by the budget (flyingrobots/parley#79). The
-  failed run shares the `inv` and not the result, so it is never folded into them. See
+  failed run shares the `inv` and not the result, so it is never folded into them. Nor would two
+  runs that both succeeded with different `count.result` records be: every result record is part
+  of what must be equal (flyingrobots/parley#133). See
   [runs of one invocation](../../docs/topics/parley-read/README.md#runs-of-one-invocation-are-named-once).
+- **A fold names what it stands for.** `stands_for` holds the first run's id,
+  `01M86XC5FZQZY4F1EW9HNJKD7M`, so its records open by `(run, seq)` like any the digest names.
+
+The same read made a moment later with `fold: false`, captured the same way. The query records the
+field and the lens echoes it; `loss.folded` is 0, all three runs have a section and none says
+`folded`, and the four records the budget allows now include both successful runs' results:
+
+```jsonl
+{"event":"query","t":1795528464085,"seq":2,"run":"01M86XC5PN3Y97HR6XMT944C41","asker":{"tool":"claude-code","cwd":"/var/folders/wt/s8clst9955x1l0qblsl4925w0000gn/T/parley-digest-readme.u7t50l/work","task":"flyingrobots/parley#133"},"view":"what-changed","budget":{"records":4},"window":{"from":1795442064050,"to":1795528464050},"note":"the same read with the fold off","fold":false,"_schema":{"id":"parley.query","version":"1.1.0"}}
+{"event":"lens","t":1795528464104,"seq":6,"run":"01M86XC5PN3Y97HR6XMT944C41","query":{"run":"01M86XC5PN3Y97HR6XMT944C41","seq":2},"asker":{"tool":"claude-code","cwd":"/var/folders/wt/s8clst9955x1l0qblsl4925w0000gn/T/parley-digest-readme.u7t50l/work","task":"flyingrobots/parley#133"},"view":"what-changed","budget":{"records":4},"window":{"from":1795442064050,"to":1795528464050},"fold":false,"loss":{"bound":"count-only","excluded":7,"folded":0},"runs":[{"run":"01M86XC5JPS28JG7Z8KSMDD3YM","tool":"count","v":"0.1.0","argv":["count","files"],"resolved":{"command":"files","args":[]},"inv":"638c446f866624d00aed41b516d92549f87b0197871ae5db312b7edaa8051a16","outcome":"failed"},{"run":"01M86XC5FZQZY4F1EW9HNJKD7M","tool":"count","v":"0.1.0","argv":["count","files"],"resolved":{"command":"files","args":[]},"inv":"638c446f866624d00aed41b516d92549f87b0197871ae5db312b7edaa8051a16","outcome":"succeeded"},{"run":"01M86XC5NDPD38JFMHZNVEA30A","tool":"count","v":"0.1.0","argv":["count","files"],"resolved":{"command":"files","args":[]},"inv":"638c446f866624d00aed41b516d92549f87b0197871ae5db312b7edaa8051a16","outcome":"succeeded"}],"records":[{"run":"01M86XC5JPS28JG7Z8KSMDD3YM","seq":2,"event":"error","t":1795528463963,"code":"uncaught.exception"},{"run":"01M86XC5JPS28JG7Z8KSMDD3YM","seq":3,"event":"end","t":1795528463963},{"run":"01M86XC5FZQZY4F1EW9HNJKD7M","seq":3,"event":"result","t":1795528463876},{"run":"01M86XC5NDPD38JFMHZNVEA30A","seq":3,"event":"result","t":1795528464049}],"_schema":{"id":"parley.lens","version":"1.1.0"}}
+```
 
 ## Opening what a digest names
 
@@ -498,7 +520,7 @@ the ids are opened; a drill-down past it declines as a read does and opens nothi
 | `planQuery(request)`, `queryRecord(query)` | The refusal rules and the recorded payload, without any reading or writing |
 | `rankRecords(query, records)` | The view's order over records, pure: the same records reordered, never a subset |
 | `digestFor(query, answers, ranked, envelope, outcomes?)` | The bound over that order, pure: the digest's payload, the records it names, the count it excluded and how many of those it `folded`, the bytes its line takes and whether it `fits` a stated byte bound at all |
-| `foldRuns(ranked, outcomes?)` | The fold `digestFor` applies first, pure: runs of one invocation with one result named by the most recent of them |
+| `foldRuns(ranked, outcomes?, view?)` | The fold `digestFor` applies first unless the read states `fold: false`, pure: runs of one invocation with one result named by the most recent of them, which lists the others in `stands_for` |
 | `sufficientBytes(query, answers, total, envelope, folded?)` | The smallest `budget.bytes` that holds a digest naming no records, which a byte decline names |
 | `Deadline`, `MONOTONIC`, `OVER_BUDGET`, `declineOnRun(run, budget, phase, last, over)` | The deadline `budget.ms` is checked against, the default clock, the decline code, and the step and error a decline reports on its run |
 | `digestLine`, `digestBytes` | The line the writer will write for a digest, and its length in UTF-8 bytes |

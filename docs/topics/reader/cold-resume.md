@@ -291,6 +291,17 @@ What the run sections did not settle, by the third reader's account:
 
 ## Folding repeated runs
 
+> **Note, 2026-11-24.** The fold measured here compared `inv`, the outcome, the statuses, the
+> diagnostic codes and, later, `resolved`. It did not compare results. From parley-read 0.2.0
+> two runs fold only when every result record they emitted is equal too, and under
+> `how-it-decided` and `everything` every `receipt.step` and `cache.hit` as well
+> ([flyingrobots/parley#133](https://github.com/flyingrobots/parley/issues/133),
+> [the rule](../parley-read/README.md#runs-of-one-invocation-are-named-once)). The figures below
+> are the captured results of the earlier rule and were not measured again: under 0.2.0 the same
+> receipts fold into at least as many sections, never fewer, and `loss.folded` can differ between
+> views. A folded section now also carries `stands_for`, the ids of the runs it stands for, which
+> none of the captured sections on this page has.
+
 This is a measurement, not a fourth cold reader. The same 50 receipts were copied byte for byte
 into a fresh directory for each read, SHA-256 identical to the copy the third reader used. Each
 of the five views was then read over the same window under the default budget of 20 records,
@@ -390,7 +401,10 @@ What it could not settle, by its account:
   [flyingrobots/parley#100](https://github.com/flyingrobots/parley/issues/100), and since resolved:
   see [a fold counts only the others](#a-fold-counts-only-the-others).
 - **The folded runs' own times.** The fold names none of them, by design. A narrower window, or the
-  loader, finds them.
+  loader, finds them. (2026-11-24: from parley-read 0.2.0 a folded section lists the runs it
+  stands for in `stands_for`, so the drill-down opens their records, and a read with
+  `fold: false` returns them;
+  [flyingrobots/parley#133](https://github.com/flyingrobots/parley/issues/133).)
 - As before: why the 14:38 runs never ended, who started each burst, and why `node` was missing.
 
 ## A fold counts only the others

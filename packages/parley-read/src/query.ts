@@ -23,8 +23,10 @@
 //      the window. The rules are in `rank.ts`; the over-filtering §9 warns about is impossible
 //      here because nothing is dropped at any tier.
 //   - **It does not fetch what the digest left out.** The digest below bounds the answer to the
-//      budget and names what it dropped as a count, and names nothing else: the way to those
-//      records is a wider read. Opening the records a digest *does* name, by identity, is
+//      budget and states what the budget cut as a count and nothing else: the way to those
+//      records is a wider read. What a fold left out it names by run (`folded.stands_for`,
+//      flyingrobots/parley#133), and a read that states `fold: false` folds nothing. Opening
+//      records by identity, the ones a digest names and the ones of a run a fold names, is
 //      `openRecords` in `open.ts` (flyingrobots/parley#51).
 //
 // What it **does** do with the budget is the digest (flyingrobots/parley#50): the first response
@@ -50,9 +52,22 @@ import { LENS_SCHEMA, digestFor, sufficientBytes, type Digest } from "./digest.t
 import { loadReceipts, type Load, type LoadOptions, type LoadedRecord } from "./load.ts";
 import { repoReceiptDir, stateReceiptDir } from "./locate.ts";
 import { rankRecords, type Ranking } from "./rank.ts";
+import { SCHEMAS } from "./schemas.ts";
 
 /** The `parley.query` pair this reader emits; a change to the message moves this version. */
-export const QUERY_SCHEMA = { id: "parley.query", version: "1.0.0" } as const;
+export const QUERY_SCHEMA = { id: "parley.query", version: "1.1.0" } as const;
+
+/**
+ * An emitted type with the schema document this package ships for it. The read declares its own
+ * documents rather than leaving the writer to look the pair up in the copy it ships: the two
+ * packages are versioned apart, and a writer released before a message moved holds no document
+ * for the new pair.
+ */
+export function shipped(ref: { readonly id: string; readonly version: string }): { id: string; version: string; schema: Record<string, unknown> } {
+  const found = SCHEMAS.find((s) => s.id === ref.id && s.version === ref.version);
+  if (found === undefined) throw new Error(`parley-read ships no schema for ${ref.id}@${ref.version}`);
+  return { id: ref.id, version: ref.version, schema: found.schema };
+}
 
 /** The closed view vocabulary (flyingrobots/parley#46). Adding a token moves the two schema versions. */
 export const VIEWS = ["what-ran", "what-failed", "what-changed", "how-it-decided", "everything"] as const;
@@ -96,6 +111,12 @@ export interface QueryRequest {
   readonly window?: { readonly from?: number; readonly to?: number };
   /** Free text, recorded and never parsed. Nothing in the answer branches on it. */
   readonly note?: string;
+  /**
+   * `false` turns the fold off: every run in the window keeps its own records and the budget alone
+   * decides what the digest names (flyingrobots/parley#133). Absent or `true`, runs of one
+   * invocation with one result fold (`fold.ts`). Recorded and echoed only when stated.
+   */
+  readonly fold?: boolean;
 }
 
 export type QueryRefusalCode =
@@ -107,7 +128,8 @@ export type QueryRefusalCode =
   | "query.window_invalid"
   | "query.window_inverted"
   | "query.budget_invalid"
-  | "query.note_empty";
+  | "query.note_empty"
+  | "query.fold_invalid";
 
 /**
  * Why a read was refused. The field names are §6's: a caller that is itself a parley tool can hand
@@ -115,7 +137,7 @@ export type QueryRefusalCode =
  */
 export interface QueryRefusal {
   readonly code: QueryRefusalCode;
-  readonly field: "asker" | "view" | "budget" | "window" | "note";
+  readonly field: "asker" | "view" | "budget" | "window" | "note" | "fold";
   readonly problem: string;
   readonly remedy: string;
   /** What the refusal is measured against. */
@@ -129,6 +151,8 @@ export interface AcceptedQuery {
   readonly budget: Budget;
   readonly window: QueryWindow;
   readonly note?: string;
+  /** Present exactly when the caller stated it; `false` means the digest folds nothing. */
+  readonly fold?: boolean;
   /** True when the budget is `DEFAULT_BUDGET` because the caller stated none (§9: a default is never invisible). */
   readonly budgetDefaulted: boolean;
 }
@@ -161,9 +185,11 @@ export interface QueryAnswer {
    * of the runs that failed first when the view implies a change, then the view's own surface, then `(t, run, seq)`
    * ascending — and cut at the budget. Never more than `budget.records` of them, and fewer when a
    * stated `budget.bytes` cuts first. The records of a run folded into another of the same
-   * invocation and result are not among them (flyingrobots/parley#79). What the fold and the bound
-   * left out is `counts.excluded`, the fold's share `counts.folded`; it is named nowhere, so
-   * reaching it is a wider or narrower read, not a drill-down.
+   * invocation and result are not among them (flyingrobots/parley#79), unless the read stated
+   * `fold: false`. What the fold and the bound left out is `counts.excluded`, the fold's share
+   * `counts.folded`. The runs a fold left out are named in their representative's section
+   * (`digest.runs[].folded.stands_for`), so `openRecords` reaches their records; what the bound
+   * cut is named nowhere, and reaching it is a wider or narrower read.
    */
   readonly records: readonly LoadedRecord[];
   /** The digest this read answered with, exactly as the `parley.lens` record carries it. */
@@ -360,7 +386,7 @@ export interface QueryOptions extends LoadOptions {
 }
 
 /** The reading program's default identity; the drill-down (`open.ts`) records under the same one. */
-export const READER = { name: "parley-read", version: "0.1.2" } as const;
+export const READER = { name: "parley-read", version: "0.2.0" } as const;
 
 /** Collects the read's own lines and forwards them to a caller's sink when there is one. */
 export class Tee implements Sink {
@@ -489,6 +515,15 @@ export function planQuery(request: QueryRequest): QueryPlan {
     ));
   }
 
+  if (request.fold !== undefined && typeof request.fold !== "boolean") {
+    refusals.push(refusal(
+      "query.fold_invalid", "fold",
+      `fold ${JSON.stringify(request.fold)} is not a boolean`,
+      "state fold: false to fold nothing, or omit it and let runs of one invocation with one result fold",
+      "§9",
+    ));
+  }
+
   if (refusals.length > 0) return { refused: true, refusals };
 
   const asker: Asker = {
@@ -504,6 +539,7 @@ export function planQuery(request: QueryRequest): QueryPlan {
       budget: budget!,
       window: { from: window!.from!, to: window!.to! },
       ...(request.note === undefined ? {} : { note: request.note }),
+      ...(request.fold === undefined ? {} : { fold: request.fold }),
       budgetDefaulted,
     },
   };
@@ -518,6 +554,7 @@ export function queryRecord(query: AcceptedQuery): Record<string, unknown> {
     budget: query.budget,
     window: query.window,
     ...(query.note === undefined ? {} : { note: query.note }),
+    ...(query.fold === undefined ? {} : { fold: query.fold }),
   };
 }
 
@@ -574,7 +611,7 @@ export async function queryReceipts(request: QueryRequest, opts: QueryOptions = 
           idempotent: true,
         },
         secrets: [],
-        emits: [{ ...QUERY_SCHEMA }, { ...LENS_SCHEMA }],
+        emits: [shipped(QUERY_SCHEMA), shipped(LENS_SCHEMA)],
       },
     },
     // §5.1 asks every tool for a stated policy. A read states one that deletes nothing: expiring
@@ -588,7 +625,7 @@ export async function queryReceipts(request: QueryRequest, opts: QueryOptions = 
     run.step(
       "recorded the read before answering it",
       "spec §9: a query is itself an event, so the store learns what was asked and a result can name the query it answers",
-      { view: query.view, window: query.window, budget: query.budget, budget_defaulted: query.budgetDefaulted },
+      { view: query.view, window: query.window, budget: query.budget, budget_defaulted: query.budgetDefaulted, ...(query.fold === undefined ? {} : { fold: query.fold }) },
     );
 
     const load = loadReceipts({ cwd, env, ...(opts.home === undefined ? {} : { home: opts.home }), ...(opts.sidecars === undefined ? {} : { sidecars: opts.sidecars }), ...(opts.validate === undefined ? {} : { validate: opts.validate }), ...(opts.history === undefined ? {} : { history: opts.history }) });
@@ -743,6 +780,8 @@ export async function queryReceipts(request: QueryRequest, opts: QueryOptions = 
       window: query.window,
       budget: query.budget,
       asker: { tool: query.asker.tool, ...(query.asker.task === undefined ? {} : { task: query.asker.task }) },
+      // Part of the question when stated: a read that folds and one that does not are two reads.
+      ...(query.fold === undefined ? {} : { fold: query.fold }),
     }),
   });
 

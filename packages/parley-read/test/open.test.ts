@@ -331,7 +331,7 @@ describe("RD-33 a drill-down is a recorded read", () => {
     const q = queries[0]!;
     expect(q.seq).toBe(answer.query.seq);
     expect(q.validation.state).toBe("validated");
-    expect((q.validation as { schema: { id: string; version: string } }).schema).toEqual({ id: "parley.query", version: "1.0.0" });
+    expect((q.validation as { schema: { id: string; version: string } }).schema).toEqual({ id: "parley.query", version: "1.1.0" });
     const record = q.record as Record<string, unknown>;
     expect(record.records).toEqual(ids);
     expect(record.view).toBe("how-it-decided");

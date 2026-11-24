@@ -7,7 +7,7 @@
 // missed". The failure mode §9 names against is over-filtering: a result that reads as complete
 // when it is not.
 //
-// The digest is the `parley.lens` 1.0.0 record decided in flyingrobots/parley#46 — not a new
+// The digest is the `parley.lens` record (1.1.0) decided in flyingrobots/parley#46 — not a new
 // message. That decision already gives a lens the asker, the view, the budget applied, the
 // window, the query it answers by `(run, seq)`, a `loss` bound with the excluded count beside it,
 // and the records it was built from by `(run, seq)`, which is the way back a drill-down takes
@@ -68,19 +68,24 @@
 // never dropped: without them the section does not say which run it is or what became of it.
 //
 // **Runs of one invocation with one result are named once** (flyingrobots/parley#79, `fold.ts`).
-// Before the bound is applied, the runs whose `inv` and whole result are equal are folded into
-// their most recent run: the others' records are not named, the representative's section says
-// `folded: {others, records}`, both counting the others only (flyingrobots/parley#100), and
-// `loss.folded` counts every record the fold left out. Those
-// records are in `loss.excluded` too, so the count still accounts for every record not named, and
-// `excluded − folded` is what the budget cut.
+// Before the bound is applied, runs are folded into their most recent run when their `inv` is
+// equal, what a section states about their result is equal (outcome, reason, `end` statuses,
+// diagnostic codes, `resolved`), every result record they emitted is equal, and, under
+// `how-it-decided` and `everything`, every decision record is equal too
+// (flyingrobots/parley#133; the exact criterion is `fold.ts`'s). The others' records are not
+// named, the representative's section says `folded: {others, records, stands_for}`, the counts
+// covering the others only (flyingrobots/parley#100) and `stands_for` listing their run ids, and
+// `loss.folded` counts every record the fold left out. Those records are in `loss.excluded` too,
+// so the count still accounts for every record not named, and `excluded − folded` is what the
+// budget cut. A read that states `fold: false` skips all of it: the lens echoes `fold`, and
+// `loss.folded` is 0.
 import { foldRuns, type RunFold } from "./fold.ts";
 import type { LoadedRecord } from "./load.ts";
 import type { AcceptedQuery, Asker, Budget, QueryWindow, View } from "./query.ts";
 import type { Outcome } from "./rank.ts";
 
 /** The `parley.lens` pair a digest is emitted as; a change to the message moves this version. */
-export const LENS_SCHEMA = { id: "parley.lens", version: "1.0.0" } as const;
+export const LENS_SCHEMA = { id: "parley.lens", version: "1.1.0" } as const;
 
 /** What kind of statement the loss is. `none` is only ever paired with an excluded count of 0. */
 export type LossBound = "none" | "count-only";
@@ -138,7 +143,8 @@ export const RUN_SECTION_BYTES = 512;
  * - `head`: `not_in_window` when the window does not hold the run's head; absent when it does.
  * - `folded`: present on a run that stands for others of one invocation with one result
  *   (`fold.ts`): how many other runs it stands for and how many of their records the fold left
- *   out, both excluding this run (flyingrobots/parley#100). Never dropped.
+ *   out, both excluding this run (flyingrobots/parley#100), and those runs' ids in `stands_for`
+ *   (flyingrobots/parley#133). Never dropped, and the ids are outside `RUN_SECTION_BYTES`.
  * - `dropped`: the fields left out to fit `RUN_SECTION_BYTES`, in the order they were dropped.
  */
 export interface RunSection {
@@ -166,7 +172,7 @@ export interface Loss {
   readonly excluded: number;
   /**
    * How many of `excluded` the fold left out (flyingrobots/parley#79): the records of runs folded
-   * into a representative. It depends on the window alone, never on the budget, and
+   * into a representative. It depends on the window, the view and `fold`, never on the budget, and
    * `excluded − folded` is what the budget cut. Zero is a count, not an absence.
    */
   readonly folded: number;
@@ -182,6 +188,8 @@ export interface Digest {
   /** The budget actually applied, the default included: two digests under different budgets are not comparable. */
   readonly budget: Budget;
   readonly window: QueryWindow;
+  /** Echoed from the query, present exactly when the query states it. `false`: nothing was folded. */
+  readonly fold?: boolean;
   readonly loss: Loss;
   /** One section per run `records` names, in the order the entries first name them. */
   readonly runs: readonly RunSection[];
@@ -234,14 +242,23 @@ export function lensEntry(record: LoadedRecord): LensEntry {
   };
 }
 
-const sectionBytes = (section: RunSection) => Buffer.byteLength(JSON.stringify(section), "utf8");
+/**
+ * A section's size against `RUN_SECTION_BYTES`: its serialised JSON without the ids a fold names.
+ * Those are never dropped and a fold of forty runs carries over a kilobyte of them, so counting
+ * them would drop `resolved` and `argv` from exactly the sections that stand for the most runs.
+ * They are part of the line, so `budget.bytes` bounds them.
+ */
+const sectionBytes = (section: RunSection) => {
+  const bounded = section.folded === undefined ? section : { ...section, folded: { others: section.folded.others, records: section.folded.records } };
+  return Buffer.byteLength(JSON.stringify(bounded), "utf8");
+};
 
 /**
  * What a lens says about one run, read off the window's records for it (`window` may hold other
  * runs' records too; `digestFor` passes only the run's own) and the window's outcomes, with the
  * run's fold when it stands for others. The key order is fixed, `run, tool, v, argv, resolved, inv,
  * outcome, reason, head, folded, dropped`, and the section is bounded by `RUN_SECTION_BYTES` by dropping
- * whole fields, never by cutting a string.
+ * whole fields, never by cutting a string. The ids in `folded.stands_for` are outside that bound.
  */
 export function runSection(run: string, window: readonly LoadedRecord[], outcomes?: Readonly<Record<string, Outcome>>, fold?: RunFold): RunSection {
   const own = window.filter((r) => r.run === run);
@@ -273,7 +290,7 @@ export function runSection(run: string, window: readonly LoadedRecord[], outcome
       ...(outcome === undefined ? {} : { outcome }),
       ...(reason === undefined ? {} : { reason }),
       ...(head === undefined ? { head: "not_in_window" as const } : {}),
-      ...(fold === undefined ? {} : { folded: { others: fold.others, records: fold.records } }),
+      ...(fold === undefined ? {} : { folded: { others: fold.others, records: fold.records, stands_for: [...fold.stands_for] } }),
       ...(dropped.length === 0 ? {} : { dropped: [...dropped] }),
     } as RunSection;
   };
@@ -328,6 +345,7 @@ function buildDigest(query: AcceptedQuery, answers: RecordRef, kept: readonly Le
     view: query.view,
     budget: query.budget,
     window: query.window,
+    ...(query.fold === undefined ? {} : { fold: query.fold }),
     // `none` is a claim that nothing was left out, so it is only ever paired with 0; the schema
     // refuses `none` beside a non-zero count (flyingrobots/parley#46).
     // A fold leaves records out, so a digest that folded anything is never `none`.
@@ -367,7 +385,8 @@ export function sufficientBytes(query: AcceptedQuery, answers: RecordRef, total:
  * Pure: it reads nothing, writes nothing, records nothing, and mutates neither its arguments nor
  * the records in them. `ranked` is the whole of the window in rank order
  * (flyingrobots/parley#49). The runs of one invocation with one result are folded first
- * (`fold.ts`), which needs `outcomes`; the digest is the prefix of what the fold leaves, in the
+ * (`fold.ts`), which needs `outcomes` and reads the query's view, unless the query states
+ * `fold: false`, in which case nothing is folded; the digest is the prefix of what the fold leaves, in the
  * same order, and `excluded` is the rest of the window counted, the folded records included.
  * `outcomes` is the ranking's verdict per run over that whole window, and each run section carries
  * its run's; without it, no section carries an outcome or a reason. Each section is read off the
@@ -385,8 +404,9 @@ export function digestFor(
   envelope: LineEnvelope,
   outcomes?: Readonly<Record<string, Outcome>>,
 ): Digested {
-  // The fold depends on the window and its outcomes, never on the budget.
-  const folding = foldRuns(ranked, outcomes);
+  // The fold depends on the window, its outcomes and the view, never on the budget. A read that
+  // states `fold: false` is given every run (flyingrobots/parley#133).
+  const folding = query.fold === false ? foldRuns(ranked) : foldRuns(ranked, outcomes, query.view);
   const named = folding.records;
   // Built once, so every candidate prefix the byte search measures is cut from the same entries.
   const entries = named.map((record) => lensEntry(record));

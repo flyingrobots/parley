@@ -5,6 +5,12 @@ on its own; the spec and each message schema move separately (spec §4.4).
 
 ## [Unreleased]
 
+### Changed
+
+- `src/schemas.ts` re-synced: it now holds the draft `parley.query` 1.1.0 and `parley.lens` 1.1.0
+  (flyingrobots/parley#133) in place of 1.0.0. The writer stamps neither message, so no emitted
+  line changes.
+
 ## [0.3.0] — 2026-11-24
 
 A declared file input can be read through the run, so the receipt records the bytes the tool read

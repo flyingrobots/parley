@@ -11,11 +11,23 @@
 // **What "the same" is.** §2.2's `inv` is the run's identity: the same tool and version, the same
 // normalised arguments, the same input content. It is not the run's result, and §2.3 is explicit
 // that "same `inv`, different result" is a divergence, the thing a reader most needs to see. So
-// two runs fold only when their `inv` is equal **and** every summary a lens would state about the
-// run is equal too: the outcome, the `reason` an undetermined outcome carries, the `end` status,
-// the error, warning and startup-failure codes in the order the run emitted them, and the head's
-// `resolved`, which the section carries (flyingrobots/parley#90). A flaky run
-// that failed once and passed once is two results and two sections, never one.
+// two runs fold only when their `inv` is equal **and** all of the following are equal too:
+//
+// - what the run section states: the outcome, the `reason` an undetermined outcome carries, the
+//   `end` statuses, the error, warning and startup-failure codes in the order the run emitted
+//   them, and the head's `resolved` (flyingrobots/parley#90);
+// - **every result record** (flyingrobots/parley#133): the tool's own records, each `page`,
+//   each `sidecar`'s `bytes` and `sha256` and a read's own `lens`, in `seq` order, compared as canonical JSON without the
+//   envelope's `t`, `seq`, `run` and `session`. Until 0.2.0 no result entered the key, so two
+//   successful runs of one invocation that answered 1 and 2 were stated as one run twice;
+// - **the decision records, under a view that states them**: every `receipt.step` and
+//   `cache.hit`, compared the same way, when the view's surface holds them, which is
+//   `how-it-decided` and `everything`. Under the other three views two runs that reached one
+//   result by different decisions still fold.
+//
+// A flaky run that failed once and passed once is two results and two sections, never one. The
+// key does not hold an error's or a warning's text, only its code, and it does not hold the head's
+// `argv`, which may differ between two runs of one `inv`.
 //
 // **What never folds.**
 // - A run with no `inv`. §2.2 makes `inv` SHOULD in v0.2 and omits it when the program cannot
@@ -27,6 +39,7 @@
 //   Nor a run the window cannot show is unredacted, because it holds neither its head nor an `end`
 //   saying `redacted: false`: a missing statement is not a negative one (§1.2a).
 // - Anything when the caller states no outcomes: "the same result" cannot be established.
+// - Anything when the read states `fold: false` (`digestFor` then does not call this module).
 //
 // **The representative is the most recent run of its group**: the one whose latest dated record
 // in the window is latest, ties broken by the greater run id. The most recent run is the one a
@@ -37,10 +50,16 @@
 // folded-away runs from what the digest may name, keeping the ranking's order, and the digest's
 // bound cuts the tail of what remains. Every record the fold removed is still counted in
 // `loss.excluded`, and `loss.folded` says how many of those the fold, rather than the budget, left
-// out, so the two kinds of loss are told apart structurally. The fold depends on the window and the
-// outcomes alone, never on the budget, so the same window folds the same way under any budget.
+// out, so the two kinds of loss are told apart structurally. The fold depends on the window, its
+// outcomes and the view, never on the budget, so the same window folds the same way under any
+// budget.
+//
+// **A fold names what it stands for** (flyingrobots/parley#133): `stands_for` lists the other
+// runs' ids, most recent first, so a reader can open their records by `(run, seq)` instead of
+// taking the count on trust.
 import type { LoadedRecord } from "./load.ts";
-import type { Outcome } from "./rank.ts";
+import type { View } from "./query.ts";
+import { PROTOCOL_EVENTS, onViewSurface, toolOwned, type Outcome } from "./rank.ts";
 
 /** What a representative's run section says it stands for. */
 export interface RunFold {
@@ -51,6 +70,12 @@ export interface RunFold {
   readonly others: number;
   /** How many records of those other runs, in the window, the fold left out of the digest. */
   readonly records: number;
+  /**
+   * The ids of those other runs, most recent first by the rule that picks the representative:
+   * the later latest dated record, ties to the greater run id. As long as `others`. Named as the
+   * lens carries it (`parley.lens` 1.1.0), so the fold is the wire shape.
+   */
+  readonly stands_for: readonly string[];
 }
 
 export interface Folding {
@@ -67,12 +92,40 @@ const CODED: ReadonlySet<string> = new Set(["error", "warning", "startup.failed"
 
 const nonEmpty = (value: unknown): value is string => typeof value === "string" && value.length > 0;
 
+/** The envelope fields (§1.3, §2.1) that differ between any two runs and are no part of what a record says. */
+const ENVELOPE_ONLY: ReadonlySet<string> = new Set(["t", "seq", "run", "session"]);
+
+/** The decision records: the ones `how-it-decided` is an answer about (`rank.ts`). */
+const DECISIONS = ["receipt.step", "cache.hit"] as const;
+
+/**
+ * Whether a record carries a run's result: a record of the tool's own (§7), a `page` of its output
+ * (§7.2), a `sidecar` standing in for one (§5), or the `lens` a read answered with (§9), which is
+ * what a read produces. A record with no event token, or one the protocol does not define, counts
+ * too, whatever pair it advertises, so nothing the reader cannot attribute is left out of the
+ * comparison.
+ */
+function isResult(record: LoadedRecord): boolean {
+  if (record.event === "page" || record.event === "sidecar" || record.event === "lens") return true;
+  return toolOwned(record) || record.event === null || !PROTOCOL_EVENTS.has(record.event);
+}
+
+/** A record as the fold compares it: its payload with canonical key order and no envelope. */
+function payload(record: LoadedRecord): unknown {
+  // A sidecar's stored bytes are the result; its `path` and `source` are where it was put.
+  if (record.event === "sidecar") return canonical({ event: "sidecar", bytes: record.record.bytes, sha256: record.record.sha256 });
+  // A lens names the query it answers by that read's own `(run, seq)`, which is identity, not result.
+  const skip = (k: string) => ENVELOPE_ONLY.has(k) || (record.event === "lens" && k === "query");
+  return canonical(Object.fromEntries(Object.entries(record.record).filter(([k]) => !skip(k))));
+}
+
 /**
  * The key two runs must share to fold, or null when the run never folds. It is the run's `inv`
- * (the head's, or else `receipt.inputs`'s, as the run section reads it) and its whole result as a
- * lens would state it.
+ * (the head's, or else `receipt.inputs`'s, as the run section reads it), what the run section
+ * states about its result, every result record, and, when `view` is one whose surface holds the
+ * decision records, every decision record. With no `view`, decisions are not compared.
  */
-function foldKey(own: readonly LoadedRecord[], outcome: Outcome | undefined): string | null {
+function foldKey(own: readonly LoadedRecord[], outcome: Outcome | undefined, view: View | undefined): string | null {
   if (outcome === undefined) return null;
   const head = own.find((r) => r.event === "receipt.head");
   const inputs = own.find((r) => r.event === "receipt.inputs" && nonEmpty(r.record.inv));
@@ -96,7 +149,15 @@ function foldKey(own: readonly LoadedRecord[], outcome: Outcome | undefined): st
   // The head's `resolved` too, since a section states it (flyingrobots/parley#90): §2.2 keeps the
   // working directory and the like out of `inv`, so one `inv` can carry two interpretations, and
   // a fold must not state one run's for another. Keys are sorted so key order is not a difference.
-  return JSON.stringify([inv, outcome, reason, ends.map((r) => r.record.status ?? null), codes, canonical(head?.record.resolved)]);
+  const inSeq = [...own].sort((a, b) => a.seq - b.seq);
+  // Every result, so "same `inv`, different result" (§2.3) is never one run (flyingrobots/parley#133).
+  const results = inSeq.filter(isResult).map(payload);
+  // The view decides whether decisions are part of what the answer states: a kind of record on
+  // the view's surface is one the reader asked about.
+  const decisions = view === undefined
+    ? []
+    : inSeq.filter((r) => (DECISIONS as readonly string[]).includes(r.event ?? "") && onViewSurface(view, r)).map(payload);
+  return JSON.stringify([inv, outcome, reason, ends.map((r) => r.record.status ?? null), codes, canonical(head?.record.resolved), results, decisions]);
 }
 
 /** A JSON value with every object's keys sorted, so two equal values serialise alike. */
@@ -116,9 +177,11 @@ function latest(own: readonly LoadedRecord[]): number {
 /**
  * Fold the runs of a ranked window that are one invocation with one result. Pure: it reads,
  * writes and mutates nothing. `ranked` is the whole window in rank order and `outcomes` the
- * ranking's verdict per run over it; without `outcomes` nothing folds.
+ * ranking's verdict per run over it; without `outcomes` nothing folds. `view` is the view the
+ * answer is for: under one whose surface holds the decision records, runs must agree on those
+ * too. Without it only results are compared.
  */
-export function foldRuns(ranked: readonly LoadedRecord[], outcomes?: Readonly<Record<string, Outcome>>): Folding {
+export function foldRuns(ranked: readonly LoadedRecord[], outcomes?: Readonly<Record<string, Outcome>>, view?: View): Folding {
   const none: Folding = { records: ranked, folds: new Map(), folded: 0 };
   if (outcomes === undefined) return none;
 
@@ -131,7 +194,7 @@ export function foldRuns(ranked: readonly LoadedRecord[], outcomes?: Readonly<Re
 
   const groups = new Map<string, string[]>();
   for (const [run, own] of byRun) {
-    const key = foldKey(own, outcomes[run]);
+    const key = foldKey(own, outcomes[run], view);
     if (key === null) continue;
     const group = groups.get(key);
     if (group === undefined) groups.set(key, [run]);
@@ -143,22 +206,17 @@ export function foldRuns(ranked: readonly LoadedRecord[], outcomes?: Readonly<Re
   let folded = 0;
   for (const group of groups.values()) {
     if (group.length < 2) continue;
-    let best = group[0]!;
-    let bestT = latest(byRun.get(best)!);
-    for (const run of group.slice(1)) {
-      const t = latest(byRun.get(run)!);
-      if (t > bestT || (t === bestT && run > best)) {
-        best = run;
-        bestT = t;
-      }
-    }
+    // Most recent first: the later latest dated record, ties to the greater run id. The first is
+    // the representative and the rest are what it stands for, in that order.
+    const at = new Map(group.map((run) => [run, latest(byRun.get(run)!)]));
+    const order = [...group].sort((a, b) => (at.get(b)! - at.get(a)!) || (a < b ? 1 : a > b ? -1 : 0));
+    const [best, ...rest] = order as [string, ...string[]];
     let records = 0;
-    for (const run of group) {
-      if (run === best) continue;
+    for (const run of rest) {
       away.add(run);
       records += byRun.get(run)!.length;
     }
-    folds.set(best, { others: group.length - 1, records });
+    folds.set(best, { others: rest.length, records, stands_for: rest });
     folded += records;
   }
   if (away.size === 0) return none;

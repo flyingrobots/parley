@@ -78,6 +78,7 @@ versions. The vocabulary is not extensible by a caller.
 | `view` | Nothing | **Refused.** There is no privileged view to fall back on, and a guessed view is one the caller cannot see in the lens |
 | `budget` | One documented default, `{"records": 20}` | n/a — the default applies, and the result's lens carries the budget that was actually applied |
 | `note` | Nothing | Omitted. Free text, recorded, never parsed; nothing in the answer branches on it |
+| `fold` | Nothing | Omitted, and the reader folds repeated runs. A caller who wants every run states `fold: false`, and the lens echoes it ([flyingrobots/parley#133](https://github.com/flyingrobots/parley/issues/133)) |
 
 The budget is the one field with a default, and the default is not silent: the lens states the
 budget that produced the result, so a caller who got twenty records can see that twenty was the
@@ -93,6 +94,7 @@ One argument each, each argument one token, and nothing positional:
 --view <token>                     # one of the five
 --budget <kind>=<n>[,<kind>=<n>]   # records, bytes, ms; --budget 20 means records=20
 --note <text>                      # optional, free text, never parsed
+--no-fold                          # optional; fills fold: false
 ```
 
 A caller run from a program that knows its own name, in a working directory, with the default
@@ -123,11 +125,15 @@ the view, and results computed under different budgets are not comparable. It al
   `head: "not_in_window"`, and a section too large for its bound drops whole fields and names them
   rather than cutting a string
   ([flyingrobots/parley#83](https://github.com/flyingrobots/parley/issues/83)). Runs that are one
-  invocation with one result — an equal `inv` and an equal outcome, status and error and warning
-  codes — are named once, by the most recent of them, whose section says `folded: {others,
-  records}`, both counting the other runs only
+  invocation with one result — an equal `inv`, an equal outcome, status and error and warning
+  codes, and equal result records — are named once, by the most recent of them, whose section says
+  `folded: {others, records, stands_for}`: two counts of the other runs only, and those runs' ids
   ([flyingrobots/parley#79](https://github.com/flyingrobots/parley/issues/79),
-  [flyingrobots/parley#100](https://github.com/flyingrobots/parley/issues/100));
+  [flyingrobots/parley#100](https://github.com/flyingrobots/parley/issues/100),
+  [flyingrobots/parley#133](https://github.com/flyingrobots/parley/issues/133)). Two runs whose
+  results differ are never one, and a read that states `fold: false` folds nothing; the lens then
+  echoes `fold`. The exact criterion is
+  [the library's](../parley-read/README.md#runs-of-one-invocation-are-named-once);
 - **a loss bound**, `loss.bound`, with the count of what was left out beside it, and
   `loss.folded`, how many of those a fold rather than the budget left out.
 
@@ -145,14 +151,18 @@ Which budget field bounds what, and how the count is arrived at, is
 
 ## The two messages
 
-Both were released with spec `0.2.0`, so a change to either needs a new version. See
-[`schemas/README.md`](../../../schemas/README.md) for the table and the rules that govern a release
-and a draft.
+Both were released at 1.0.0 with spec `0.2.0`, so a change to either needs a new version. Both
+are now at **draft 1.1.0**, which adds optional fields and removes nothing
+([flyingrobots/parley#133](https://github.com/flyingrobots/parley/issues/133)): `fold` on the
+query, and on the lens `fold` and a folded section's `stands_for`. The released 1.0.0 of each is
+unchanged under `schemas/released/`, and the reader validates a line against the version it
+advertises. See [`schemas/README.md`](../../../schemas/README.md) for the table and the rules that
+govern a release and a draft.
 
 | Schema | Version | Message |
 | --- | --- | --- |
-| `parley.query` | 1.0.0 | A read, recorded as an event; with `records`, a drill-down naming the records it opens |
-| `parley.lens` | 1.0.0 | The lens a result carries |
+| `parley.query` | 1.1.0 (draft) | A read, recorded as an event; with `records`, a drill-down naming the records it opens |
+| `parley.lens` | 1.1.0 (draft) | The lens a result carries |
 
 A read is a run, so both lines carry the §1.3 envelope. `run` on these lines is the read's own run,
 not the run being read: the read writes its own receipt like any other parley program, and `asker`
@@ -167,7 +177,7 @@ A query, asking what failed in the last day:
  "budget":{"records":20},
  "window":{"from":1795240100000,"to":1795326500000},
  "note":"resuming after a crash; which run broke the audit path",
- "_schema":{"id":"parley.query","version":"1.0.0"}}
+ "_schema":{"id":"parley.query","version":"1.1.0"}}
 ```
 
 The lens of the result that answers it, naming the failed run of this specification's examples:
@@ -184,7 +194,7 @@ The lens of the result that answers it, naming the failed run of this specificat
           "argv":["theme-book","count","--format","css","--token","[redacted]"],"outcome":"failed"}],
  "records":[{"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8","seq":4,"event":"error","t":1795326412380,"code":"contrast.unsatisfiable"},
             {"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8","seq":9,"event":"end","t":1795326412401}],
- "_schema":{"id":"parley.lens","version":"1.0.0"}}
+ "_schema":{"id":"parley.lens","version":"1.1.0"}}
 ```
 
 A drill-down is the same `parley.query` message with `records` naming what it opens, by the
@@ -201,7 +211,7 @@ of ids asked, and `budget.bytes`, when stated, bounds the records that open: the
  "window":{"from":1795240100000,"to":1795326500000},
  "records":[{"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8","seq":4},
             {"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8","seq":9}],
- "_schema":{"id":"parley.query","version":"1.0.0"}}
+ "_schema":{"id":"parley.query","version":"1.1.0"}}
 ```
 
 `bun run check` validates all three of these against the schemas on every push, and

@@ -5,6 +5,65 @@ on its own; the spec and each message schema move separately (spec §4.4).
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-11-24
+
+A fold could hide a run whose result differed, and said only how many runs it stood for
+(flyingrobots/parley#133). This version changes what folds, lets a read turn the fold off, and
+names the folded runs. It emits `parley.query` and `parley.lens` at **1.1.0**, which are drafts in
+this repository until the root `CHANGELOG.md` releases them; it still reads 1.0.0 lines.
+
+### Fixed
+
+- **Two runs whose results differ no longer fold.** The fold compared `inv`, the outcome, the
+  `end` statuses, the diagnostic codes and `resolved`, and no result, so two successful runs of
+  one invocation that answered 1 and 2 came back as one run with `folded: {others: 1}` under every
+  view and every budget. Runs now fold only when every result record is equal too: the tool's own
+  records, each `page`, each `sidecar`'s `bytes` and `sha256` and a read's own `lens`, in `seq`
+  order, as canonical JSON without the envelope's `t`, `seq`, `run` and `session` (RD-110a,
+  RD-110b).
+- **Runs that decided differently no longer fold under a view that states decisions.** When the
+  view's surface holds them, the decision records must be equal as well: `receipt.step` under
+  `how-it-decided` and `everything`, `cache.hit` under those and `what-ran` (RD-110c). The fold
+  therefore depends on the view, and `loss.folded` can differ between two views of one window.
+- The comments in `fold.ts` and `digest.ts` said the key held the run's "whole result". They now
+  state the criterion, and what it leaves out: a diagnostic's text and the head's `argv`.
+
+### Added
+
+- **`fold: false` on a read** turns the fold off: every run keeps its own records and the budget
+  alone decides what the digest names. The `parley.query` records `fold` and the `parley.lens`
+  echoes it, each only when the caller states it; it is part of the read's own `resolved` and so
+  of its `inv`. A value that is not a boolean is refused with the new code `query.fold_invalid`,
+  field `fold` (RD-110d, RD-110e). `QueryRequest`, `AcceptedQuery` and `Digest` gain `fold`.
+- **A folded section names the runs it stands for**: `folded.stands_for`, the other runs' ids,
+  most recent first, as many as `others`, so `openRecords` reaches their records (RD-110f).
+  `RunFold` gains `stands_for`. The ids are never dropped and do not count against
+  `RUN_SECTION_BYTES`; they are part of the line `budget.bytes` bounds, at 29 bytes a run
+  (RD-110g).
+- `foldRuns` takes the view as an optional third argument; without it only results are compared.
+  `toolOwned` and `PROTOCOL_EVENTS` are exported from `rank.ts` for it, and `shipped(ref)` from
+  `query.ts`.
+
+### Changed
+
+- **A digest over the same history can name more runs than 0.1.x did**, because fewer runs fold,
+  and a folded section is longer by its ids, so a `budget.bytes` that held a line may hold fewer
+  records.
+- **`RunFold.stands_for` is required.** A caller that builds a `RunFold` by hand to pass to
+  `runSection` must supply it; `foldRuns` always does. `foldRuns`'s new third argument is optional,
+  so existing calls compile and behave as a read with no view stated.
+- `QUERY_SCHEMA` and `LENS_SCHEMA` are `1.1.0`. A consumer that validates this reader's lines
+  against the exact pair needs those schemas.
+- **The package ships nineteen schemas, not seventeen.** `bun run sync-schemas` copies the
+  top-level file of each message and every released snapshot of another version, so
+  `parley.query` and `parley.lens` 1.0.0 are shipped beside 1.1.0 and a read recorded by 0.1.x
+  still loads `validated` rather than `partial` (RD-110h). The keys of `SCHEMA_SOURCE.files` for
+  those two are `released/<id>/1.0.0.schema.json`.
+- A read declares the schema documents of the types it emits itself, instead of leaving the
+  writer to find them in its own copy: `@flyingrobots/parley-emit` 0.3.0 ships 1.0.0 of
+  both messages and no 1.1.0.
+- A read's own receipt records `v` `0.2.0`.
+
 ## [0.1.2] — 2026-11-24
 
 No change to behaviour or to the schemas it ships. A read's own receipt records `v` `0.1.2`.

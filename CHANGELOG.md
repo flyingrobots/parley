@@ -18,9 +18,25 @@ the entry under it names each schema version it releases, and those are separate
   All 17 agree, with no exceptions. Wesley is pinned exactly in `package.json` `config.wesley`, and
   CI installs that version and fails if it is missing. Without it, `bun test` skips those cases
   and says why (flyingrobots/parley#118).
+- `parley.query` 1.1.0, a draft: an optional boolean `fold`. `false` asks the reader to fold
+  nothing; absent or `true`, the reader folds runs of one invocation with one result as before.
+  1.0.0 stays released and unchanged (flyingrobots/parley#133).
+- `parley.lens` 1.1.0, a draft: an optional boolean `fold`, echoed from the query when the query
+  states it, and an optional `stands_for` in a run section's `folded`, the run ids of the other
+  runs the section stands for, most recent first. 1.0.0 gave a count and no way to the folded
+  runs. The descriptions of `folded` and `loss.folded` now state the criterion the reader applies
+  from `@flyingrobots/parley-read` 0.2.0: runs fold only when their result records are equal too,
+  and under `how-it-decided` and `everything` their decision records, so the fold depends on the
+  view as well as the window. 1.0.0 stays released and unchanged (flyingrobots/parley#133).
+  Both are minor versions: each adds optional fields and removes or narrows nothing (spec §4.5).
 
 ### Changed
 
+- `@flyingrobots/parley-read` 0.2.0 emits `parley.query` and `parley.lens` at the draft 1.1.0
+  above and ships their released 1.0.0 beside them, so it validates the lines of both versions.
+  Its fold no longer hides a run whose result differs
+  (flyingrobots/parley#133; `packages/parley-read/CHANGELOG.md`). It is not tagged: these two
+  schema versions are to be released first, since a released package should not stamp a draft.
 - `@flyingrobots/parley-emit` 0.3.0 and `parley_emit.py` 0.2.0 add `run.readInput` and
   `run.read_input`: a tool reads a declared file input through the run, and the receipt records
   the digest of the bytes it read, not of the file as the handler left it

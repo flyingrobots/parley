@@ -487,7 +487,7 @@ type RecordId @parley_open {
 }
 
 "A read against the history, recorded as an event: the asker it is for, the view it wants, the budget it will accept and the window it covers (spec §9, informative; the representation is decided in flyingrobots/parley#46 and read against the observer-geometry treatment in docs/topics/related-work/observer-geometry.md). The envelope's run is the read's own run; asker is who the read is for. A drill-down, which opens records a lens named, is the same message with records stating which."
-type ReadQuery @parley_message(id: "parley.query", version: "1.0.0", title: "parley query") @parley_open {
+type ReadQuery @parley_message(id: "parley.query", version: "1.1.0", title: "parley query") @parley_open {
   event: String! @parley_const(string: "query")
   "POSIX time in milliseconds (spec §1.3)."
   t: Int64! @parley_minimum(value: 0)
@@ -507,6 +507,8 @@ type ReadQuery @parley_message(id: "parley.query", version: "1.0.0", title: "par
   window: QueryWindow!
   "Free text from the asker, recorded and never parsed. Nothing in the answer branches on it."
   note: String @parley_optional @parley_minLength(value: 1)
+  "Whether the read may fold runs it judges to be repeats of one invocation with one result into the most recent of them (flyingrobots/parley#79). false: nothing is folded, so every run in the window keeps its own records and the budget alone decides what the answer names (flyingrobots/parley#133). true or absent: the reader folds, and the result's lens names every run a fold stands for. Never inferred: the reader records it only when the asker states it, and the lens echoes it. It selects nothing on a drill-down."
+  fold: Boolean @parley_optional
   "Present only on a drill-down: the records the read asks for by (run, seq), the identity a parley.lens names them by, in the order asked (flyingrobots/parley#51). A drill-down answers with exactly these records in full, a sidecar's stored record included, and an outcome per id; the view and window are recorded and select nothing, budget.records is the number of ids asked, and budget.bytes, when stated, bounds the records opened: whole records in the order asked while their summed size stays within it, and an over_budget outcome with no contents for each id past it (flyingrobots/parley#78). Absent on a read that answers with a digest."
   records: [RecordId!] @parley_optional @parley_minItems(value: 1)
   _schema: SchemaRef! @parley_message_ref
@@ -543,7 +545,7 @@ type LensLoss @parley_open {
   bound: String! @parley_enum(values: ["none", "count-only"])
   "How many records in the window the view did not name, whatever left them out: the budget, or a fold (folded). A proxy and a weak one: one withheld record can matter more than fifty, so this count cannot bound what the view loses."
   excluded: Int! @parley_minimum(value: 0)
-  "How many of excluded were left out because their run was folded into another run of the same invocation and the same result, rather than by the budget (flyingrobots/parley#79): the records of every run a runs section's folded stands for, other than the section's own. It depends on the window alone, never on the budget, so excluded minus folded is what the budget cut. At most excluded, which a schema cannot check; a reader can. Optional so that lines written under the earlier drafts still validate; parley-read always writes it, 0 included."
+  "How many of excluded were left out because their run was folded into another run of the same invocation and the same result, rather than by the budget (flyingrobots/parley#79): the records of every run a runs section's folded stands for, other than the section's own. It depends on the window, the view and fold, never on the budget, so excluded minus folded is what the budget cut. At most excluded, which a schema cannot check; a reader can. Optional so that lines written under the earlier drafts still validate; parley-read always writes it, 0 included."
   folded: Int @parley_optional @parley_minimum(value: 0)
 }
 
@@ -556,6 +558,8 @@ type RunFolded @parley_open {
   others: Int! @parley_minimum(value: 1)
   "How many records of those other runs, in the window, the fold left out of records, this run's own excluded; each is counted in loss.excluded and loss.folded."
   records: Int! @parley_minimum(value: 0)
+  "The run ids of the other runs this section stands for, this run excluded, most recent first, so that their records can be opened by (run, seq) or read under a window that holds them (flyingrobots/parley#133). As many as others. Optional so that a line written under 1.0.0, which listed none, has the same shape; parley-read always writes it, never drops it to fit the section's bound and does not count it against that bound. It is part of the line budget.bytes bounds."
+  stands_for: [String!] @parley_optional @parley_minItems(value: 1)
 }
 
 type RunSection @parley_open
@@ -578,7 +582,7 @@ type RunSection @parley_open
   reason: RunReason @parley_optional
   "Present when the window does not hold the run's receipt head, so tool, v and argv are not known from it. Absent when it does."
   head: String @parley_optional @parley_const(string: "not_in_window")
-  "Present when this run stands for other runs of the same invocation and the same result (flyingrobots/parley#79): runs with an equal inv (spec §2.2) whose outcome, reason, end status and error, warning and startup-failure codes are equal too. This run is the most recent of them, and the others' records are not named. A run with no inv, and a redacted run, never stands for another (spec §2.3). A run that stands for no other has no folded. The folded runs' ids are not listed, to keep the line small: a read of a window that holds one of them without this run, or a load of the window, finds them. Never dropped to fit the section's bound."
+  "Present when this run stands for other runs of the same invocation and the same result (flyingrobots/parley#79): runs with an equal inv (spec §2.2) whose outcome, reason, end status, error, warning and startup-failure codes and head's resolved are equal too, and whose result records are all equal: the tool's own records, each page and each sidecar's stored bytes, compared without the envelope's t, seq, run and session (flyingrobots/parley#133). Under a view that states the decision records, how-it-decided and everything, their receipt.step and cache.hit records are equal as well. Two runs whose results differ are a divergence (spec §2.3) and never stand for one another. This run is the most recent of them, the others' records are not named, and stands_for lists the others' run ids. A run with no inv, and a redacted run, never stands for another (spec §2.3). A run that stands for no other has no folded. Never dropped to fit the section's bound."
   folded: RunFolded @parley_optional
   "The fields left out, whole, to bound the section's serialised JSON, in the order they were dropped, each at most once: resolved, then argv, then inv, then v, then tool. The bound is the reader's to state (parley-read: 512 UTF-8 bytes); a string or an object is never cut part-way."
   dropped: [DroppedField!] @parley_optional @parley_minItems(value: 1) @parley_maxItems(value: 5)
@@ -597,7 +601,7 @@ type RecordRef @parley_open {
 }
 
 "The lens a result carries: the asker, the view, the budget and the window that produced it, the query it answers, a stated bound on what the view loses, and the records it was built from by (run, seq) (spec §9, informative; decided in flyingrobots/parley#46). One lens line precedes the result it describes, so a later reader knows what it is looking at and can get back to the records."
-type Lens @parley_message(id: "parley.lens", version: "1.0.0", title: "parley lens") @parley_open
+type Lens @parley_message(id: "parley.lens", version: "1.1.0", title: "parley lens") @parley_open
   @parley_when(path: ["loss", "bound"], equals: "none", guarded: true, set: {excluded: 0, folded: 0}) {
   event: String! @parley_const(string: "lens")
   "POSIX time in milliseconds (spec §1.3)."
@@ -618,6 +622,8 @@ type Lens @parley_message(id: "parley.lens", version: "1.0.0", title: "parley le
   budget: LensBudget!
   "The stretch of history the result covers, echoed from the query."
   window: LensWindow!
+  "Echoed from the query, present exactly when the query states it (flyingrobots/parley#133). false: the read folded nothing, so loss.folded is 0 and no runs section carries folded because none was allowed to, not because no runs repeated. Two results over one window, one folded and one not, are not comparable, so a lens says which it is."
+  fold: Boolean @parley_optional
   "What the view loses against the records it was built from, so a later reader knows which questions this result can still answer and cannot mistake a digest for the whole. A digest that folded runs names fewer records than it stands for, and says how many in folded."
   loss: LensLoss!
   "One section per run that records names, in the order records first names it, and none for any other run (flyingrobots/parley#83). It states once what is true of every record of the run — which invocation it was and what became of it — rather than on each entry. Read off the window's records when the lens is built, so it cannot drift from the head it summarises. Part of the line budget.bytes bounds. Optional so that lines written under the earlier drafts still validate; parley-read always writes it."

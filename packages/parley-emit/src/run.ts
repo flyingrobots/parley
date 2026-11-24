@@ -7,7 +7,7 @@ import { join, resolve } from "node:path";
 import { checkRecord } from "./check.ts";
 import type { HistoryProjection, HistorySink } from "./history.ts";
 import { canonical, computeInv, digestInput, sha256, type InputDecl, type InputDescriptor } from "./inv.ts";
-import { carriesSecret, scrub } from "./redact.ts";
+import { carriesSecret, replaceSecrets, scrub, scrubPointer } from "./redact.ts";
 import { isHistoryRefusal, type HistoryRefusal } from "./refusal.ts";
 
 export interface Sink { write(line: string): void }
@@ -87,7 +87,9 @@ export const REDACTION_CONFLICT_CODE = "redaction.schema_conflict";
  * status stays 4.
  *
  * The message names the fields by JSON Pointer and the schema pair. It never carries a value, a
- * validator's message or any part of the schema, so it is safe to log.
+ * validator's message or any part of the schema, and its message and `pointers` are scrubbed
+ * exactly as the published error line's `problem` and `detail.at` are, so it is safe to log: a
+ * pointer can name a property the scrub renamed, and that name can be the secret.
  */
 export class ParleyRedactionConflict extends Error {
   /** The schema the record was declared under. */
@@ -155,7 +157,11 @@ export interface RunInit {
 }
 
 type SinkName = "stdout" | "stderr" | "receipt";
-interface Emit { to: { stdout?: boolean; stderr?: boolean; receipt?: boolean }; writer?: boolean; noSidecar?: boolean; deferFailures?: boolean; verbatim?: string }
+interface Emit {
+  to: { stdout?: boolean; stderr?: boolean; receipt?: boolean }; writer?: boolean; noSidecar?: boolean; deferFailures?: boolean; verbatim?: string;
+  /** Pointers into this record where the caller replaced a secret before handing it over; each gets its `redaction` event as though the record's own scrub had found it. */
+  replaced?: readonly string[];
+}
 
 export class Run {
   readonly id: string; readonly tool: string; readonly v: string; readonly session?: string;
@@ -495,7 +501,7 @@ export class Run {
       if (!how.noSidecar && Buffer.byteLength(text, "utf8") > SIDECAR_THRESHOLD) this.sidecar(at.seq, text);
       else this.write("receipt", text + "\n");
     }
-    for (const at_ of [...found, ...extraFound]) this.redaction(at.seq, at_);
+    for (const at_ of new Set([...found, ...extraFound, ...(how.replaced ?? [])])) this.redaction(at.seq, at_);
     return at.seq;
   }
 
@@ -537,7 +543,7 @@ export class Run {
     if (doc === undefined) return;
     const pair = `${schema.id}@${schema.version}`;
     const after = this.copies(how, scrubbed, extra, schema, at), before = this.copies(how, payload, receiptExtra, schema, at);
-    const pointers: string[] = [];
+    const raw: string[] = [];
     for (let i = 0; i < after.length; i++) {
       const verdict = checkRecord(after[i], doc);
       if (verdict.ok) continue;
@@ -546,18 +552,25 @@ export class Run {
       const already = new Set(was.ok || "unsupported" in was ? [] : was.errors.map((e, j) => `${was.pointers[j]}\u0000${e}`));
       verdict.errors.forEach((e, j) => {
         const p = verdict.pointers[j]!;
-        if (!already.has(`${p}\u0000${e}`) && !pointers.includes(p)) pointers.push(p);
+        if (!already.has(`${p}\u0000${e}`) && !raw.includes(p)) raw.push(p);
       });
     }
-    if (pointers.length === 0) return;
+    if (raw.length === 0) return;
+    // A pointer the checker reports can name a property the record no longer has, because the
+    // scrub renamed it, and that name is then the secret. Each is scrubbed token by token before
+    // it goes anywhere; the line's own scrub then sees the same strings the exception is given.
+    const secrets = this.init.secretValues;
+    const pointers = raw.map((p) => scrubPointer(p, secrets));
+    // The receipt still records that a secret was replaced in the error line, and where (§5.3).
+    const replaced = pointers.some((p, i) => p !== raw[i]) ? ["/problem", ...pointers.flatMap((p, i) => (p === raw[i] ? [] : [`/detail/at/${i}`]))] : [];
     const problem = `the ${String(payload.event)} record was not published: replacing a declared secret at ${redacted.join(", ")} left it invalid under ${pair} at ${pointers.join(", ")}`;
     this.outputRefused = true;
-    this.emit({ to: { stderr: true, receipt: true }, writer: true }, {
+    this.emit({ to: { stderr: true, receipt: true }, writer: true, replaced }, {
       event: "error", code: REDACTION_CONFLICT_CODE, problem,
       remedy: "keep a declared secret out of any field whose schema the literal [redacted] cannot satisfy: leave the field out, or declare it as an unconstrained string; the run will close with status 4",
       detail: { schema: { id: schema.id, version: schema.version }, at: pointers, redacted },
     }, SCHEMA_IDS.error);
-    throw new ParleyRedactionConflict(schema, pointers, `${problem}; reported as ${REDACTION_CONFLICT_CODE}`);
+    throw new ParleyRedactionConflict(schema, pointers.map((p) => replaceSecrets(p, secrets)), `${replaceSecrets(problem, secrets)}; reported as ${REDACTION_CONFLICT_CODE}`);
   }
 
   /**
@@ -575,8 +588,10 @@ export class Run {
       remedy: "keep the type's declared schema within the keywords this writer's checker evaluates (its README lists them), or keep declared secrets out of records of this type; the record was not shown to be invalid, and the value was replaced, not exposed; the run will close with status 4",
       detail: { schema: { id: schema.id, version: schema.version }, redacted },
     }, SCHEMA_IDS.error);
-    const named = carriesSecret(construct, this.init.secretValues) ? null : construct;
-    throw new ParleyRedactionUnchecked(schema, redacted, named, `${problem}${named === null ? "" : `: the schema uses ${named}`}; reported as ${REDACTION_UNCHECKED_CODE}`);
+    // The exception's text is the published line's, scrubbed as the line is.
+    const secrets = this.init.secretValues;
+    const named = carriesSecret(construct, secrets) ? null : construct;
+    throw new ParleyRedactionUnchecked(schema, redacted.map((p) => replaceSecrets(p, secrets)), named, `${replaceSecrets(problem, secrets)}${named === null ? "" : `: the schema uses ${named}`}; reported as ${REDACTION_UNCHECKED_CODE}`);
   }
 
   private sidecar(source: number, text: string) {

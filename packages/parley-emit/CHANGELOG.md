@@ -104,6 +104,16 @@ The writer stamps neither message, so no emitted line changes.
   secret `stdin` gives a `role` of `[redacted]`, which its schema accepts. `uncaught.exception`
   and the writer's own steps still travel as a tool's records do, so a secret equal to one of
   their field names withholds them (flyingrobots/parley#161).
+- **The redaction exceptions carry what the published line carries, never the secret.** When a
+  declared secret was the name of a required property, the scrub renamed the key, the checker
+  reported the property it then missed by its JSON Pointer, and `ParleyRedactionConflict` carried
+  that pointer, which is the secret, in `pointers` and in its message, while the error line
+  showed `/[redacted]`. The READMEs called both safe to log. With a secret holding `/` or `~`
+  the line itself carried the pointer's escaped form of it (`a~1b` for `a/b`). Now each pointer
+  is scrubbed token by token, as the key it stands for, before it goes anywhere, and the
+  exception's message and `pointers` (and `ParleyRedactionUnchecked`'s `redacted`) are the
+  line's `problem` and `detail`, scrubbed as the line is. The receipt records the replacement in
+  the error line with `redaction` events, as before.
 - **A `.parley/.gitignore` negation the writer cannot evaluate exactly counts as one that
   matches** (spec §5.2). The check for a negation that can re-include `receipts/` read a bracket
   expression holding a POSIX class, such as `![[:alpha:]]eceipts`, as a different pattern, read

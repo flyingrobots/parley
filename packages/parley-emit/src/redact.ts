@@ -68,6 +68,18 @@ export function redactArgv(argv: readonly string[], values: ReadonlySet<string>,
 }
 
 function escapePointer(key: string): string { return key.replace(/~/g, "~0").replace(/\//g, "~1"); }
+function unescapePointer(token: string): string { return token.replace(/~1/g, "/").replace(/~0/g, "~"); }
+
+/**
+ * A JSON Pointer (RFC 6901) with every secret replaced inside each reference token, read as the
+ * key it stands for: a pointer escapes `/` and `~`, so a key that is a secret holding either
+ * would otherwise pass a search of the pointer's text. A pointer a validator reports can name a
+ * key the record no longer has (the one a scrub renamed), and that key can be the secret.
+ */
+export function scrubPointer(pointer: string, values: ReadonlySet<string>): string {
+  if (values.size === 0 || !pointer.startsWith("/")) return replaceSecrets(pointer, values);
+  return pointer.split("/").map((t, i) => (i === 0 ? t : escapePointer(replaceSecrets(unescapePointer(t), values)))).join("/");
+}
 
 export interface ScrubOptions {
   /** Keys whose string values are never scrubbed: writer digests, which a secret cannot occur in except by coincidence of hex. */

@@ -113,9 +113,11 @@ class ParleyRedactionConflict(RuntimeError):
     and continue: the status stays 4.
 
     The message names the fields by JSON Pointer and the schema pair. It never carries a value, a
-    validator's message or any part of the schema, so it is safe to log. `schema` is the declared
-    pair as `{"id", "version"}` and `pointers` the JSON Pointer of each field that no longer
-    validates, as scrubbed."""
+    validator's message or any part of the schema, and its message and `pointers` are scrubbed
+    exactly as the published error line's `problem` and `detail.at` are, so it is safe to log: a
+    pointer can name a property the scrub renamed, and that name can be the secret. `schema` is
+    the declared pair as `{"id", "version"}` and `pointers` the JSON Pointer of each field that no
+    longer validates."""
 
     def __init__(self, schema: Mapping[str, str], pointers: Sequence[str], message: str) -> None:
         super().__init__(message)
@@ -440,6 +442,18 @@ def redact_argv(argv: Sequence[str], values: Set[str], flags: Sequence[str] = ()
 
 def _escape_pointer(key: str) -> str:
     return key.replace("~", "~0").replace("/", "~1")
+
+
+def scrub_pointer(pointer: str, values: Iterable[str]) -> str:
+    """A JSON Pointer (RFC 6901) with every secret replaced inside each reference token, read as
+    the key it stands for: a pointer escapes `/` and `~`, so a key that is a secret holding either
+    would otherwise pass a search of the pointer's text. A pointer a validator reports can name a
+    key the record no longer has (the one a scrub renamed), and that key can be the secret."""
+    values = list(values)
+    if not values or not pointer.startswith("/"):
+        return replace_secrets(pointer, values)
+    tokens = pointer.split("/")
+    return "/".join([tokens[0]] + [_escape_pointer(replace_secrets(t.replace("~1", "/").replace("~0", "~"), values)) for t in tokens[1:]])
 
 
 def scrub(value: Any, values: Set[str], pointer: str = "", found: Optional[List[str]] = None,
@@ -1548,7 +1562,11 @@ class Run:
         return scrubbed if "event" not in payload else {"event": payload["event"], **scrubbed}
 
     def _emit(self, to: Mapping[str, bool], payload: Record, schema: SchemaRef, receipt_extra: Optional[Record] = None,
-              writer: bool = False, no_sidecar: bool = False, defer: bool = False, verbatim: Optional[str] = None) -> int:
+              writer: bool = False, no_sidecar: bool = False, defer: bool = False, verbatim: Optional[str] = None,
+              replaced: Sequence[str] = ()) -> int:
+        """Emit one event. `replaced` is pointers into this record where the caller replaced a
+        secret before handing it over; each gets its `redaction` event as though the record's own
+        scrub had found it."""
         with self._lock:
             if self._closed:
                 raise ParleyClosed()
@@ -1594,7 +1612,7 @@ class Run:
                         self._sidecar(at[0], text)
                     else:
                         self._write("receipt", text + "\n")
-                for p in found + extra_found:
+                for p in dict.fromkeys(found + extra_found + list(replaced)):
                     self._redaction(at[0], p)
             finally:
                 self._depth -= 1
@@ -1644,7 +1662,7 @@ class Run:
             return
         after = self._copies(to, scrubbed, extra, schema, at)
         before = self._copies(to, payload, receipt_extra, schema, at)
-        pointers: List[str] = []
+        raw: List[str] = []
         for now_, then in zip(after, before):
             verdict = check_record(now_, doc)
             if verdict.ok:
@@ -1654,18 +1672,28 @@ class Run:
             was = check_record(then, doc)
             already = set() if (was.ok or was.unsupported is not None) else set(zip(was.pointers, was.errors))
             for p, e in zip(verdict.pointers, verdict.errors):
-                if (p, e) not in already and p not in pointers:
-                    pointers.append(p)
-        if not pointers:
+                if (p, e) not in already and p not in raw:
+                    raw.append(p)
+        if not raw:
             return
+        # A pointer the checker reports can name a property the record no longer has, because the
+        # scrub renamed it, and that name is then the secret. Each is scrubbed token by token
+        # before it goes anywhere; the line's own scrub then sees the same strings the exception
+        # is given.
+        pointers = [scrub_pointer(p, self._secrets) for p in raw]
+        # The receipt still records that a secret was replaced in the error line, and where.
+        replaced: List[str] = []
+        if pointers != raw:
+            replaced = ["/problem"] + [f"/detail/at/{i}" for i, p in enumerate(pointers) if p != raw[i]]
         problem = f"the {payload.get('event')} record was not published: replacing a declared secret at {', '.join(redacted)} left it invalid under {sid}@{ver} at {', '.join(pointers)}"
         self._output_refused = True
         self._emit({"stderr": True, "receipt": True},
                    {"event": "error", "code": REDACTION_CONFLICT_CODE, "problem": problem,
                     "remedy": "keep a declared secret out of any field whose schema the literal [redacted] cannot satisfy: leave the field out, or declare it as an unconstrained string; the run will close with status 4",
                     "detail": {"schema": {"id": sid, "version": ver}, "at": pointers, "redacted": list(redacted)}},
-                   SCHEMA_IDS["error"], writer=True)
-        raise ParleyRedactionConflict({"id": sid, "version": ver}, pointers, f"{problem}; reported as {REDACTION_CONFLICT_CODE}")
+                   SCHEMA_IDS["error"], writer=True, replaced=replaced)
+        raise ParleyRedactionConflict({"id": sid, "version": ver}, [replace_secrets(p, self._secrets) for p in pointers],
+                                      f"{replace_secrets(problem, self._secrets)}; reported as {REDACTION_CONFLICT_CODE}")
 
     def _refuse_unchecked(self, payload: Record, sid: str, ver: str, redacted: List[str], construct: str) -> None:
         """Withhold a record the scrub changed whose schema document the writer holds and cannot
@@ -1681,9 +1709,10 @@ class Run:
                     "remedy": "keep the type's declared schema within the keywords this writer's checker evaluates (its README lists them), or keep declared secrets out of records of this type; the record was not shown to be invalid, and the value was replaced, not exposed; the run will close with status 4",
                     "detail": {"schema": {"id": sid, "version": ver}, "redacted": list(redacted)}},
                    SCHEMA_IDS["error"], writer=True)
+        # The exception's text is the published line's, scrubbed as the line is.
         named = None if carries_secret(construct, self._secrets) else construct
-        raise ParleyRedactionUnchecked({"id": sid, "version": ver}, redacted, named,
-                                       f"{problem}{'' if named is None else f': the schema uses {named}'}; reported as {REDACTION_UNCHECKED_CODE}")
+        raise ParleyRedactionUnchecked({"id": sid, "version": ver}, [replace_secrets(p, self._secrets) for p in redacted], named,
+                                       f"{replace_secrets(problem, self._secrets)}{'' if named is None else f': the schema uses {named}'}; reported as {REDACTION_UNCHECKED_CODE}")
 
     def _sidecar(self, source: int, text: str) -> None:
         rel = f"{self.id}/{source}.json"

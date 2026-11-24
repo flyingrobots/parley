@@ -266,7 +266,9 @@ flyingrobots/parley#131).
 
 `main` does not report the thrown `ParleyRedactionConflict` again as `uncaught.exception`. A
 handler may catch it and carry on: later records are written, and the status stays 4. Its
-`schema` and `pointers` are safe to log, as is its message. `ParleyRedactionUnchecked` is a
+`schema` and `pointers` are safe to log, as is its message: they are the published line's
+`detail.at` and `problem`, scrubbed as the line is, so a pointer that names a property the scrub
+renamed reads `/[redacted]` in both. `ParleyRedactionUnchecked` is a
 `ParleyRedactionConflict` with no `pointers`, the replaced `redacted` pointers, and `construct`:
 the first thing in the schema the checker does not implement, as `schemaSubsetGap` reports it.
 The construct is in the exception and its message only. It is part of the schema, so it is never

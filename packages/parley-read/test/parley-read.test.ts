@@ -3291,6 +3291,26 @@ describe("RD-110 a fold never hides a record that differs", () => {
     // A decision record's own `session` is compared the same way under a view that states decisions.
     const stepped = (n: number, session: string) => runOf(n, "i", [["receipt.step", { decision: "d", because: "b", session }], result(1)]);
     expect(folds(stepped(1, "alice-login-1"), stepped(2, "bob-login-2"), "how-it-decided")).toBe(false);
+    // A read's own lens is a protocol line, and `parley.lens` defines a top-level `session`: the
+    // working period, which is identity and not result. Two reads made in different sessions
+    // still fold. No writer in this repository stamps `session` on a lens line (the writers put it
+    // on the bootstrap line alone), so these lens records are built by hand.
+    const lens = (n: number, session: string | undefined, seqs: number[], over: Record<string, unknown> = {}): [string, Record<string, unknown>] =>
+      ["lens", { ...(session === undefined ? {} : { session }), query: { run: runId(n), seq: 2 }, loss: { bound: "none", excluded: 0, folded: 0 }, records: seqs.map((seq) => ({ run: runId(50), seq })), ...over }];
+    expect(folds(runOf(1, "i", [lens(1, "ses_alice", [1, 2])]), runOf(2, "i", [lens(2, "ses_bob", [1, 2])]))).toBe(true);
+    expect(folds(runOf(1, "i", [lens(1, "ses_alice", [1, 2])]), runOf(2, "i", [lens(2, undefined, [1, 2])]))).toBe(true);
+    // What the lenses say still has to be equal, and a `session` nested inside one is content.
+    expect(folds(runOf(1, "i", [lens(1, "ses_alice", [1, 2])]), runOf(2, "i", [lens(2, "ses_bob", [1, 2, 3])]))).toBe(false);
+    expect(folds(runOf(1, "i", [lens(1, "s", [1], { asker: { session: "a" } })]), runOf(2, "i", [lens(2, "s", [1], { asker: { session: "b" } })]))).toBe(false);
+    // A record of the tool's own that happens to be named `lens` is not a read's lens: its
+    // `session` and its `query` are its own fields and are compared.
+    const own = (session: string, q: number): [string, Record<string, unknown>] => ["lens", { ...TOOL_OWNED, session, query: q, value: 1 }];
+    expect(folds(runOf(1, "i", [own("alice-login-1", 1)]), runOf(2, "i", [own("bob-login-2", 1)]))).toBe(false);
+    expect(folds(runOf(1, "i", [own("alice-login-1", 1)]), runOf(2, "i", [own("alice-login-1", 2)]))).toBe(false);
+    expect(folds(runOf(1, "i", [own("alice-login-1", 1)]), runOf(2, "i", [own("alice-login-1", 1)]))).toBe(true);
+    // A `page` and a `sidecar` have no `session` in their schemas, so a page's is compared.
+    const page = (session: string): [string, Record<string, unknown>] => ["page", { has_more: false, items: [1], session }];
+    expect(folds(runOf(1, "i", [page("a")]), runOf(2, "i", [page("b")]))).toBe(false);
     // And through a read of two receipts: both runs are returned, each with its own section.
     const { dir, env } = scratch();
     const receipts = repoReceipts(dir);

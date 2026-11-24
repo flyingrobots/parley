@@ -82,6 +82,8 @@ commit of that release, and carry the wording the pre-freeze review settled
 ## [0.1.2] — 2026-11-24
 
 No change to behaviour or to the schemas it ships. A read's own receipt records `v` `0.1.2`.
+This version was never tagged or published: it has no tag, no GitHub release and no npm version,
+and 0.2.0 carries its change.
 
 ### Changed
 

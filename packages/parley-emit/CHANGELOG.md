@@ -9,7 +9,9 @@ on its own; the spec and each message schema move separately (spec §4.4).
 
 The writer no longer publishes a record that redaction made invalid under its declared schema
 (flyingrobots/parley#131, spec §5.3). **A run that used to end with status 0 and an invalid line
-now ends with status 4 and a structured error**, which is the point of the change.
+now ends with status 4 and a structured error**, which is the point of the change. A record
+redaction changed whose declared schema the writer holds and cannot evaluate is withheld the same
+way (flyingrobots/parley#144).
 
 The schemas it ships are released: `parley.query` and `parley.lens` are the 1.1.0 that spec
 `0.2.1` released (the root `CHANGELOG.md`), in place of 1.0.0, pinned to the commit of that release.
@@ -71,6 +73,9 @@ The writer stamps neither message, so no emitted line changes.
 A declared file input can be read through the run, so the receipt records the bytes the tool read
 (flyingrobots/parley#132), and a `receiptExtra` field can no longer contradict the record
 (flyingrobots/parley#130). No change to the spec or to the schemas the package ships.
+
+This version was tagged (`parley-emit-v0.3.0`) and has a GitHub release carrying its tarball. Its
+npm version was staged by the release workflow; npm does not list it. 0.4.0 supersedes it.
 
 ### Added
 

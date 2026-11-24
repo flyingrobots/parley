@@ -15,8 +15,9 @@ release's digest is recorded on its GitHub release (tag `parley-emit-py-vX.Y.Z`)
 The writer no longer publishes a record that redaction made invalid under its declared schema
 (flyingrobots/parley#131, spec §5.3), by the same rule as `@flyingrobots/parley-emit` 0.4.0. **A
 run that used to end with status 0 and an invalid line now ends with status 4 and a structured
-error.** The file's digest moves with the file, so a tool that vendors it copies the new file and
-pins the new digest.
+error.** A record redaction changed whose declared schema the writer holds and cannot evaluate
+is withheld the same way (flyingrobots/parley#144). The file's digest moves with the file, so a
+tool that vendors it copies the new file and pins the new digest.
 
 The schemas it ships are released: `parley.query` and `parley.lens` are the 1.1.0 that spec
 `0.2.1` released (the root `CHANGELOG.md`), in place of 1.0.0, pinned to the commit of that release.
@@ -75,6 +76,8 @@ A declared file input can be read through the run, so the receipt records the by
 (flyingrobots/parley#130). The schemas it embeds and the `--vendor-info` line's shape are
 unchanged. **The file's digest moves with the file, so a tool that vendors it copies the new file
 and re-pins the copy by the SHA-256 that `--vendor-info` prints.**
+
+Released: tagged `parley-emit-py-v0.2.0`, with a GitHub release that carries the file.
 
 ### Added
 

@@ -154,7 +154,11 @@ Which budget field bounds what, and how the count is arrived at, is
 ## The two messages
 
 Both were released at 1.0.0 with spec `0.2.0`, and both are at **1.1.0**, released with spec
-`0.2.1`, which adds optional fields and removes none
+`0.2.1`, which adds optional fields, removes none and narrows no constraint. Spec §4.5 also asks a
+minor to preserve the meaning of every field, and `parley.lens` 1.1.0 is a decided exception to
+that for one sentence, `loss.folded` depending on the window alone, and for what a fold is: the
+owner chose 1.1.0 over 2.0.0 on 2026-11-24 with that sentence in view (flyingrobots/parley#146,
+flyingrobots/parley#160)
 ([flyingrobots/parley#133](https://github.com/flyingrobots/parley/issues/133)): `fold` on the
 query, and on the lens `fold` and a folded section's `stands_for`. The released 1.0.0 of each is
 unchanged under `schemas/released/`, and the reader validates a line against the version it

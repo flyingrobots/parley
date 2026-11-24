@@ -530,7 +530,7 @@ the ids are opened; a drill-down past it declines as a read does and opens nothi
 | `receiptLocations(opts)`, `repoReceiptDir`, `stateReceiptDir` | Where receipts are, present or absent; creates nothing |
 | `LineBuffer`, `splitLines`, `readFileLines` | Newline buffering: bytes in, complete lines out, the unterminated tail kept apart (§1.4, §5.4) |
 | `validator(schemas?)`, `schemaRef`, `envelopeGaps` | Exact-pair validation and the version-independent core (§4.5, §4.6) |
-| `SCHEMAS`, `SCHEMA_SOURCE` | The seventeen schemas this reader ships, the released versions of spec `0.2.0`'s release, with the commit and digest of each |
+| `SCHEMAS`, `SCHEMA_SOURCE` | The nineteen schemas this reader ships: each of the seventeen messages at its current released version, and the released 1.0.0 of `parley.query` and `parley.lens` beside their 1.1.0, with the commit and digest of each |
 | `QUARANTINE_CODES` | Which defect codes are a kept line rather than a judgement about a record |
 
 ## What a load says, rule by rule

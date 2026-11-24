@@ -23,7 +23,15 @@ Released schema versions, snapshotted byte for byte at
 messages are at the versions the `0.2.0` entry names.
 
 **Compatibility.** Both are minor versions: each adds optional fields, removes no field and
-narrows no constraint of 1.0.0 (spec §4.5). Three things a consumer must know:
+narrows no constraint of 1.0.0. Spec §4.5 asks more of a minor than that: it "**MUST** preserve
+the meaning and the constraints of every field the previous minor defined". `parley.query` 1.1.0
+does. `parley.lens` 1.1.0 preserves the constraints and is a decided exception to "preserve the
+meaning" in two places, both stated below: one sentence of 1.0.0, that `loss.folded` depends on
+the window alone, does not hold of a 1.1.0 line, and what a fold is, is narrower. The owner
+decided on 2026-11-24, with that sentence in view, that the version is 1.1.0 and not 2.0.0
+(flyingrobots/parley#146). §4.5 does not say what "meaning" is for a description whose stated
+invariant weakens while its constraints stand; whether it should is flyingrobots/parley#160.
+Three things a consumer must know:
 
 - **A line is validated against the schema for its own advertised pair, never a neighbouring
   one** (spec §4.5). A reader that holds 1.0.0 and not 1.1.0 can give a 1.1.0 line only the
@@ -45,9 +53,9 @@ The sentence-by-sentence review that preceded this freeze, with its findings, is
 (flyingrobots/parley#146).
 
 Released alongside, each versioned on its own: `@flyingrobots/parley-emit` 0.4.0 and
-`@flyingrobots/parley-read` 0.2.0 on npm (parley-read depends on parley-emit `^0.4.0`, so
-parley-emit is published first), and `parley_emit.py` 0.3.0, a vendorable file pinned by its
-SHA-256. Each package's changelog says what changed in it. `@flyingrobots/parley-emit` 0.3.0,
+`@flyingrobots/parley-read` 0.2.0, each on npm once the owner approves the version its release
+workflow stages (parley-read depends on parley-emit `^0.4.0`, so parley-emit is approved first),
+and `parley_emit.py` 0.3.0, a vendorable file pinned by its SHA-256. Each package's changelog says what changed in it. `@flyingrobots/parley-emit` 0.3.0,
 `@flyingrobots/parley-read` 0.1.2 and the package versions before them that this entry mentions
 below were steps on `main` between the two schema releases; npm holds the versions it holds, and
 the package changelogs say which were published.

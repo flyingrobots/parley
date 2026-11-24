@@ -1137,6 +1137,11 @@ class Run:
             _dumps(scrubbed)
             if extra:
                 _dumps(extra)
+                # The copies of one event agree on every field they share (spec section 1.3):
+                # compared as scrubbed, since that is what is written.
+                for k, v in extra.items():
+                    if k in scrubbed and json.dumps(v, sort_keys=True) != json.dumps(scrubbed[k], sort_keys=True):
+                        raise ValueError(f"receipt_extra[{k!r}] differs from the record's {k!r}; the copies of an event must agree on every field they share (spec section 1.3)")
             at = self._next()
             rec = self._envelope(scrubbed, schema, at)
             self._depth += 1
@@ -1147,7 +1152,8 @@ class Run:
                 if to.get("stderr"):
                     self._write_or_skip("stderr", self._prose(rec) if human else _dumps(rec) + "\n", defer)
                 if to.get("receipt"):
-                    full = self._envelope({**scrubbed, **extra, "event": scrubbed.get("event")}, schema, at) if extra else rec
+                    # A shared field is written from the payload, so the copies agree byte for byte on it.
+                    full = self._envelope({**scrubbed, **{k: v for k, v in extra.items() if k not in scrubbed}}, schema, at) if extra else rec
                     text = _dumps(full)
                     if not no_sidecar and len(text.encode("utf-8")) > SIDECAR_THRESHOLD:
                         self._sidecar(at[0], text)

@@ -5,6 +5,15 @@ on its own; the spec and each message schema move separately (spec §4.4).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A `receiptExtra` field can no longer contradict the record** (flyingrobots/parley#130).
+  `run.result({ value: 1 }, schema, { value: 2 })` used to put `1` on stdout and `2` in the
+  receipt under one `seq`, against spec §1.3 (copies agree on every field they share). The call now
+  throws `TypeError` before either copy is written. Equal shared values are accepted and written
+  from the record; receipt-only fields are unchanged. **BREAKING for a tool that relied on the
+  overwrite**, which was already non-conforming.
+
 ## [0.2.4] — 2026-11-23
 
 No change to the library or the schemas it ships.

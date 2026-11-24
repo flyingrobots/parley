@@ -6,7 +6,7 @@ import { closeSync, mkdirSync, openSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { checkRecord } from "./check.ts";
 import type { HistoryProjection, HistorySink } from "./history.ts";
-import { computeInv, digestInput, sha256, type InputDecl, type InputDescriptor } from "./inv.ts";
+import { canonical, computeInv, digestInput, sha256, type InputDecl, type InputDescriptor } from "./inv.ts";
 import { carriesSecret, scrub } from "./redact.ts";
 import { isHistoryRefusal, type HistoryRefusal } from "./refusal.ts";
 
@@ -376,13 +376,19 @@ export class Run {
     const scrubbed = this.scrubPayload(payload, found, how.writer === true, how.writer === true ? how.verbatim : undefined);
     const extraFound: string[] = [];
     const extra = receiptExtra ? this.scrubPayload(receiptExtra, extraFound, how.writer === true) : undefined;
+    // The copies of one event agree on every field they share (§1.3): compared as scrubbed, since
+    // that is what is written, and before a seq is taken, so a refusal leaves no gap.
+    if (extra) for (const k of Object.keys(extra)) {
+      if (k in scrubbed && canonical(extra[k]) !== canonical(scrubbed[k])) throw new TypeError(`receiptExtra.${k} differs from the record's ${k}; the copies of an event must agree on every field they share (spec §1.3)`);
+    }
     const at = this.next();
     const rec = this.envelope(scrubbed, schema, at);
     const human = this.init.human !== undefined;
     if (how.to.stdout) this.writeOrSkip("stdout", human ? this.prose(rec) : this.line(rec), how.deferFailures);
     if (how.to.stderr) this.writeOrSkip("stderr", human ? this.prose(rec) : this.line(rec), how.deferFailures);
     if (how.to.receipt) {
-      const full = extra ? this.envelope({ ...scrubbed, ...extra, event: scrubbed.event }, schema, at) : rec;
+      // A shared field is written from the payload, so the copies agree byte for byte on it.
+      const full = extra ? this.envelope({ ...scrubbed, ...Object.fromEntries(Object.entries(extra).filter(([k]) => !(k in scrubbed))) }, schema, at) : rec;
       const text = JSON.stringify(full);
       if (!how.noSidecar && Buffer.byteLength(text, "utf8") > SIDECAR_THRESHOLD) this.sidecar(at.seq, text);
       else this.write("receipt", text + "\n");

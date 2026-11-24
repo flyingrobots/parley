@@ -1229,6 +1229,67 @@ class TestWriterTokens(unittest.TestCase):
         self.assertEqual(o.stdout.objs[-1]["status"], 0)
 
 
+class TestRedactionExceptionsCarryNoSecret(unittest.TestCase):
+    """PY-27: the redaction exceptions carry what the published line carries, never the secret
+    (spec section 5.3). The secret is the NAME of a property: the scrub renames the key, and the
+    checker reports the property it now misses by its pointer, which is the secret itself."""
+
+    SECRETS = (("zq7kx9secret", "zq7kx9secret"), ("zq7/kx9~secret", "zq7~1kx9~0secret"))
+
+    def refused(self, secret, schema, record):
+        d, _, env = scratch_free(secret)
+        raised = []
+
+        def body(run):
+            try:
+                run.result({"event": "result", **record}, T_COUNT)
+            except Exception as e:
+                raised.append(e)
+                raise
+
+        o = run_count(d, env, ["count", "--token", secret], body, unchecked_tool(schema))
+        self.assertEqual(o.status, 4)
+        self.assertNotIn(secret, o.everything)
+        return o.stderr.objs[0], raised[0]
+
+    def test_a_conflict_at_a_property_named_by_the_secret(self):
+        for secret, escaped in self.SECRETS:
+            with self.subTest(secret):
+                line, e = self.refused(secret, {"type": "object", "required": [secret]}, {secret: 1})
+                self.assertEqual(line["code"], "redaction.schema_conflict")
+                self.assertEqual(line["detail"]["at"], ["/[redacted]"])
+                self.assertNotIn(escaped, json.dumps(line))
+                self.assertIsInstance(e, pe.ParleyRedactionConflict)
+                self.assertEqual(e.pointers, line["detail"]["at"])
+                self.assertEqual(str(e), line["problem"] + "; reported as redaction.schema_conflict")
+                for text in (str(e), repr(e), json.dumps(e.pointers), json.dumps(e.schema), json.dumps(list(e.args), default=str)):
+                    self.assertNotIn(secret, text)
+                    self.assertNotIn(escaped, text)
+
+    def test_an_unchecked_refusal_at_a_property_named_by_the_secret(self):
+        for secret, escaped in self.SECRETS:
+            with self.subTest(secret):
+                # The construct the checker cannot evaluate is a keyword that is the secret itself.
+                line, e = self.refused(secret, {"type": "object", secret: True}, {secret: 1})
+                self.assertEqual(line["code"], "redaction.schema_unchecked")
+                self.assertEqual(line["detail"]["redacted"], ["/[redacted]"])
+                self.assertNotIn(escaped, json.dumps(line))
+                self.assertIsInstance(e, pe.ParleyRedactionUnchecked)
+                self.assertEqual(e.redacted, line["detail"]["redacted"])
+                self.assertIsNone(e.construct)
+                self.assertEqual(e.pointers, [])
+                self.assertEqual(str(e), line["problem"] + "; reported as redaction.schema_unchecked")
+                for text in (str(e), repr(e), json.dumps(e.redacted)):
+                    self.assertNotIn(secret, text)
+                    self.assertNotIn(escaped, text)
+
+    def test_an_ordinary_conflict_is_unchanged(self):
+        line, e = self.refused("8675309", {"type": "object", "properties": {"value": {"type": "integer"}}}, {"value": 8675309})
+        self.assertEqual(e.pointers, ["/value"])
+        self.assertEqual(line["detail"]["at"], ["/value"])
+        self.assertEqual(str(e), line["problem"] + "; reported as redaction.schema_conflict")
+
+
 class TestStartupFailure(unittest.TestCase):
     def test_no_writable_location(self):
         d, state, env = scratch()

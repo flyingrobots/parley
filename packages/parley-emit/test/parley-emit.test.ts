@@ -3032,3 +3032,65 @@ describe("PE-32 the protocol's own tokens and field names in a writer-built reco
     expect(r.stdout.objs.at(-1)).toMatchObject({ event: "end", status: 0 });
   });
 });
+
+describe("PE-33 the redaction exceptions carry what the published line carries, never the secret (spec §5.3)", () => {
+  const PAIR = { id: "t.count", version: "1.0.0" };
+  const over = (schema: Record<string, unknown>) => ({ commands: { count: { intent: "count", effects: { reads: [], writes: [], network: false, idempotent: true }, secrets: ["--token"], emits: [{ ...PAIR, schema }] } } });
+  const scratch = (secret: string) => {
+    for (let i = 0; i < 64; i++) { const s = scratchAnywhere(); if (!s.dir.includes(secret) && !s.state.includes(secret)) return s; }
+    throw new Error("no temporary directory free of the secret could be made");
+  };
+  const refused = async (secret: string, schema: Record<string, unknown>, record: Record<string, unknown>) => {
+    const { dir, env } = scratch(secret);
+    let thrown: unknown;
+    const r = await runCount(dir, env, ["count", "--token", secret], (run) => { try { run.result({ event: "result", ...record }, PAIR); } catch (e) { thrown = e; throw e; } }, over(schema));
+    expect(r.status).toBe(4);
+    expect(r.stdout.text + r.stderr.text + r.receipt).not.toContain(secret);
+    expect(r.violations).toEqual([]);
+    const line = r.stderr.objs[0] as { code: string; problem: string; detail: { at?: string[]; redacted: string[] } };
+    return { line, thrown: thrown as ParleyRedactionConflict };
+  };
+
+  // The secret is the NAME of a required property: the scrub renames the key, and the checker
+  // reports the property it now misses by its pointer, which is the secret itself.
+  for (const [name, secret, escaped] of [["a plain secret", "zq7kx9secret", "zq7kx9secret"], ["a secret holding / and ~, which a pointer escapes", "zq7/kx9~secret", "zq7~1kx9~0secret"]] as const) {
+    test(`a conflict at a property named by the secret: the exception's message and pointers are the line's, scrubbed (${name})`, async () => {
+      const { line, thrown } = await refused(secret, { type: "object", required: [secret] }, { [secret]: 1 });
+      expect(line.code).toBe("redaction.schema_conflict");
+      expect(line.detail.at).toEqual(["/[redacted]"]);
+      expect(JSON.stringify(line)).not.toContain(escaped);
+      expect(thrown).toBeInstanceOf(ParleyRedactionConflict);
+      expect(thrown.pointers).toEqual(line.detail.at!);
+      expect(thrown.message).toBe(`${line.problem}; reported as redaction.schema_conflict`);
+      for (const text of [thrown.message, JSON.stringify(thrown.pointers), JSON.stringify(thrown.schema), String(thrown), thrown.stack ?? ""]) {
+        expect(text).not.toContain(secret);
+        expect(text).not.toContain(escaped);
+      }
+    });
+
+    test(`an unchecked refusal at a property named by the secret: the exception's message, redacted and construct carry no secret (${name})`, async () => {
+      // The construct the checker cannot evaluate is a keyword that is the secret itself.
+      const { line, thrown } = await refused(secret, { type: "object", [secret]: true }, { [secret]: 1 });
+      expect(line.code).toBe("redaction.schema_unchecked");
+      expect(line.detail.redacted).toEqual(["/[redacted]"]);
+      expect(JSON.stringify(line)).not.toContain(escaped);
+      expect(thrown).toBeInstanceOf(ParleyRedactionUnchecked);
+      const u = thrown as ParleyRedactionUnchecked;
+      expect(u.redacted).toEqual(line.detail.redacted);
+      expect(u.construct).toBeNull();
+      expect(u.pointers).toEqual([]);
+      expect(u.message).toBe(`${line.problem}; reported as redaction.schema_unchecked`);
+      for (const text of [u.message, JSON.stringify(u.redacted), String(u), u.stack ?? ""]) {
+        expect(text).not.toContain(secret);
+        expect(text).not.toContain(escaped);
+      }
+    });
+  }
+
+  test("an ordinary conflict is unchanged: the pointers name the fields and the message is the line's problem", async () => {
+    const { line, thrown } = await refused("8675309", { type: "object", properties: { value: { type: "integer" } } }, { value: 8675309 });
+    expect(thrown.pointers).toEqual(["/value"]);
+    expect(line.detail.at).toEqual(["/value"]);
+    expect(thrown.message).toBe(`${line.problem}; reported as redaction.schema_conflict`);
+  });
+});

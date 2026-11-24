@@ -33,6 +33,7 @@ bun run release-check --phase publication
 bun run release-check --phase publication --artifact flyingrobots-parley-read-0.2.1.tgz
 bun run release-check --phase publication --artifact packages/parley-emit-py/parley_emit.py
 bun run release-check --phase development --base <an earlier ref you trust>
+bun run release-check --phase publication --frozen-since <the previous release tag>
 ```
 
 | Phase | Allows | Passing means |
@@ -50,6 +51,7 @@ flyingrobots/parley#147.
 | --- | --- |
 | `--phase` | Required: `development`, `candidate` or `publication` |
 | `--base REF` | The trusted baseline. Default: the merge base of `HEAD` and `origin/main` |
+| `--frozen-since REF` | A second reference, independent of `--base`: every snapshot at it must be byte-identical in the candidate. It must name an ancestor of `HEAD`. No default |
 | `--repo DIR` | The repository holding the snapshots, the changelog and the history. Default: the working directory |
 | `--artifact FILE` | Inspect this file in place of the source tree: an npm tarball (`.tgz`) or a vendorable `.py` file. Repeatable |
 | `--human` | Prose in place of JSON Lines |
@@ -82,6 +84,7 @@ For every identity a package bundles or declares:
 | --- | --- |
 | A frozen snapshot at `schemas/released/<id>/<version>.schema.json` | `schema.unreleased` |
 | A dated release heading in the root `CHANGELOG.md` that names it | `release.heading_missing` |
+| In `candidate`, for a version with no snapshot at the baseline, a naming heading that is new too: one whose version the baseline's changelog does not have | `release.heading_backdated` |
 | In `publication`, both of those at the baseline, not only in the candidate | `release.not_accepted` |
 | The bundled definition equal to the snapshot's, as a parsed JSON value | `definition.differs` |
 | Every declared identity present in the bundle | `inventory.declared_not_bundled` |
@@ -108,13 +111,26 @@ And for the inventory and the repository:
 | A released snapshot at the baseline is gone | `snapshot.deleted` |
 | A snapshot's content names another `(id, version)` than its path | `snapshot.mismatched` |
 | A top-level schema file claims a released pair and is not its snapshot's definition | `toplevel.differs` |
+| A snapshot at the frozen-since reference has other bytes in the candidate, or is gone | `snapshot.modified`, `snapshot.deleted` |
 | The baseline names no commit | `baseline.unresolved` |
+| `--frozen-since` names no commit | `frozen_since.unresolved` |
+| `--frozen-since` names a commit that is not an ancestor of `HEAD` | `frozen_since.not_ancestor` |
 
 An empty or unreadable inventory is a failure, never a pass, and so is a run that found no package.
 
 `development` refuses only what makes the source inconsistent: `artifact.unreadable`, the three
-`inventory.*` codes, `copy.stale`, `toplevel.differs`, the three `snapshot.*` codes and
-`pin.malformed`. Everything else it reports, per package, as what blocks a stable release.
+`inventory.*` codes, `copy.stale`, `toplevel.differs`, the three `snapshot.*` codes,
+`pin.malformed` and the two `frozen_since.*` codes, since a reference the caller named and the
+check cannot use is never passed over. Everything else it reports, per package, as what blocks a
+stable release.
+
+A release pull request releases a version by adding a heading. `candidate` therefore asks of each
+newly snapshotted version whether a heading that names it is new: adding `` `parley.query` 1.1.0 ``
+to an entry the baseline already has would put the version in a release that was cut before it
+existed, and is `release.heading_backdated`. A heading is identified by its version, `[X.Y.Z]`.
+Its date and its text are not compared, so a typo fixed in an old entry is not a refusal, and an
+old heading given today's date is still the old heading. A version named under a new heading and
+repeated under an old one is released by the new one.
 
 Two identities are compared two ways, as decided on flyingrobots/parley#116. A **snapshot is
 byte-frozen**: any byte that differs from the baseline is `snapshot.modified`. A **top-level file
@@ -136,12 +152,28 @@ only when its snapshot and its dated heading are there. So `publication` passes 
 pull request only once it has merged.
 
 On the default branch itself the merge base is `HEAD`, so there the default compares the tree with
-its own commit. `publication` run there establishes that the releases are accepted and that the
-artifact matches them; the comparison that catches an edited snapshot was made earlier, by
-`bun test` on each pull request against the commit it forked from. To repeat that comparison over
-a longer span, run `development` or `candidate` with `--base` naming an earlier ref, such as a
-release tag. `publication` with an old `--base` asks whether the releases existed at that ref, and
-refuses the ones made since, so it cannot make that comparison itself (flyingrobots/parley#153).
+its own commit: a coordinated edit that has already merged is not seen. Naming an older `--base`
+does not help in `publication`, which asks whether the releases existed at that ref and refuses
+the ones made since. So there is a second reference.
+
+### The frozen-since reference
+
+`--frozen-since REF` names an earlier commit of the same history, chosen independently of
+`--base`. Every snapshot that exists at it must have the same bytes in the candidate; one that
+differs is `snapshot.modified` and one that is gone is `snapshot.deleted`, and the problem says
+which reference it was compared with. Snapshots added since the reference are not its business,
+so releases made since it still pass. It applies in every phase and has one job: it never decides
+whether a release is accepted, which stays with the baseline.
+
+The reference must resolve (`frozen_since.unresolved`) and must be an ancestor of `HEAD`
+(`frozen_since.not_ancestor`): agreement with a commit that is not an earlier state of the history
+being released would establish nothing. There is no default, because nothing in this repository
+names the previous spec release by a tag. Whoever runs `publication` on the default branch names
+it: the previous release tag of the package being released is the natural choice. Without the
+flag, `publication` on the default branch establishes that the releases are accepted and that the
+artifact matches them, and the comparison that catches an edited snapshot is the one `bun test`
+made on each pull request against the commit it forked from, which holds only if that check was
+required and green when the edit merged.
 
 `candidate` and `publication` refuse to run without a baseline; `development` says the baseline is
 unresolved and reports no package eligible. A shallow clone has no merge base, which is why the
@@ -149,14 +181,14 @@ checks workflow fetches full history.
 
 ### Output
 
-JSON Lines, each stamped `_schema: {id: "parley.tooling.release_check", version: "1.0.0"}`. The
+JSON Lines, each stamped `_schema: {id: "parley.tooling.release_check", version: "1.1.0"}`. The
 schema is `scripts/release-check.schema.json`, and a test asserts that every line the checker
 emitted across its cases validates against it. Like the other scripts here it is repository
 tooling, not a parley program: its lines carry no `t`, `seq` or `run`.
 
 | Line | Says |
 | --- | --- |
-| `release.baseline` | The baseline asked for, the commit it names, and how many released snapshots that commit holds |
+| `release.baseline` | Both references: the baseline asked for, the commit it names and how many released snapshots that commit holds; and the same three for `--frozen-since` (`frozen_since`, `frozen_since_commit`, `frozen_since_snapshots`), null when it was not given |
 | `release.refusal` | One reason this phase fails: the package (null for the repository), a code, and the identity or path it concerns |
 | `release.package` | One per package: its version, pin, inventory counts, `passed` for this phase, `eligible` for a stable release, the `blocking` identities and any other `blockers` |
 | `release.summary` | The phase's verdict, and the packages eligible and not eligible |
@@ -166,19 +198,27 @@ tooling, not a parley program: its lines carry no `t`, `seq` or `run`.
 `eligible` always answers the `publication` question, whichever phase ran, so `development` on a
 feature branch says what a release would be refused for today.
 
-Captured from `bun run release-check --phase development` on this repository at commit `04f213c`,
-when `parley.query` 1.1.0 and `parley.lens` 1.1.0 were drafts; the first package line and the
-summary, of five lines:
+Captured from `bun run release-check --phase development` on this repository at commit `b4ac760`,
+when `parley.query` 1.1.0 and `parley.lens` 1.1.0 were drafts; the baseline line, the first
+package line and the summary, of five lines:
 
 ```jsonl illustrative
-{"event":"release.package","phase":"development","package":"@flyingrobots/parley-emit","version":"0.4.0","source":"tree","path":"packages/parley-emit","sha256":null,"pin":"fff4512578aac6dc2aafe261976e6aabe1517701","bundled":17,"declared":14,"passed":true,"eligible":false,"blocking":[{"id":"parley.lens","version":"1.1.0","code":"schema.unreleased"},{"id":"parley.query","version":"1.1.0","code":"schema.unreleased"}],"blockers":[],"_schema":{"id":"parley.tooling.release_check","version":"1.0.0"}}
-{"event":"release.summary","phase":"development","passed":true,"packages":3,"eligible":[],"not_eligible":["@flyingrobots/parley-emit","@flyingrobots/parley-emit-py","@flyingrobots/parley-read"],"refusals":0,"_schema":{"id":"parley.tooling.release_check","version":"1.0.0"}}
+{"event":"release.baseline","phase":"development","base":"merge-base(HEAD, origin/main)","commit":"29e95b91b5e02c7654ea4422f127a33310485777","resolved":true,"snapshots":17,"frozen_since":null,"frozen_since_commit":null,"frozen_since_snapshots":null,"_schema":{"id":"parley.tooling.release_check","version":"1.1.0"}}
+{"event":"release.package","phase":"development","package":"@flyingrobots/parley-emit","version":"0.4.0","source":"tree","path":"packages/parley-emit","sha256":null,"pin":"f8a5a26727aeec5d75d37e108304dc7c989ce1ff","bundled":17,"declared":14,"passed":true,"eligible":false,"blocking":[{"id":"parley.lens","version":"1.1.0","code":"schema.unreleased"},{"id":"parley.query","version":"1.1.0","code":"schema.unreleased"}],"blockers":[],"_schema":{"id":"parley.tooling.release_check","version":"1.1.0"}}
+{"event":"release.summary","phase":"development","passed":true,"packages":3,"eligible":[],"not_eligible":["@flyingrobots/parley-emit","@flyingrobots/parley-emit-py","@flyingrobots/parley-read"],"refusals":0,"_schema":{"id":"parley.tooling.release_check","version":"1.1.0"}}
 ```
 
-And the first refusal of `--phase publication` on the same tree, which exits `1`:
+The first refusal of `--phase publication` on the same tree, which exits `1`:
 
 ```jsonl illustrative
-{"event":"release.refusal","phase":"publication","package":"@flyingrobots/parley-emit","code":"schema.unreleased","problem":"parley.lens@1.1.0 has no snapshot at schemas/released/parley.lens/1.1.0.schema.json: it is a draft, and a stable release may not carry it","id":"parley.lens","version":"1.1.0","_schema":{"id":"parley.tooling.release_check","version":"1.0.0"}}
+{"event":"release.refusal","phase":"publication","package":"@flyingrobots/parley-emit","code":"schema.unreleased","problem":"parley.lens@1.1.0 has no snapshot at schemas/released/parley.lens/1.1.0.schema.json: it is a draft, and a stable release may not carry it","id":"parley.lens","version":"1.1.0","_schema":{"id":"parley.tooling.release_check","version":"1.1.0"}}
+```
+
+And the first line of `--phase publication --frozen-since parley-read-v0.1.1` there, naming both
+references:
+
+```jsonl illustrative
+{"event":"release.baseline","phase":"publication","base":"merge-base(HEAD, origin/main)","commit":"29e95b91b5e02c7654ea4422f127a33310485777","resolved":true,"snapshots":17,"frozen_since":"parley-read-v0.1.1","frozen_since_commit":"1a7b74c29182bc3eb65c15dc74996d79777de88f","frozen_since_snapshots":17,"_schema":{"id":"parley.tooling.release_check","version":"1.1.0"}}
 ```
 
 ## Releasing schema versions: two commits and a merge commit

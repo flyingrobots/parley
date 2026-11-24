@@ -33,6 +33,18 @@ the entry under it names each schema version it releases, and those are separate
   versions in two commits and a merge commit. The release workflows do not call the checker yet
   (flyingrobots/parley#147). No spec text, schema byte, schema version or package version changes
   (flyingrobots/parley#145).
+- Two rules in the release-eligibility checker, which moves its tooling schema
+  `parley.tooling.release_check` to 1.1.0. `candidate` refuses, with `release.heading_backdated`,
+  a newly snapshotted schema version named only under a release heading the baseline already has:
+  a new version is released by a heading that is itself new, identified by its version and not by
+  its date or text (flyingrobots/parley#152). And `--frozen-since REF` names a second reference,
+  independent of `--base`, whose snapshots must be byte-identical in the candidate. On the default
+  branch the baseline is `HEAD`, so without it `publication` there compared released snapshots
+  with the commit under test and did not see a coordinated edit that had merged. The reference
+  must resolve and be an ancestor of `HEAD` (`frozen_since.unresolved`,
+  `frozen_since.not_ancestor`), and `release.baseline` reports both references in three new
+  fields. No spec text, schema byte, protocol schema version or package version changes
+  (flyingrobots/parley#153).
 - `parley.query` 1.1.0, a draft: an optional boolean `fold`. `false` asks the reader to fold
   nothing; absent or `true`, the reader folds runs of one invocation with one result.
   1.0.0 stays released and unchanged (flyingrobots/parley#133). Changed in place by the

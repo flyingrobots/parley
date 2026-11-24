@@ -989,6 +989,30 @@ describe("PE-17 the head is first and sinks fail gracefully (F-6, F-7, F-8)", ()
     expect(s.stderr.objs.some((o) => o.event === "error")).toBe(true);
   });
 
+  // flyingrobots/parley#130: the copies of one event agree on every field they share (spec §1.3),
+  // so a receiptExtra key the payload also carries must hold an equal value, or the call is refused
+  // before either copy is written.
+  test("a receiptExtra field that contradicts the payload is refused before either copy is written", async () => {
+    const { dir, env } = scratch();
+    const ref = { id: "t.count", version: "1.0.0" };
+    const r = await runCount(dir, env, ["count"], (run) => {
+      expect(() => run.result({ event: "result", value: 1 }, ref, { value: 2 })).toThrow(TypeError);
+      expect(() => run.result({ event: "result", value: 1 }, ref, { event: "other" })).toThrow(TypeError);
+      expect(() => run.result({ event: "result", value: 1, at: { a: 1, b: [1, 2] } }, ref, { at: { b: [2, 1], a: 1 } })).toThrow(TypeError);
+      // Equal shared values pass, key order aside, and receipt-only fields are still allowed.
+      run.result({ event: "result", value: 3, at: { a: 1, b: [1, 2] } }, ref, { value: 3, at: { b: [1, 2], a: 1 }, rows: ["x"] });
+    });
+    expect(r.violations).toEqual([]);
+    const { receiptLines } = check(dir, r);
+    const results = (lines: Record<string, unknown>[]) => lines.filter((o) => o.event === "result");
+    expect(results(r.stdout.objs).map((o) => o.value)).toEqual([3]);
+    expect(results(receiptLines)).toHaveLength(1);
+    expect(results(receiptLines)[0]).toMatchObject({ value: 3, rows: ["x"] });
+    // A refused call takes no seq: the one counter has no gap.
+    const seqs = receiptLines.map((o) => o.seq as number);
+    expect(seqs).toEqual(seqs.map((_, i) => seqs[0]! + i));
+  });
+
   test("envelope keys supplied by the tool are refused", async () => {
     const { dir, env } = scratch();
     const r = await runCount(dir, env, ["count"], (run) => {

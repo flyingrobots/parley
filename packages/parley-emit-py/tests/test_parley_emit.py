@@ -180,6 +180,29 @@ class TestSequence(unittest.TestCase):
         self.assertEqual(values, list(range(10_000)))
 
 
+    def test_a_receipt_extra_field_that_contradicts_the_payload_is_refused(self):
+        """flyingrobots/parley#130: the copies of one event agree on every shared field (spec
+        section 1.3), so the call is refused before either copy is written."""
+        d, _, env = scratch()
+
+        def body(run):
+            with self.assertRaises(ValueError):
+                run.result({"event": "result", "value": 1}, T_COUNT, {"value": 2})
+            with self.assertRaises(ValueError):
+                run.result({"event": "result", "value": 1}, T_COUNT, {"event": "other"})
+            with self.assertRaises(ValueError):
+                run.result({"event": "result", "value": 1, "at": {"a": 1, "b": [1, 2]}}, T_COUNT, {"at": {"b": [2, 1], "a": 1}})
+            run.result({"event": "result", "value": 3, "at": {"a": 1, "b": [1, 2]}}, T_COUNT, {"value": 3, "at": {"b": [1, 2], "a": 1}, "rows": ["x"]})
+
+        o = run_count(d, env, ["count"], body)
+        self.assertEqual(o.status, 0)
+        self.assertEqual([x["value"] for x in o.stdout.objs if x["event"] == "result"], [3])
+        kept = [x for x in o.receipt_lines if x["event"] == "result"]
+        self.assertEqual(len(kept), 1)
+        self.assertEqual((kept[0]["value"], kept[0]["rows"]), (3, ["x"]))
+        seqs = [x["seq"] for x in o.receipt_lines]
+        self.assertEqual(seqs, list(range(seqs[0], seqs[0] + len(seqs))))
+
     def test_threads_emitting_at_once_share_one_counter(self):
         import threading
         d, _, env = scratch()

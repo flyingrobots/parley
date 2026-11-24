@@ -20,7 +20,8 @@ first.
 ## What conforms and what does not
 
 The writer and reader libraries are conforming implementations of the spec. The
-repository's own tooling under `scripts/` is not: the example checker and the doctor emit JSON
+repository's own tooling under `scripts/` is not: the example checker, the doctor and the
+release-eligibility checker emit JSON
 Lines with a `parley.tooling.*` schema so they are parseable, but they carry no run identity and
 make no claim to the protocol. The doctor will be rebuilt on the writer library when it exists.
 
@@ -38,6 +39,18 @@ the top-level schemas in, pinned by commit and digest, and a test fails when the
 the whole repository is `bun test`, `bun run check` and `bun run typecheck`. `bun run typecheck` also type-checks `scripts/` and every package's `test/`
 through the root `tsconfig.json`, under the same strict options as the packages.
 
+## Release eligibility
+
+A stable Parley distribution MUST NOT embed, advertise, or emit a repository-owned protocol schema
+identity unless that exact `(id, version)` has been released and resolves to its frozen
+definition. Release checks MUST inspect the distributable artifact, and publication MUST be bound
+to the checked candidate. `scripts/release-check.ts` decides it, in three phases, against a
+baseline the candidate did not choose; `bun test` runs its `development` phase, which reports
+which packages a draft schema blocks without failing on the draft. The rule, the phases and the
+two-commit procedure for releasing schema versions are in
+[docs/workflows/release-spec](docs/workflows/release-spec/README.md). A release is merged with a
+merge commit, never squashed: the package copies are pinned to the schema release's commit id.
+
 ## Hard don'ts
 
 - Do not let the libraries define the protocol. If an implementation cannot do what the spec says,
@@ -46,3 +59,5 @@ through the root `tsconfig.json`, under the same strict options as the packages.
   still a draft under `Unreleased` in the changelog (spec §4.5), in which case record the change
   in that entry.
 - Do not claim a section is settled that has not been tested against a real program.
+- Do not tag or publish a package as stable while `bun run release-check --phase publication`
+  refuses it, and do not edit, delete or re-point a file under `schemas/released/`.

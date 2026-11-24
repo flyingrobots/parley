@@ -8,8 +8,20 @@ workflow checks, is in [`docs/workflows/release-parley-emit`](docs/workflows/rel
 and [`docs/workflows/release-parley-read`](docs/workflows/release-parley-read/README.md); what a
 release of the spec and its schemas is, in [`docs/topics/release`](docs/topics/release/README.md).
 
+## The rule every release is held to
+
+A stable Parley distribution MUST NOT embed, advertise, or emit a repository-owned protocol schema
+identity unless that exact `(id, version)` has been released and resolves to its frozen
+definition. Release checks MUST inspect the distributable artifact, and publication MUST be bound
+to the checked candidate. `bun run release-check --phase publication` says whether a package or a
+packed artifact meets it, and names the schema identities that block one that does not; the
+phases, and how schema versions are released in two commits and a merge commit, are in
+[`docs/workflows/release-spec`](docs/workflows/release-spec/README.md). The release workflows do
+not run that check themselves yet (flyingrobots/parley#147), so the person tagging runs it.
+
 ## After merge
 
+- Before pushing any package tag below, run `bun run release-check --phase publication` on `main` at the merge commit; push no tag for a package it reports as not eligible.
 - If the merged change moved `version` in `packages/parley-emit/package.json`, tag the merge commit on `main` as `parley-emit-vX.Y.Z` with that number (for example `parley-emit-v0.2.0`) and push the tag; `.github/workflows/release-parley-emit.yml` does the rest.
 - After pushing a `parley-emit-v` tag, confirm the workflow's `sanity`, `release` and `publish` jobs all succeeded. `publish` only stages the version: `npm stage list @flyingrobots/parley-emit` must name it. If `publish` failed, read its log; do not re-run it blindly and do not publish by hand.
 - The owner approves a staged version, with `npm stage approve <stage-id>` or on the package's Staged Packages tab on npmjs.com; nobody else can, and an agent must not try. Once approved, confirm that the GitHub release and `npm view <package> version` name the same version.

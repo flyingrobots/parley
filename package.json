@@ -9,6 +9,7 @@
     "check": "bun run scripts/check-examples.ts",
     "test": "bun test",
     "doctor": "bun run scripts/doctor.ts",
+    "release-check": "bun run scripts/release-check.ts",
     "typecheck": "tsc -p tsconfig.json && tsc -p packages/parley-emit/tsconfig.json && tsc -p packages/parley-read/tsconfig.json"
   },
   "config": {

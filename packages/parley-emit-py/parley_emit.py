@@ -1390,7 +1390,7 @@ class _Capture:
         if self.run.ended:
             return
         try:
-            self.run.step("captured stray output", f"something in the process wrote to sys.{name}; stdout and stderr carry only protocol lines (spec section 1.2), so the text is kept here", {"stream": name, "text": text})
+            self.run.writer_step("captured stray output", f"something in the process wrote to sys.{name}; stdout and stderr carry only protocol lines (spec section 1.2), so the text is kept here", {"stream": name, "text": text})
         except Exception:
             pass  # the run ended between the check and the write
 
@@ -1775,6 +1775,32 @@ class Run:
         scrubbed. Tools call `warning`."""
         return self._emit({"stderr": True, "receipt": True}, {"event": "warning", **_diagnostic(code, problem, fields)}, SCHEMA_IDS["warning"], writer=True)
 
+    def writer_step(self, decision: str, because: str, detail: Any = None) -> int:
+        """A decision the writer itself records, such as retention or captured stray output
+        (flyingrobots/parley#161). It is writer-built: its field names are the protocol's and are
+        never renamed, and it is never withheld by the redaction check, so a declared secret whose
+        value is `decision` cannot cost a run a record the tool had no part in. Every string in
+        it is still scrubbed: captured text, a file name and the writer's own prose alike, except
+        under a key in `DIGEST_KEYS`, so a `detail` built here never puts the tool's text under
+        one. Tools call `step`."""
+        payload: Record = {"event": "receipt.step", "decision": decision, "because": because}
+        if detail is not None:
+            payload["detail"] = detail
+        return self._emit({"receipt": True}, payload, SCHEMA_IDS["step"], writer=True)
+
+    def writer_error(self, code: str, problem: str, receipt_extra: Optional[Record] = None, **fields: Any) -> int:
+        """An error the writer itself reports, such as `uncaught.exception` for an exception that
+        escaped the handler (flyingrobots/parley#161). It is writer-built, like `writer_warning`:
+        the `code` is the writer's own and is not scrubbed, the field names are never renamed and
+        the record is never withheld by the redaction check, so `main` can always report the
+        failure. The `problem`, the `remedy` and everything in `receipt_extra` carry the tool's
+        text (an exception's name and message, a traceback, a path) and are scrubbed. The run
+        then closes with status 2, as after `error`. Tools call `error`."""
+        d = _diagnostic(code, problem, fields)
+        seq = self._emit({"stderr": True, "receipt": True}, {"event": "error", **d}, SCHEMA_IDS["error"], receipt_extra, writer=True)
+        self._error_reported = True
+        return seq
+
     # -- the public surface ---------------------------------------------------------------------
 
     def result(self, record: Record, schema: SchemaRef, receipt_extra: Optional[Record] = None) -> int:
@@ -2020,8 +2046,22 @@ def main(tool: Tool, argv: Sequence[str], handler: Callable[[Run, List[str]], An
         run: Optional[Run] = state["run"]
         try:
             if run is not None and not run.ended:
-                run.error("uncaught.writer_failure", f"the writer itself failed: {type(e).__name__}: {str(e) or '(no message)'}", receipt_extra={"detail": {"traceback": traceback.format_exc()}}, remedy="this is a defect in parley_emit; report it with the receipt")
-                return run.end()
+                # A run that reached the bootstrap line closes with `end` whatever happens (spec
+                # section 3.3). The line is writer-built, so no declared secret can have it
+                # withheld (flyingrobots/parley#161). When the failure was in reporting the
+                # tool's own failure, or this line cannot be written either, the run failed and
+                # the error that says why could not be written: that is protocol output that
+                # could not be written, status 4, not the 2 of a failure that was reported
+                # (spec section 3.4).
+                unreported = bool(state.get("reporting"))
+                try:
+                    run.writer_error("uncaught.writer_failure", f"the writer itself failed: {_describe(e)}", receipt_extra={"detail": {"traceback": traceback.format_exc()}}, remedy="this is a defect in parley_emit; report it with the receipt")
+                except BaseException:
+                    unreported = True
+                try:
+                    return run.end(4 if unreported else None)
+                except BaseException:
+                    return 4
             if run is not None:
                 return 4
             location = state["location"]
@@ -2040,6 +2080,26 @@ def main(tool: Tool, argv: Sequence[str], handler: Callable[[Run, List[str]], An
         finally:
             if capture is not None:
                 capture.release()
+
+
+def _describe(e: BaseException) -> str:
+    """An exception in a few words, for the writer's own failure line. Never raises: an exception
+    that cannot be described is said to be that."""
+    try:
+        return f"{type(e).__name__}: {str(e) or '(no message)'}"
+    except BaseException:
+        return f"{type(e).__name__}: (it could not be described)"
+
+
+def _report_uncaught(run: "Run", state: Dict[str, Any], code: str, problem: Callable[[], str], remedy: str, receipt_extra: Optional[Record] = None) -> None:
+    """The tool's failure as the writer's own error line (spec section 6): writer-built, so no
+    declared secret can rename its fields or have it withheld, while the exception's name, message
+    and traceback are scrubbed like any other text of the tool's (flyingrobots/parley#161).
+    `problem` is built here, inside the marked region, because describing an exception can itself
+    raise; `main` reads the mark to tell a failure that went unreported."""
+    state["reporting"] = True
+    run.writer_error(code, problem(), receipt_extra=receipt_extra, remedy=remedy)
+    state["reporting"] = False
 
 
 def _main(tool: Tool, argv: List[str], handler: Callable[[Run, List[str]], Any], cwd_opt: Optional[str], env: Dict[str, str],
@@ -2203,9 +2263,9 @@ def _main(tool: Tool, argv: List[str], handler: Callable[[Run, List[str]], Any],
             pass  # a conflict was already reported by the writer; the run closes with 4
         except Exception as e:
             if not run.ended:
-                run.error("uncaught.exception", f"uncaught {type(e).__name__} during discovery: {str(e) or '(no message)'}",
-                          receipt_extra={"detail": {"traceback": traceback.format_exc()}},
-                          remedy=f"this is a defect in the tool's declaration; report it with the receipt at {run.receipt_path}")
+                _report_uncaught(run, state, "uncaught.exception", lambda: f"uncaught {type(e).__name__} during discovery: {str(e) or '(no message)'}",
+                                 f"this is a defect in the tool's declaration; report it with the receipt at {run.receipt_path}",
+                                 {"detail": {"traceback": traceback.format_exc()}})
         capture.release()
         return (run.status if run.status is not None else 4) if run.ended else run.end()
 
@@ -2216,8 +2276,8 @@ def _main(tool: Tool, argv: List[str], handler: Callable[[Run, List[str]], Any],
         if run.ended:
             return run.status if run.status is not None else 4
         if code not in (None, 0):
-            run.error("uncaught.exit", f"the tool called sys.exit({code!r}) inside its handler instead of returning or calling run.end",
-                      remedy="end the run with run.end(status) and return; the writer owns the exit status (spec section 3.4)")
+            _report_uncaught(run, state, "uncaught.exit", lambda: f"the tool called sys.exit({code!r}) inside its handler instead of returning or calling run.end",
+                             "end the run with run.end(status) and return; the writer owns the exit status (spec section 3.4)")
     except ParleyRedactionConflict:
         # Already reported by the writer, under its own code and without the value (spec section
         # 5.3, flyingrobots/parley#131); an uncaught.exception beside it would say the same thing
@@ -2228,9 +2288,9 @@ def _main(tool: Tool, argv: List[str], handler: Callable[[Run, List[str]], Any],
         if run.ended:
             capture.release()
             return 4
-        run.error("uncaught.exception", f"uncaught {type(e).__name__}: {str(e) or '(no message)'}",
-                  receipt_extra={"detail": {"traceback": traceback.format_exc()}},
-                  remedy=f"this is a defect in the tool; report it with the receipt at {run.receipt_path}")
+        _report_uncaught(run, state, "uncaught.exception", lambda: f"uncaught {type(e).__name__}: {str(e) or '(no message)'}",
+                         f"this is a defect in the tool; report it with the receipt at {run.receipt_path}",
+                         {"detail": {"traceback": traceback.format_exc()}})
     finally:
         capture.release()
     return (run.status if run.status is not None else 4) if run.ended else run.end()
@@ -2348,10 +2408,10 @@ def _retain(run: Run, tool_name: str, receipt_dir: str, count: int, dry_run: boo
             victims.append((name, seen))
     total = len(mine)
     if not victims:
-        run.step("retention: nothing to delete", f"{total} receipts of {tool_name} exceed its retention count of {count}, but every excess receipt is still in flight (no end line yet); only completed bundles, or incomplete ones older than a day, are deleted (spec section 5.1)")
+        run.writer_step("retention: nothing to delete", f"{total} receipts of {tool_name} exceed its retention count of {count}, but every excess receipt is still in flight (no end line yet); only completed bundles, or incomplete ones older than a day, are deleted (spec section 5.1)")
         return
     if dry_run:
-        run.step(f"retention: would delete {len(victims)} receipt bundle(s)", f"{total} receipts of {tool_name} exceed its retention count of {count}; a dry run performs no retention deletion (spec section 4.3)", {"receipts": [n for n, _ in victims]})
+        run.writer_step(f"retention: would delete {len(victims)} receipt bundle(s)", f"{total} receipts of {tool_name} exceed its retention count of {count}; a dry run performs no retention deletion (spec section 4.3)", {"receipts": [n for n, _ in victims]})
         return
     deleted: List[str] = []
     for name, seen in victims:
@@ -2373,7 +2433,7 @@ def _retain(run: Run, tool_name: str, receipt_dir: str, count: int, dry_run: boo
             continue  # a bundle another run is deleting
         if ours:
             deleted.append(name)
-    run.step(f"retention: deleted {len(deleted)} receipt bundle(s)", f"{total} receipts of {tool_name} exceeded its retention count of {count}; the oldest completed bundles of this tool are deleted with their sidecars, and no other tool's receipts are counted or touched (spec section 5.1)", {"receipts": deleted})
+    run.writer_step(f"retention: deleted {len(deleted)} receipt bundle(s)", f"{total} receipts of {tool_name} exceeded its retention count of {count}; the oldest completed bundles of this tool are deleted with their sidecars, and no other tool's receipts are counted or touched (spec section 5.1)", {"receipts": deleted})
 
 
 def _observe(p: str) -> Optional[Tuple[int, int]]:

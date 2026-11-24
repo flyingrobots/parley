@@ -659,7 +659,7 @@ export class Run {
     if (p === undefined) return;
     if (this.projectionWarning !== null) { const d = this.projectionWarning; this.projectionWarning = null; this.writerWarning(d); }
     if (this.projectionSeq === null) return;
-    this.step(`the shared stream's copy of this run is a projection by ${p.name}`, `a history transform is configured, so the stream copy is narrowed and says so: seq ${this.projectionSeq} is its parley.history.transform line, which reaches the stream alone and is why this receipt has no line at that seq. The transform's source digests to ${p.sha256}. The receipt is never projected (§8, informative)`);
+    this.writerStep(`the shared stream's copy of this run is a projection by ${p.name}`, `a history transform is configured, so the stream copy is narrowed and says so: seq ${this.projectionSeq} is its parley.history.transform line, which reaches the stream alone and is why this receipt has no line at that seq. The transform's source digests to ${p.sha256}. The receipt is never projected (§8, informative)`);
   }
 
   /**
@@ -690,6 +690,19 @@ export class Run {
     return this.emit({ to: { receipt: true } }, { event: "receipt.step", decision, because, ...(detail === undefined ? {} : { detail }) }, SCHEMA_IDS.step);
   }
 
+  /**
+   * Internal: a decision the writer itself records, such as retention, the projection of the
+   * stream copy or captured console output (flyingrobots/parley#161). It is writer-built: its
+   * field names are the protocol's and are never renamed, and it is never withheld by the
+   * redaction check, so a declared secret whose value is `decision` cannot cost a run a record
+   * the tool had no part in. Every string in it is still scrubbed: captured text, a file name and
+   * the writer's own prose alike, except under a key in `DIGEST_KEYS`, so a `detail` built here
+   * never puts the tool's text under one. Tools call `step`.
+   */
+  writerStep(decision: string, because: string, detail?: unknown): number {
+    return this.emit({ to: { receipt: true }, writer: true }, { event: "receipt.step", decision, because, ...(detail === undefined ? {} : { detail }) }, SCHEMA_IDS.step);
+  }
+
   warning(d: Diagnostic): number { return this.emit({ to: { stderr: true, receipt: true } }, { event: "warning", ...this.diagnostic(d) }, SCHEMA_IDS.warning); }
 
   /**
@@ -703,6 +716,21 @@ export class Run {
   error(d: Diagnostic, receiptExtra?: Record_): number {
     // Marked once the line is out: an error the writer refused to emit was not reported.
     const seq = this.emit({ to: { stderr: true, receipt: true } }, { event: "error", ...this.diagnostic(d) }, SCHEMA_IDS.error, receiptExtra);
+    this.errorReported = true;
+    return seq;
+  }
+
+  /**
+   * Internal: an error the writer itself reports, such as `uncaught.exception` for a throw that
+   * escaped the handler (flyingrobots/parley#161). It is writer-built, like `writerWarning`: the
+   * `code` is the writer's own and is not scrubbed, the field names are never renamed and the
+   * record is never withheld by the redaction check, so `main` can always report the failure. The
+   * `problem`, the `remedy` and everything in `receiptExtra` carry the tool's text (an exception's
+   * name, message and stack, a path) and are scrubbed. The run then closes with status 2, as after
+   * `error`. Tools call `error`.
+   */
+  writerError(d: Diagnostic, receiptExtra?: Record_): number {
+    const seq = this.emit({ to: { stderr: true, receipt: true }, writer: true }, { event: "error", ...this.diagnostic(d) }, SCHEMA_IDS.error, receiptExtra);
     this.errorReported = true;
     return seq;
   }

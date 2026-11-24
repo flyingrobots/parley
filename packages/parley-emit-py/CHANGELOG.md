@@ -37,15 +37,27 @@ The writer stamps neither message, so no emitted line changes. `--vendor-info` r
   no text from the checker and no part of the schema. The call raises
   `ParleyRedactionConflict`, which `main` does not report a second time, and the run ends with
   status 4 whatever the handler passes to `end`, as after a sink failure.
-- Scope, stated: only a failure the redaction caused is refused. A record already invalid in the
-  same way, a record of a type declared with no `schema` document, and a schema outside the
-  checker's subset are written as before. Writer-built records are never checked.
+- **A record redaction changed, under a schema the writer holds and cannot evaluate, is withheld
+  too** (spec §5.3, decided on flyingrobots/parley#144), by the same rule as the TypeScript
+  writer. A declared schema document that uses any keyword outside the bounded checker
+  (`format: "date-time"`, `multipleOf`, `uniqueItems`, a `$ref`, even an empty `$defs`) made the
+  writer skip the check and publish the redacted record with status 0. The writer cannot show
+  such a record is valid, so it now withholds it exactly as it withholds a conflict: nothing is
+  written, no `seq` is taken, one `error` with the code `redaction.schema_unchecked` and `detail`
+  `{schema: {id, version}, redacted}` is reported, the call raises `ParleyRedactionUnchecked` and
+  the run ends with status 4. The construct the checker could not evaluate is part of the
+  schema, so it is on the exception (`construct`) and never on the line.
+- Scope, stated: only a record the scrub changed is checked. A record already invalid in the
+  same way and a record of a type declared with no `schema` document, which spec §5.3 exempts,
+  are written as before. Writer-built records are never checked.
 - `run.error` marks the run as having reported an error once the line is out, not before.
 
 ### Added
 
 - `ParleyRedactionConflict` (with `schema` and `pointers`), `REDACTION_CONFLICT_CODE` and
   `run.redaction_refused`.
+- `ParleyRedactionUnchecked`, a `ParleyRedactionConflict` with empty `pointers`, `redacted` and
+  `construct`, and `REDACTION_UNCHECKED_CODE`.
 - `CheckResult.pointers`: the JSON Pointer of each error, in the same order as `errors`, and for a
   missing or disallowed property, that property. A key containing `/` or `~` is now escaped in
   the path an error names (RFC 6901).

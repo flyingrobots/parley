@@ -14,6 +14,7 @@ it. This page is the reference for what the package does on `main`; the package
 | `main(spec, argv, handler, options)` | Parses the writer-owned flags (`--human`, `--humanize`, `--dry-run`, `--schema`, `--help`, `-h`) before the first `--`, which ends them (flyingrobots/parley#103), chooses the receipt location, opens the shared history stream when one is configured, resolves declared sources, redacts, bootstraps, writes the head, enforces retention, runs the handler under the top-level handler, closes with `end`, returns the exit status |
 | `Run` | `result`, `page`, `step`, `warning`, `error`, `readInput`, `input`, `inputUnreadable`, `finaliseInputs`, `end`; `receiptPath`, `cwd`, `dryRun`, `ended`, `status`, `sinkFailed`, `redactionRefused` |
 | `ParleyRedactionConflict`, `REDACTION_CONFLICT_CODE` | The error an emission throws when redaction made its record invalid under its declared schema, and the code of the `error` line the writer emits for it |
+| `ParleyRedactionUnchecked`, `REDACTION_UNCHECKED_CODE` | The error an emission throws when redaction changed its record and the writer holds a schema document for the pair that it cannot evaluate, and the code of that `error` line. It is a `ParleyRedactionConflict` |
 | `SCHEMAS`, `SCHEMA_SOURCE` | The seventeen schemas the package ships, each at its current released version (the root `CHANGELOG.md`'s release headings), with the commit and digest of each |
 | `computeInv`, `canonical`, `digestTree`, `sha256` | The documented `inv` derivation and its parts |
 | `chooseLocation`, `repoRoot`, `stateBase`, `bookkeepingFor` | Receipt placement and the bookkeeping a run declares |
@@ -250,17 +251,19 @@ five decisions behind the built-in that the owner can overrule.
 ## A record redaction made invalid
 
 Spec §5.3 forbids publishing a record that redaction made invalid under its declared schema
-(flyingrobots/parley#131). The writer holds every schema document it can check against, by exact
+(flyingrobots/parley#131), and does not exempt a program that holds the schema and cannot
+evaluate it (flyingrobots/parley#144). The writer holds every schema document it can check against, by exact
 pair: the ones it ships and the ones the tool declared on its emitted and error types.
 
 | Step | Behaviour |
 | --- | --- |
 | Trigger | The scrub replaced something in a record the tool emitted. A writer-built record never triggers it: the head, `end`, `redaction`, `sidecar`, `receipt.inputs`, discovery lines and the writer's own diagnostics are emitted with the writer flag, which also keeps their scalars and identity fields from being scrubbed |
 | Check | Before any copy is written and before a `seq` is taken, the stream copy and, with `receiptExtra`, the receipt copy are each validated as scrubbed and as the tool handed them over. A failure the scrubbed copy has and the original did not is a conflict |
-| Not checked | A pair with no schema document, and a schema outside the checker's subset: nothing can be established, and the record is written as before. A record already invalid in the same way is written as before |
+| Schema not evaluable | The pair has a schema document that uses a construct outside the checker's subset. The writer cannot show the redacted record is valid, so it withholds it exactly as it withholds a conflict: one writer-built `error`, code `redaction.schema_unchecked`, with `detail` `{schema: {id, version}, redacted}`, and the call throws `ParleyRedactionUnchecked`, a `ParleyRedactionConflict` with empty `pointers`, the `redacted` pointers and `construct` (what `schemaSubsetGap` reports). The construct is part of the schema, so it is on the exception and never on the line; it is left off the exception too if it would carry a declared secret value. This holds even when the secret sat in a field the schema leaves free: nothing is established about a schema the checker did not evaluate |
+| Not checked | A pair with no schema document, which spec §5.3 exempts: the record is written as before. A record the scrub did not change is never checked, whatever its schema. A record already invalid in the same way is written as before |
 | Report | One writer-built `error`, code `redaction.schema_conflict`, on stderr and in the receipt. `problem` and `detail` (`schema: {id, version}`, `at`, `redacted`) name the fields by JSON Pointer and the schema pair. The checker's text is deliberately not used: it can quote the schema, and the value is the secret or sits beside it. Being writer-built, the error is not checked again, so it cannot raise another |
 | Refusal | The call throws `ParleyRedactionConflict`. `main` does not turn it into `uncaught.exception`; a handler may catch it and continue |
-| Status | 4, forced at `end` exactly as a sink failure forces it, whatever status the handler passes. `run.redactionRefused` is true |
+| Status | 4, forced at `end` exactly as a sink failure forces it, whatever status the handler passes, for a conflict and for a schema that could not be evaluated alike. `run.redactionRefused` is true |
 
 ## What it does not do
 

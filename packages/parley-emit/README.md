@@ -82,7 +82,7 @@ conforming (`bun run doctor --stdout ... --stderr ... --receipt ...`).
 | §5.1 | Retention by count of this tool's own receipts per location (another tool's are never counted), oldest completed bundles first (a receipt whose last line is `end`, or one without an `end` older than a day, judged at the decision; a receipt that moved before the unlink is spared; no lock, so a run silent for over a day that then appends while retention deletes its receipt loses it, flyingrobots/parley#112), recorded as a `receipt.step`; never a receipt still in flight; never on `--dry-run` |
 | §4.1, §4.2 | `--schema` and `<command> --help` are runs that emit `command` and `schema` lines. A command's error types default to `parley.error` and `parley.startup.failed`, since every command can produce a startup failure (flyingrobots/parley#92); a command that declares `errors` replaces the default and names both itself |
 | §4.3 | `--dry-run` marks the bootstrap line and head and performs no retention deletion; the handler reads `run.dryRun` |
-| §6, §3.2 | An uncaught throw in the handler, or while discovery is being emitted, becomes an `error` with code `uncaught.exception` whose stack goes to the receipt copy only; a reported error closes the run with status 2, and `end(0)` after one is refused. A record redaction made invalid is the exception: the writer has already reported it, so the `ParleyRedactionConflict` it throws adds no `uncaught.exception`, and the run closes with status 4 ([below](#a-record-redaction-made-invalid)). A throw from `resolved` or `inputs` before the bootstrap line is `startup.arguments_invalid`, exit 3, with the reserved receipt removed; a source resolver that throws means the source is not present; a throwing `human` renderer is reported once as a `human.renderer_failed` warning and the default rendering is used |
+| §6, §3.2 | An uncaught throw in the handler, or while discovery is being emitted, becomes an `error` with code `uncaught.exception` whose stack goes to the receipt copy only; a reported error closes the run with status 2, and `end(0)` after one is refused. A record redaction made invalid, or one the writer could not show valid, is the exception: the writer has already reported it, so the `ParleyRedactionConflict` or `ParleyRedactionUnchecked` it throws adds no `uncaught.exception`, and the run closes with status 4 ([below](#a-record-redaction-made-invalid)). A throw from `resolved` or `inputs` before the bootstrap line is `startup.arguments_invalid`, exit 3, with the reserved receipt removed; a source resolver that throws means the source is not present; a throwing `human` renderer is reported once as a `human.renderer_failed` warning and the default rendering is used |
 | §5.4, §3.3 | The default stdout and stderr sinks deliver whole lines: a partial write continues and a full pipe (EAGAIN on a descriptor the runtime left non-blocking) waits and retries, as a blocking write would. A sink failure before `end` is an `error` on the sinks still working and status 4; a failed bootstrap write is reported after the head, so the head stays the receipt's first line; after `end` nothing is written and the status alone carries a failure; emitting after `end` throws `ParleyClosed`. A record or `receiptExtra` carrying `t`, `seq`, `run` or `_schema` is a `TypeError` |
 | §1.2 | Every function on `console`, called from the moment `main` starts until it returns, is captured into the run's receipt as a step; text captured before the receipt exists is held and written after the head. This contains libraries that log through `console`; it does not contain a library that writes to a file descriptor directly, or a timer that fires after `end` (see the exceptions below) |
 | §1.1 | `--human` (alias `--humanize`) renders stdout and stderr through the tool's `human` function, falling back to one line per event; the bootstrap line and a successful `end` render as nothing, so `tool --human \| gh pr comment --body-file -` posts only the tool's prose, and a failed `end` names the receipt path; the receipt is unchanged |
@@ -259,11 +259,16 @@ flyingrobots/parley#131).
 | On a conflict | Nothing of the record is written anywhere. One `error` with the code `redaction.schema_conflict` goes to stderr and the receipt, and the call throws `ParleyRedactionConflict` |
 | What the error says | Each field by JSON Pointer and the schema's `id` and `version`, in `problem` and in `detail` (`schema`, `at`, `redacted`). Never the value, the checker's message or any part of the schema |
 | Exit status | 4, whatever the handler passes to `end`: a record the writer would not write is output it could not write (spec §3.4). `run.redactionRefused` is then true |
-| What is not checked | A record redaction left valid; one that was already invalid in the same way before redaction; a type with no schema document; a schema outside the checker's subset; every writer-built record |
+| A schema the writer cannot evaluate | A record the scrub changed, whose pair has a schema document that uses a construct outside [the checker's subset](#re-validating-without-a-dependency), is withheld in the same way (flyingrobots/parley#144): the writer cannot show the redacted record is valid. The code is `redaction.schema_unchecked`, `detail` is `{schema, redacted}`, and the call throws `ParleyRedactionUnchecked` |
+| What is not checked | A record the scrub did not change, whatever its schema; a record redaction left valid; one that was already invalid in the same way before redaction; a type with no schema document, which spec §5.3 exempts; every writer-built record |
 
 `main` does not report the thrown `ParleyRedactionConflict` again as `uncaught.exception`. A
 handler may catch it and carry on: later records are written, and the status stays 4. Its
-`schema` and `pointers` are safe to log, as is its message.
+`schema` and `pointers` are safe to log, as is its message. `ParleyRedactionUnchecked` is a
+`ParleyRedactionConflict` with no `pointers`, the replaced `redacted` pointers, and `construct`:
+the first thing in the schema the checker does not implement, as `schemaSubsetGap` reports it.
+The construct is in the exception and its message only. It is part of the schema, so it is never
+on the error line.
 
 Captured from a tool that declares `secrets: ["--token"]` and an integer `value`, run with
 `--token 42` and emitting `{ event: "result", value: 42 }`. stdout carried the bootstrap line and
@@ -275,6 +280,18 @@ Captured from a tool that declares `secrets: ["--token"]` and an integer `value`
 
 To avoid it, keep a declared secret out of typed fields: leave the field out, or declare it as a
 string with no `pattern`, `enum`, `format` or length bound.
+
+The same tool with a second property declared as `{ type: "string", format: "date-time" }`,
+which the checker does not evaluate. Captured from a run with `--token 42`; stdout carried the
+bootstrap line and `end` with status 4, stderr this one line, and the process exited 4:
+
+```json
+{"event":"error","t":1795557038937,"seq":2,"run":"01M87RM6TNN7XVZ77G5BFCERF4","code":"redaction.schema_unchecked","problem":"the result record was not published: a declared secret was replaced at /value, and this writer cannot evaluate the schema document it holds for t.count@1.0.0, so it cannot show the redacted record is valid under it","remedy":"keep declared secrets out of records of this type, or state the type's schema within the constructs this writer's checker evaluates (its README lists them); the run will close with status 4","detail":{"schema":{"id":"t.count","version":"1.0.0"},"redacted":["/value"]},"_schema":{"id":"parley.error","version":"2.0.0"}}
+```
+
+A tool that sees this either keeps declared secrets out of records of that type, or states the
+type's schema within the checker's subset. Before this rule a schema outside the subset was
+written unchecked, which published `"value":"[redacted]"` under a schema requiring an integer.
 
 ## What a receipt can contain
 
@@ -482,8 +499,10 @@ property that record happens not to carry would otherwise go unnoticed and "we c
 we understood" is the one claim this must not make. A test asserts
 every schema this package ships is inside the subset, so a future draft reaching for `$ref` fails
 there rather than silently going unchecked. A tool whose own type needs a construct outside the
-subset will see its projected lines withheld as `history.transform_uncheckable`, which is the
-fail-closed direction: better a gap you can see than a line nobody checked.
+subset will see its projected lines withheld as `history.transform_uncheckable`, and a record of
+that type in which a declared secret was replaced withheld as `redaction.schema_unchecked`
+([above](#a-record-redaction-made-invalid)), which is the fail-closed direction: better a gap you
+can see than a line nobody checked.
 
 ### A built-in: declaredProjection
 

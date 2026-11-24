@@ -117,6 +117,7 @@ and `count files --human` printed `2 file(s)` and nothing else, exit 0.
 | `repo_root`, `state_base`, `state_receipt_dir`, `bookkeeping_for` | Receipt placement, keyed exactly as `parley-read` looks for it |
 | `ulid`, `FdSink`, `ParleyClosed`, `SCHEMA_IDS`, `SIDECAR_THRESHOLD` | Run ids, the default sink, the error raised after `end`, the writer's schema pairs, the sidecar threshold |
 | `ParleyRedactionConflict`, `REDACTION_CONFLICT_CODE` | The error raised when redaction made a record invalid under its declared schema, and the code of the `error` line the writer emits for it ([below](#a-record-redaction-made-invalid)) |
+| `ParleyRedactionUnchecked`, `REDACTION_UNCHECKED_CODE` | The error raised when redaction changed a record whose schema document the writer holds and cannot evaluate, and the code of its `error` line. It is a `ParleyRedactionConflict` |
 
 ## What the writer does for you
 
@@ -126,12 +127,12 @@ and `count files --human` printed `2 file(s)` and nothing else, exit 0.
 | §5, §5.2 | `.parley/receipts/<run>.jsonl` under the initial working directory, after `.parley/.gitignore` holds a line `*` (created whole under a temporary name and linked into place if absent, never overwritten). The receipt goes to `$XDG_STATE_HOME/parley/<repo-hash>/receipts/` instead, with a `receipt.relocated` warning, when the ignore file is a user's (without `*`, or with a negation that can re-include `receipts/`, such as `!receipts/` or `!*/`; a negation the writer cannot evaluate counts as one) or when the working-directory path would carry a declared secret value; an unwritable working directory falls back silently (the bootstrap line says where). No writable location is `startup.receipt_unwritable`; a state path that would carry the secret too is `startup.secret_in_path`; both exit 3 |
 | §1.3 | One counter per run, under a lock, so threads emitting at once cannot share or skip a `seq`. A record is serialised before it takes a `seq`, so one that is not JSON is raised to the tool and leaves no gap |
 | §2.2 | `inv` exactly as the TypeScript writer derives it (below) |
-| §5.3 | Declared flags, variables and sources replaced with `[redacted]` in `argv`, `resolved`, `inputs` and every later record before any copy leaves the process; longest secret first; a number or boolean whose JSON form is a secret becomes `[redacted]`; a key carrying one is renamed. The head's `redacted` says where; a later surfacing gets a `redaction` event; `end.redacted` aggregates. The envelope, the writer's own identity fields and the schema document a `schema` line publishes (the tool's static declaration, flyingrobots/parley#111) are never scrubbed, a run id or receipt path carrying a secret is never chosen, and a session carrying one is `startup.secret_in_identity`, exit 3. A record of the tool's that redaction made invalid under its declared schema is not published: one `redaction.schema_conflict` error replaces it and the run ends with status 4 ([below](#a-record-redaction-made-invalid), flyingrobots/parley#131) |
+| §5.3 | Declared flags, variables and sources replaced with `[redacted]` in `argv`, `resolved`, `inputs` and every later record before any copy leaves the process; longest secret first; a number or boolean whose JSON form is a secret becomes `[redacted]`; a key carrying one is renamed. The head's `redacted` says where; a later surfacing gets a `redaction` event; `end.redacted` aggregates. The envelope, the writer's own identity fields and the schema document a `schema` line publishes (the tool's static declaration, flyingrobots/parley#111) are never scrubbed, a run id or receipt path carrying a secret is never chosen, and a session carrying one is `startup.secret_in_identity`, exit 3. A record of the tool's that redaction made invalid under its declared schema is not published: one `redaction.schema_conflict` error replaces it and the run ends with status 4. A record redaction changed whose schema document the writer cannot evaluate is withheld the same way as `redaction.schema_unchecked` ([below](#a-record-redaction-made-invalid), flyingrobots/parley#131, flyingrobots/parley#144) |
 | §5 | A receipt record over 65,536 bytes is stored as `<run>/<seq>.json` beside the receipt with a `sidecar` event in its place; if the sidecar cannot be written the record stays inline and the run closes with a `sink.sidecar_failed` error and status 4 |
 | §5.1 | Retention by count, **per tool** (below) |
 | §4.1, §4.2 | `--schema` and `<command> --help` are runs that emit `command` and `schema` lines and close with `end` |
 | §4.3 | `--dry-run` marks the bootstrap line and head and performs no retention deletion; the handler reads `run.dry_run` |
-| §6, §3.2 | An exception from the handler becomes `uncaught.exception` with the traceback in the receipt copy only (`detail.traceback`), status 2. `SystemExit` with a non-zero code is `uncaught.exit`; `KeyboardInterrupt` is `uncaught.exception`; both close a complete failed receipt with status 2. A raise from `resolved` or `inputs` before the bootstrap line is `startup.arguments_invalid`, exit 3, with the reserved receipt removed. A source resolver that raises means not present. A raising renderer is one `human.renderer_failed` warning and the default rendering from then on. A failure inside the writer itself is `uncaught.writer_failure` after the bootstrap line and `startup.writer_failed` before it. A `ParleyRedactionConflict` is the exception: the writer already reported it, so it adds no `uncaught.exception` and the run closes with status 4 |
+| §6, §3.2 | An exception from the handler becomes `uncaught.exception` with the traceback in the receipt copy only (`detail.traceback`), status 2. `SystemExit` with a non-zero code is `uncaught.exit`; `KeyboardInterrupt` is `uncaught.exception`; both close a complete failed receipt with status 2. A raise from `resolved` or `inputs` before the bootstrap line is `startup.arguments_invalid`, exit 3, with the reserved receipt removed. A source resolver that raises means not present. A raising renderer is one `human.renderer_failed` warning and the default rendering from then on. A failure inside the writer itself is `uncaught.writer_failure` after the bootstrap line and `startup.writer_failed` before it. A `ParleyRedactionConflict`, a `ParleyRedactionUnchecked` included, is the exception: the writer already reported it, so it adds no `uncaught.exception` and the run closes with status 4 |
 | §5.4, §3.3 | stdout and stderr are written with `os.write` on descriptors 1 and 2, the whole line: a partial write continues, and `EAGAIN` on a descriptor someone left non-blocking waits a millisecond and retries. A closed reader (`EPIPE`, `BrokenPipeError`) is a sink failure: an `error` line on the sinks still working and status 4, never a traceback. After `end` nothing is written; emitting raises `ParleyClosed` |
 | §1.2 | Stray output is captured into the receipt (below) |
 | §1.1 | `--human` (alias `--humanize`) renders stdout and stderr through the tool's `human` function, falling back to one line per event; the bootstrap line and a successful `end` render as nothing; the receipt is unchanged |
@@ -343,11 +344,16 @@ flyingrobots/parley#131), by the same rule as the TypeScript writer.
 | On a conflict | Nothing of the record is written anywhere. One `error` with the code `redaction.schema_conflict` goes to stderr and the receipt, and the call raises `ParleyRedactionConflict` |
 | What the error says | Each field by JSON Pointer and the schema's `id` and `version`, in `problem` and in `detail` (`schema`, `at`, `redacted`). Never the value, the checker's message or any part of the schema |
 | Exit status | 4, whatever the handler passes to `end`: a record the writer would not write is output it could not write (spec §3.4). `run.redaction_refused` is then true |
-| What is not checked | A record redaction left valid; one that was already invalid in the same way before redaction; a type with no schema document; a schema outside the checker's subset; every writer-built record |
+| A schema the writer cannot evaluate | A record the scrub changed, whose pair has a schema document that uses a construct outside the bounded checker's subset (above), is withheld in the same way (flyingrobots/parley#144): the writer cannot show the redacted record is valid. The code is `redaction.schema_unchecked`, `detail` is `{schema, redacted}`, and the call raises `ParleyRedactionUnchecked` |
+| What is not checked | A record the scrub did not change, whatever its schema; a record redaction left valid; one that was already invalid in the same way before redaction; a type with no schema document, which spec §5.3 exempts; every writer-built record |
 
 `main` does not report the raised `ParleyRedactionConflict` again as `uncaught.exception`. A
 handler may catch it and carry on: later records are written, and the status stays 4. Its
-`schema`, `pointers` and message are safe to log.
+`schema`, `pointers` and message are safe to log. `ParleyRedactionUnchecked` is a
+`ParleyRedactionConflict` with no `pointers`, the replaced `redacted` pointers, and `construct`:
+the first thing in the schema the checker does not implement, as `schema_subset_gap` reports it.
+The construct is in the exception and its message only. It is part of the schema, so it is never
+on the error line.
 
 Captured from a tool that declares `"secrets": ["--token"]` and an integer `value`, run with
 `--token 42` and emitting `{"event": "result", "value": 42}`. stdout carried the bootstrap line
@@ -359,6 +365,18 @@ and `end` with status 4, stderr this one line, and the process exited 4:
 
 To avoid it, keep a declared secret out of typed fields: leave the field out, or declare it as a
 string with no `pattern`, `enum`, `format` or length bound.
+
+The same tool with a second property declared as `{"type": "string", "format": "date-time"}`,
+which the checker does not evaluate. Captured from a run with `--token 42`; stdout carried the
+bootstrap line and `end` with status 4, stderr this one line, and the process exited 4:
+
+```json
+{"event":"error","t":1795557038971,"seq":2,"run":"01M87RM6VT7GQRQJ8Z4S1X0ZK5","code":"redaction.schema_unchecked","problem":"the result record was not published: a declared secret was replaced at /value, and this writer cannot evaluate the schema document it holds for t.count@1.0.0, so it cannot show the redacted record is valid under it","remedy":"keep declared secrets out of records of this type, or state the type's schema within the constructs this writer's checker evaluates (its README lists them); the run will close with status 4","detail":{"schema":{"id":"t.count","version":"1.0.0"},"redacted":["/value"]},"_schema":{"id":"parley.error","version":"2.0.0"}}
+```
+
+A tool that sees this either keeps declared secrets out of records of that type, or states the
+type's schema within the checker's subset. Before this rule a schema outside the subset was
+written unchecked, which published `"value":"[redacted]"` under a schema requiring an integer.
 
 ## What a receipt can contain
 

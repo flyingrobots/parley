@@ -31,9 +31,20 @@ The writer stamps neither message, so no emitted line changes.
   from the checker and no part of the schema. The call throws `ParleyRedactionConflict`, which
   `main` does not report a second time, and the run ends with status 4 whatever the handler
   passes to `end`, by the mechanism a sink failure uses.
-- Scope, stated: only a failure the redaction caused is refused. A record that was already
-  invalid in the same way, a record of a type declared with no `schema` document, and a schema
-  outside the checker's subset are written as before. Writer-built records (the head, `end`,
+- **A record redaction changed, under a schema the writer holds and cannot evaluate, is withheld
+  too** (spec §5.3, decided on flyingrobots/parley#144). A declared schema document that uses any
+  keyword outside the bounded checker (`format: "date-time"`, `multipleOf`, `uniqueItems`, a
+  `$ref`, even an empty `$defs`) made the writer skip the check and publish the redacted record
+  with status 0. The writer cannot show such a record is valid, so it now withholds it exactly as
+  it withholds a conflict: nothing is written, no `seq` is taken, one `error` with the code
+  `redaction.schema_unchecked` and `detail` `{schema: {id, version}, redacted}` is reported, the
+  call throws `ParleyRedactionUnchecked` and the run ends with status 4. The construct the
+  checker could not evaluate is part of the schema, so it is on the exception (`construct`) and
+  never on the line. A tool that meets this keeps declared secrets out of records of that type,
+  or states the type's schema within the checker's subset.
+- Scope, stated: only a record the scrub changed is checked. A record that was already
+  invalid in the same way and a record of a type declared with no `schema` document, which spec
+  §5.3 exempts, are written as before. Writer-built records (the head, `end`,
   `redaction`, `sidecar`, `receipt.inputs`, discovery lines and the writer's own diagnostics) are
   never checked: their scalars are not scrubbed and their identity fields are skipped.
 - `run.error` marks the run as having reported an error once the line is out, not before, so an
@@ -43,6 +54,8 @@ The writer stamps neither message, so no emitted line changes.
 
 - `ParleyRedactionConflict` (with `schema` and `pointers`), `REDACTION_CONFLICT_CODE` and
   `run.redactionRefused`.
+- `ParleyRedactionUnchecked`, a `ParleyRedactionConflict` with empty `pointers`, `redacted` and
+  `construct`, and `REDACTION_UNCHECKED_CODE`.
 - `checkRecord` returns `pointers` beside `errors` when a record fails: the JSON Pointer of each
   error, in the same order, and for a missing or disallowed property, that property. A key
   containing `/` or `~` is now escaped in the path an error names (RFC 6901).

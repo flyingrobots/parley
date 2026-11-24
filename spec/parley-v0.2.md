@@ -372,7 +372,7 @@ named exceptions to the two-copy guarantee.
 | `0` | The command completed and succeeded. |
 | `2` | The command failed and reported a structured error (§6), a usage error found after the bootstrap line included (§3.2). |
 | `3` | Setup failed before the bootstrap line, a usage error found there included; the only output is the §3.2 diagnostic. |
-| `4` | Protocol output, receipt writing or finalisation failed, including a failure while writing the bootstrap line. Whatever remained possible through working sinks was preserved, subject to the immutable `end`: a run whose bootstrap write failed still closes its receipt with `end` carrying `4`, since the receipt was created first (§3.1). A record withheld because redaction left it invalid under its declared schema (§5.3) is protocol output that could not be written, and gives this status too. |
+| `4` | Protocol output, receipt writing or finalisation failed, including a failure while writing the bootstrap line. Whatever remained possible through working sinks was preserved, subject to the immutable `end`: a run whose bootstrap write failed still closes its receipt with `end` carrying `4`, since the receipt was created first (§3.1). A record withheld because redaction left it invalid under its declared schema, or because the program could not evaluate the schema document it holds for it (§5.3), is protocol output that could not be written, and gives this status too. |
 | signal-derived | Termination by signal: the documented exception. Terminal output may be absent. |
 | other | Tool-owned and documented by the tool. A tool **MUST NOT** redefine `0`, `2`, `3` or `4`. |
 
@@ -754,7 +754,11 @@ value is the secret or sits beside it. The withheld record is output the program
 so the run closes with status `4` (§3.4). Privacy and the contract both hold and the answer is
 lost: a program neither admits `[redacted]` where its schema does not, nor leaves a typed value
 unredacted. A program that holds no schema document for the record's pair cannot make this check,
-and the rule asks nothing of it for that record.
+and the rule asks nothing of it for that record. A program that holds a schema document for the
+pair and cannot evaluate it is not exempt: it cannot show that the redacted record is valid, so
+it **MUST** withhold the record in the same way, with no copy on any stream or in the receipt, no
+`seq`, a structured error under the same limits that names the schema by its `id` and `version`,
+and status `4`.
 
 A schema checks the shape of `redacted`, not its truth. Whether an indexed element contains
 `[redacted]`, whether a pointer resolves, and whether a `[redacted]` marker in the head has a

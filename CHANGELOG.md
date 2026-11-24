@@ -10,7 +10,7 @@ the entry under it names each schema version it releases, and those are separate
 ## [0.2.1] — 2026-11-24
 
 The second release of the schemas, with spec `0.2.1`. It releases two schema versions, and the
-spec gains five normative sentences. Everything the `0.2.0` entry released stays released and
+spec gains six normative sentences. Everything the `0.2.0` entry released stays released and
 unchanged: no released snapshot's bytes move.
 
 Released schema versions, snapshotted byte for byte at
@@ -107,6 +107,15 @@ These add or move a normative term, which is why the spec version moves to `0.2.
   as the string `[redacted]` under the original schema by a run that ended with status 0
   (flyingrobots/parley#131). No error code is enumerated by the spec or by any schema, so the
   writers' new code `redaction.schema_conflict` changes neither.
+- **§5.3, with the same sentence of the `4` row of §3.4 widened.** A program that holds no schema
+  document for the record's pair is exempt from that rule. A program that holds one and cannot
+  evaluate it is not: it cannot show that the redacted record is valid, so it **MUST** withhold
+  the record in the same way, with no copy, no `seq`, a structured error under the same limits
+  that names the schema, and status `4`. The owner chose, for flyingrobots/parley#131, that
+  privacy and the contract both hold and the answer is lost; a program that published a redacted
+  record it could not check would be publishing the silent invalid line that rule exists to
+  prevent. Decided under the owner's delegation of 2026-11-24 and recorded on
+  flyingrobots/parley#144. The writers' code for it is `redaction.schema_unchecked`.
 - **§4.5**, with no normative term added, removed or moved: it now says what the first release
   did. A top-level schema file may hold a released version only with the snapshot's exact bytes,
   and the first change after a release moves it to a new version
@@ -121,7 +130,11 @@ Each package's own changelog is the record; this is the summary.
   beside them, so it validates the lines of both versions.
 - **A record that redaction made invalid is never published** (`@flyingrobots/parley-emit` 0.4.0,
   `parley_emit.py` 0.3.0, flyingrobots/parley#131): the writers implement the §5.3 sentence above
-  with a `redaction.schema_conflict` error and status 4.
+  with a `redaction.schema_conflict` error and status 4. A record redaction changed whose schema
+  document a writer holds and cannot evaluate, because it uses a keyword outside the writer's
+  bounded checker, is withheld the same way with a `redaction.schema_unchecked` error and status
+  4 (flyingrobots/parley#144). A record of a type with no schema document is written as before,
+  and so is a record the scrub did not change.
 - **A declared file input can be read through the run** (`run.readInput`, `run.read_input`;
   flyingrobots/parley#132), so the receipt records the digest of the bytes the tool read. A
   declared file not read that way is still digested when the handler finishes, and the writers'

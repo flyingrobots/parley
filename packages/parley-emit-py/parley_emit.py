@@ -1339,12 +1339,12 @@ class Run:
         the pointers the scrub replaced and nothing of the schema; `construct` goes to the
         exception only, and not even there when it would carry a declared secret value, since an
         exception's message is not scrubbed. Always raises."""
-        problem = (f"the {payload.get('event')} record was not published: a declared secret was replaced at {', '.join(redacted)}, "
-                   f"and this writer cannot evaluate the schema document it holds for {sid}@{ver}, so it cannot show the redacted record is valid under it")
+        problem = (f"the {payload.get('event')} record was not published because it could not be checked: a declared secret was replaced at {', '.join(redacted)}, "
+                   f"and this writer cannot evaluate the schema document it holds for {sid}@{ver}, so the redacted record was not validated against it")
         self._output_refused = True
         self._emit({"stderr": True, "receipt": True},
                    {"event": "error", "code": REDACTION_UNCHECKED_CODE, "problem": problem,
-                    "remedy": "keep declared secrets out of records of this type, or state the type's schema within the constructs this writer's checker evaluates (its README lists them); the run will close with status 4",
+                    "remedy": "keep the type's declared schema within the keywords this writer's checker evaluates (its README lists them), or keep declared secrets out of records of this type; the record was not shown to be invalid, and the value was replaced, not exposed; the run will close with status 4",
                     "detail": {"schema": {"id": sid, "version": ver}, "redacted": list(redacted)}},
                    SCHEMA_IDS["error"], writer=True)
         named = None if carries_secret(construct, self._secrets) else construct

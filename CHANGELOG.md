@@ -137,12 +137,22 @@ Each package's own changelog is the record; this is the summary.
   flyingrobots/parley#133). It emits `parley.query` and `parley.lens` at 1.1.0 and ships 1.0.0
   beside them, so it validates the lines of both versions.
 - **A record that redaction made invalid is never published** (`@flyingrobots/parley-emit` 0.4.0,
-  `parley_emit.py` 0.3.0, flyingrobots/parley#131): the writers implement the §5.3 sentence above
-  with a `redaction.schema_conflict` error and status 4. A record redaction changed whose schema
-  document a writer holds and cannot evaluate, because it uses a keyword outside the writer's
-  bounded checker, is withheld the same way with a `redaction.schema_unchecked` error and status
-  4 (flyingrobots/parley#144). A record of a type with no schema document is written as before,
-  and so is a record the scrub did not change.
+  `parley_emit.py` 0.3.0, flyingrobots/parley#131): the writers implement the §5.3 sentences above
+  for a tool's record the scrub changed, with a `redaction.schema_conflict` error and status 4.
+  Still not checked: a record of a type with no schema document, which §5.3 exempts; a record
+  that was already invalid in the same way before redaction; and the records the writers build
+  themselves, whose scalars and identity fields are not scrubbed.
+- **BREAKING for a tool whose declared schema uses a keyword outside a writer's checker**
+  (`@flyingrobots/parley-emit` 0.4.0, `parley_emit.py` 0.3.0, flyingrobots/parley#144). Any
+  redaction in a record whose declared schema document uses such a keyword (`format:
+  "date-time"`, `multipleOf`, `uniqueItems`, a `$ref`, even an empty `$defs`) is now withheld
+  with a `redaction.schema_unchecked` error and status 4, even when the redacted record would
+  still have been valid, for example a token inside an unconstrained string. Before, such a
+  record was published with status 0. The code means not checked: it does not say the record was
+  invalid, and no secret was exposed. The remedies are to keep the declared schema within the
+  keywords each writer's README lists, or to keep declared secrets out of emitted records.
+  Deleting the `schema` document removes the refusal and the check together, so it is not a fix.
+  A record the scrub did not change is written as before, whatever its schema.
 - **A declared file input can be read through the run** (`run.readInput`, `run.read_input`;
   flyingrobots/parley#132), so the receipt records the digest of the bytes the tool read. A
   declared file not read that way is still digested when the handler finishes, and the writers'

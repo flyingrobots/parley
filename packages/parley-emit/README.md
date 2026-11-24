@@ -286,12 +286,30 @@ which the checker does not evaluate. Captured from a run with `--token 42`; stdo
 bootstrap line and `end` with status 4, stderr this one line, and the process exited 4:
 
 ```json
-{"event":"error","t":1795557038937,"seq":2,"run":"01M87RM6TNN7XVZ77G5BFCERF4","code":"redaction.schema_unchecked","problem":"the result record was not published: a declared secret was replaced at /value, and this writer cannot evaluate the schema document it holds for t.count@1.0.0, so it cannot show the redacted record is valid under it","remedy":"keep declared secrets out of records of this type, or state the type's schema within the constructs this writer's checker evaluates (its README lists them); the run will close with status 4","detail":{"schema":{"id":"t.count","version":"1.0.0"},"redacted":["/value"]},"_schema":{"id":"parley.error","version":"2.0.0"}}
+{"event":"error","t":1795557571231,"seq":2,"run":"01M87S4EMT1EWW5E0TFAQ39MB2","code":"redaction.schema_unchecked","problem":"the result record was not published because it could not be checked: a declared secret was replaced at /value, and this writer cannot evaluate the schema document it holds for t.count@1.0.0, so the redacted record was not validated against it","remedy":"keep the type's declared schema within the keywords this writer's checker evaluates (its README lists them), or keep declared secrets out of records of this type; the record was not shown to be invalid, and the value was replaced, not exposed; the run will close with status 4","detail":{"schema":{"id":"t.count","version":"1.0.0"},"redacted":["/value"]},"_schema":{"id":"parley.error","version":"2.0.0"}}
 ```
 
-A tool that sees this either keeps declared secrets out of records of that type, or states the
-type's schema within the checker's subset. Before this rule a schema outside the subset was
-written unchecked, which published `"value":"[redacted]"` under a schema requiring an integer.
+`redaction.schema_unchecked` means **not checked**. It does not mean the record was invalid, and
+it does not mean a secret was exposed: the value was replaced before the refusal, and the line
+carries neither it nor any part of the schema.
+
+**The trigger, exactly:** any redaction in a record whose declared schema document uses a keyword
+outside the list below is withheld, even when the redacted record would still have been valid, for
+example a token inside an unconstrained string. Before this rule such a record was published with
+status 0, unchecked, which is how `"value":"[redacted]"` went out under a schema requiring an
+integer.
+
+The keywords the checker evaluates: `type`, `const`, `enum`, `required`, `properties`, `additionalProperties`, `items` (one schema, not a tuple), `minItems`, `maxItems`, `minLength`, `maxLength`, `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `minProperties`, `maxProperties`, `pattern`, `format` with the value `json-pointer`, `not`, `anyOf`, `allOf`, `oneOf`, `if`, `then`, `else`, and the annotations `$schema`, `$id`, `$anchor`, `$comment`, `title`, `description`, `examples`, `default`, `deprecated`, `readOnly`, `writeOnly`. Anything else, an empty `$defs` included, makes the
+whole document one the writer cannot evaluate.
+
+There are two remedies:
+
+- keep the declared schema within those keywords; or
+- keep declared secrets out of the records the tool emits.
+
+Deleting the `schema` document from the declaration is not a fix. It removes the refusal and the
+check together, because spec §5.3 exempts a program that holds no schema document for the pair:
+the record is then published with `[redacted]` in it and nothing has established that it is valid.
 
 ## What a receipt can contain
 

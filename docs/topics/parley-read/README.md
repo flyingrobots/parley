@@ -843,6 +843,9 @@ still ranks above a succeeded run's. `what-failed` is unaffected: every warning 
 - Serve a reader over the network, or hold an index. A read is a function call that loads the
   directory it was pointed at, once, per read; the store's indexing is
   [flyingrobots/parley#2](https://github.com/flyingrobots/parley/issues/2).
+- Return an integer beyond 2^53 exactly. A record is parsed as JSON into doubles, so
+  `9007199254740993` comes back as `9007199254740992`, and two results that differ only in such an
+  integer compare equal and fold ([flyingrobots/parley#159](https://github.com/flyingrobots/parley/issues/159)).
 - Write, create or repair anything.
 - Windows paths. v0.2 of the spec is POSIX-only.
 

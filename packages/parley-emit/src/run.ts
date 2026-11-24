@@ -549,11 +549,11 @@ export class Run {
    * scrubbed.
    */
   private refuseUnchecked(payload: Record_, schema: SchemaRef, pair: string, redacted: string[], construct: string): never {
-    const problem = `the ${String(payload.event)} record was not published: a declared secret was replaced at ${redacted.join(", ")}, and this writer cannot evaluate the schema document it holds for ${pair}, so it cannot show the redacted record is valid under it`;
+    const problem = `the ${String(payload.event)} record was not published because it could not be checked: a declared secret was replaced at ${redacted.join(", ")}, and this writer cannot evaluate the schema document it holds for ${pair}, so the redacted record was not validated against it`;
     this.outputRefused = true;
     this.emit({ to: { stderr: true, receipt: true }, writer: true }, {
       event: "error", code: REDACTION_UNCHECKED_CODE, problem,
-      remedy: "keep declared secrets out of records of this type, or state the type's schema within the constructs this writer's checker evaluates (its README lists them); the run will close with status 4",
+      remedy: "keep the type's declared schema within the keywords this writer's checker evaluates (its README lists them), or keep declared secrets out of records of this type; the record was not shown to be invalid, and the value was replaced, not exposed; the run will close with status 4",
       detail: { schema: { id: schema.id, version: schema.version }, redacted },
     }, SCHEMA_IDS.error);
     const named = carriesSecret(construct, this.init.secretValues) ? null : construct;

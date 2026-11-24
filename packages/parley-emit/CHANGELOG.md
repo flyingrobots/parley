@@ -9,9 +9,13 @@ on its own; the spec and each message schema move separately (spec §4.4).
 
 The writer no longer publishes a record that redaction made invalid under its declared schema
 (flyingrobots/parley#131, spec §5.3). **A run that used to end with status 0 and an invalid line
-now ends with status 4 and a structured error**, which is the point of the change. A record
-redaction changed whose declared schema the writer holds and cannot evaluate is withheld the same
-way (flyingrobots/parley#144).
+now ends with status 4 and a structured error**, which is the point of the change. **BREAKING for a tool whose declared schema uses a keyword outside the writer's checker:** any
+redaction in a record of that type now withholds the record, with status 4, even when the
+redacted record would still have been valid (flyingrobots/parley#144; the second entry under
+Fixed).
+
+An upgrade from 0.2.4, the last version npm serves, also takes the 0.3.0 changes, one of which is
+marked BREAKING there.
 
 The schemas it ships are released: `parley.query` and `parley.lens` are the 1.1.0 that spec
 `0.2.1` released (the root `CHANGELOG.md`), in place of 1.0.0, pinned to the commit of that release.
@@ -33,17 +37,25 @@ The writer stamps neither message, so no emitted line changes.
   from the checker and no part of the schema. The call throws `ParleyRedactionConflict`, which
   `main` does not report a second time, and the run ends with status 4 whatever the handler
   passes to `end`, by the mechanism a sink failure uses.
-- **A record redaction changed, under a schema the writer holds and cannot evaluate, is withheld
-  too** (spec §5.3, decided on flyingrobots/parley#144). A declared schema document that uses any
-  keyword outside the bounded checker (`format: "date-time"`, `multipleOf`, `uniqueItems`, a
-  `$ref`, even an empty `$defs`) made the writer skip the check and publish the redacted record
-  with status 0. The writer cannot show such a record is valid, so it now withholds it exactly as
-  it withholds a conflict: nothing is written, no `seq` is taken, one `error` with the code
-  `redaction.schema_unchecked` and `detail` `{schema: {id, version}, redacted}` is reported, the
-  call throws `ParleyRedactionUnchecked` and the run ends with status 4. The construct the
+- **BREAKING for a tool whose declared schema uses a keyword outside the writer's checker: any
+  redaction in a record of that type now withholds the record** (spec §5.3, decided on
+  flyingrobots/parley#144). The trigger, exactly: the scrub replaced
+  something in a record the tool emitted, and the schema document declared for its pair uses any
+  keyword the checker does not evaluate (`format: "date-time"`, `multipleOf`, `uniqueItems`, a
+  `$ref`, even an empty `$defs`). The record is withheld even when the redacted record would
+  still have been valid, for example a token inside an unconstrained string. Before, the writer
+  skipped the check and published such a record with status 0, which is how
+  `"value":"[redacted]"` went out under a schema requiring an integer. Now nothing of it is
+  written, no `seq` is taken, one `error` with the code `redaction.schema_unchecked` and `detail`
+  `{schema: {id, version}, redacted}` is reported, the call throws `ParleyRedactionUnchecked` and
+  the run ends with status 4. The code means **not checked**: it does not say the record was
+  invalid, and no secret was exposed, since the value was replaced first. The construct the
   checker could not evaluate is part of the schema, so it is on the exception (`construct`) and
-  never on the line. A tool that meets this keeps declared secrets out of records of that type,
-  or states the type's schema within the checker's subset.
+  never on the line.
+- The two remedies: keep the declared schema within the keywords the checker evaluates, which
+  [the README lists](README.md#a-record-redaction-made-invalid), or keep declared secrets out of emitted records. Deleting
+  the `schema` document from the declaration removes the refusal **and** the check together (the
+  spec's exemption for a program that holds no schema document), so it is not a fix.
 - Scope, stated: only a record the scrub changed is checked. A record that was already
   invalid in the same way and a record of a type declared with no `schema` document, which spec
   §5.3 exempts, are written as before. Writer-built records (the head, `end`,

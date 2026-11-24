@@ -567,6 +567,9 @@ secret, whether its `inv` matches — is the caller's to decide, and this reader
   digest the receipt declared, and nothing else.
 - Judge conformance. The doctor under `scripts/` names violated rules; this is a loader, and a
   defect it reports is what it could not read or could not validate.
+- Return an integer beyond 2^53 exactly. A record is parsed as JSON into doubles, so
+  `9007199254740993` comes back as `9007199254740992`, and two results that differ only in such an
+  integer compare equal and fold (flyingrobots/parley#159).
 - Write, create or repair anything. Locating a location does not create it.
 - Windows paths. v0.2 of the spec is POSIX-only.
 

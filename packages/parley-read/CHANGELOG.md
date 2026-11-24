@@ -81,7 +81,10 @@ commit of that release, and carry the wording the pre-freeze review settled
 - The dependency on `@flyingrobots/parley-emit` is `^0.4.0`, up from `^0.3.0`, so the range admits
   the version in the repository (flyingrobots/parley#131). A read emits no record redaction can
   make invalid that it did not before; a record it would have published invalid is now refused by
-  the writer, and the read ends with status 4.
+  the writer, and the read ends with status 4. The writer's refusal of a record it cannot check
+  (`redaction.schema_unchecked`, flyingrobots/parley#144) cannot reach a read's own `query` or
+  `lens`: both are validated against schemas the writer ships, and a test holds every one of
+  those inside its checker's subset.
 
 ## [0.1.2] — 2026-11-24
 

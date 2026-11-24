@@ -92,8 +92,8 @@ describe("REL-4 RELEASE.md", () => {
 // held here is its shape: the gate is a job, and nothing public is made by a job that does not
 // need it. What the gate itself decides is scripts/release-gate.test.ts.
 interface Step { name?: string; uses?: string; run?: string; if?: string; with?: Record<string, unknown> }
-interface Job { needs?: string | string[]; environment?: string; steps: Step[]; outputs?: Record<string, string> }
-interface Workflow { on: { push?: { tags?: string[] } }; jobs: Record<string, Job> }
+interface Job { needs?: string | string[]; if?: string; environment?: string; permissions?: Record<string, string>; steps: Step[]; outputs?: Record<string, string> }
+interface Workflow { on: { push?: { tags?: string[] }; workflow_dispatch?: unknown }; jobs: Record<string, Job> }
 const RELEASES = [
   { file: "release-parley-emit.yml", pkg: "parley-emit", npm: true },
   { file: "release-parley-read.yml", pkg: "parley-read", npm: true },
@@ -156,6 +156,40 @@ describe("REL-8 the release workflows", () => {
     }
   });
 
+  // flyingrobots/parley#156: a tag cannot be taken back, so each workflow can be started by hand
+  // as a dry run. It packs, runs the gate with no tag, hands the artifact to a second job that
+  // checks its digest, and makes nothing public; the tag-triggered jobs do not run.
+  test("each release workflow has a dry run that reaches the artifact hand-off and makes nothing public", () => {
+    for (const { file, pkg, npm } of RELEASES) {
+      const w = workflow(file);
+      expect("workflow_dispatch" in w.on, `${file}: cannot be started by hand`).toBe(true);
+      const dry = w.jobs["dry-run"], receive = w.jobs["dry-run-receive"];
+      expect(dry, `${file}: no dry-run job`).toBeDefined();
+      expect(receive, `${file}: no dry-run-receive job`).toBeDefined();
+      expect(dry!.if, file).toBe("github.event_name == 'workflow_dispatch'");
+      expect(needs(receive!), file).toEqual(["dry-run"]);
+      // The gate runs as it does for a tagger before the tag exists: no --tag.
+      const gate = runs(dry!).find((r) => new RegExp(`\\bbun run release-gate -- ${pkg} `).test(r)) ?? "";
+      expect(gate, `${file}: the dry run does not run the gate`).toContain("--out ");
+      expect(gate, file).not.toContain("--tag");
+      expect(dry!.steps.find((s) => s.uses?.startsWith("actions/checkout@"))?.with?.["fetch-depth"], file).toBe(0);
+      expect(dry!.steps.some((s) => s.uses?.startsWith("actions/upload-artifact@")), file).toBe(true);
+      expect(receive!.steps.some((s) => s.uses?.startsWith("actions/download-artifact@")), file).toBe(true);
+      expect(runs(receive!).some((r) => r.includes("needs.dry-run.outputs.sha256") && r.includes("sha256sum")), `${file}: the receiving job does not compare the digest`).toBe(true);
+      // An npm workflow also proves npm takes the tarball by path, as a dry run that stages nothing.
+      if (npm) expect(runs(receive!).some((r) => /npm@latest stage publish "\$TARBALL" --dry-run/.test(r)), `${file}: the dry run does not offer npm the tarball`).toBe(true);
+      for (const j of [dry!, receive!]) {
+        for (const r of runs(j)) expect(PUBLIC.test(r), `${file}: a dry-run job makes something public`).toBe(false);
+        expect(j.environment, `${file}: a dry-run job uses a protected environment`).toBeUndefined();
+        expect(Object.values(j.permissions ?? {}).every((v) => v === "read" || v === "none"), `${file}: a dry-run job may write`).toBe(true);
+      }
+      // Started by hand, nothing but the dry run runs: every other job is the tag's, directly or through what it needs.
+      const roots = Object.entries(w.jobs).filter(([name, j]) => !name.startsWith("dry-run") && needs(j).length === 0);
+      expect(roots.length, file).toBeGreaterThan(0);
+      for (const [name, j] of roots) expect(j.if, `${file}: ${name} would run on a dry run`).toBe("github.event_name == 'push'");
+    }
+  });
+
   test("the npm workflows pack nowhere but in the gate, stage the gate's tarball by path, and the reader's gate proves a clean consumer", () => {
     for (const { file } of RELEASES.filter((r) => r.npm)) {
       const w = workflow(file);
@@ -177,8 +211,8 @@ describe("REL-8 the release workflows", () => {
     const gateOf = (file: string) => runs(workflow(file).jobs.gate!).find((r) => /release-gate/.test(r)) ?? "";
     expect(gateOf("release-parley-read.yml")).toContain("--consumer");
     expect(gateOf("release-parley-emit.yml")).not.toContain("--consumer");
-    // The Python file goes to no registry.
-    expect(Object.keys(workflow("release-parley-emit-py.yml").jobs).sort()).toEqual(["gate", "release"]);
+    // The Python file goes to no registry: beside its dry run, its only jobs are the gate and the release.
+    expect(Object.keys(workflow("release-parley-emit-py.yml").jobs).filter((n) => !n.startsWith("dry-run")).sort()).toEqual(["gate", "release"]);
   });
 
   test("RELEASE.md and the release pages say the tag is pushed only after the gate exits 0", () => {

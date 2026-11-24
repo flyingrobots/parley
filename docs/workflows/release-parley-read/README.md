@@ -42,6 +42,10 @@ line says why. What it checks is in
 `--consumer` it installs nothing from npm; the workflow's gate does, and that part is
 [the clean consumer](#the-clean-consumer) below.
 
+To see the workflow itself work on a runner before the tag exists, start it by hand as a
+[dry run](../release-spec/README.md#the-dry-run-of-a-release-workflow):
+`gh workflow run release-parley-read.yml --ref main`. It makes nothing public.
+
 ## What the tag starts
 
 The tag starts `.github/workflows/release-parley-read.yml`, which:

@@ -29,6 +29,10 @@ names the schema identities that block the release, and each `release.refusal` a
 line says why. What it checks is in
 [Releasing the spec and its schemas](../release-spec/README.md#the-release-gate).
 
+To see the workflow itself work on a runner before the tag exists, start it by hand as a
+[dry run](../release-spec/README.md#the-dry-run-of-a-release-workflow):
+`gh workflow run release-parley-emit.yml --ref main`. It makes nothing public.
+
 ## What the tag starts
 
 The tag starts `.github/workflows/release-parley-emit.yml`, which:

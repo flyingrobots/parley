@@ -21,6 +21,8 @@ on:
   push:
     tags:
       - "parley-emit-v[0-9]+.[0-9]+.[0-9]+"
+  # A dry run, started by hand: see the dry-run jobs at the end of this file.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -34,6 +36,8 @@ env:
 
 jobs:
   sanity:
+    # Not on a dry run: every job below needs this one, directly or through another.
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -270,3 +274,78 @@ jobs:
           ' "$GITHUB_WORKSPACE/release-assets/release-report.json" "$status" >> "$GITHUB_STEP_SUMMARY"
           { echo '```text'; cat "$RUNNER_TEMP/stage.log"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           exit "$status"
+
+  # ---- the dry run (flyingrobots/parley#156) -----------------------------------------------------
+  # Started by hand from the Actions page, on any branch. It packs once, runs the release gate as a
+  # tagger does before the tag exists (no --tag), and hands the artifact to a second job that checks
+  # its digest. It creates no GitHub release, stages nothing and uses no protected environment. A
+  # pushed tag cannot be taken back, so this is how the workflow is seen to work before one is pushed.
+  dry-run:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      file: ${{ steps.digest.outputs.file }}
+      sha256: ${{ steps.digest.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: bun install --frozen-lockfile
+
+      - name: Run the release gate with no tag
+        run: bun run release-gate -- parley-emit --out "$RUNNER_TEMP/release"
+
+      - name: Print the release report
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/release/release-report.json" ]; then
+            { echo '## Release report (dry run)'; echo; echo '```json'; cat "$RUNNER_TEMP/release/release-report.json"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'The gate wrote no release report.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Record the artifact's digest
+        id: digest
+        run: |
+          cd "$RUNNER_TEMP/release"
+          sha256sum -c SHA256SUMS
+          echo "sha256=$(cut -d' ' -f1 SHA256SUMS)" >> "$GITHUB_OUTPUT"
+          echo "file=$(cut -d' ' -f3 SHA256SUMS)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-dry-run
+          path: ${{ runner.temp }}/release
+          if-no-files-found: error
+          retention-days: 1
+
+  dry-run-receive:
+    needs: dry-run
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-dry-run
+          path: release-assets
+
+      - name: Verify the artifact is the one the gate judged
+        run: |
+          cd release-assets
+          echo "${{ needs.dry-run.outputs.sha256 }}  ${{ needs.dry-run.outputs.file }}" | sha256sum -c -
+          ls -l
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Offers npm the tarball by path, as the publish job does, and stages nothing.
+      - name: Offer the tarball to npm as a dry run
+        run: |
+          TARBALL="$GITHUB_WORKSPACE/release-assets/${{ needs.dry-run.outputs.file }}"
+          cd "$RUNNER_TEMP"
+          npx -y npm@latest stage publish "$TARBALL" --dry-run --access public

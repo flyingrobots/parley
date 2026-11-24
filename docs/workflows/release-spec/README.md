@@ -323,6 +323,22 @@ It does not carry a stage id. The job that stages on npm authenticates by OIDC, 
 cannot list or view what it staged, so the id is read by the owner with `npm stage list`
 ([what the owner approves](../release-parley-emit/README.md#what-the-owner-approves)).
 
+## The dry run of a release workflow
+
+Each release workflow can be started by hand, on any branch, from the Actions page or with
+`gh workflow run <file> --ref <branch>`. Started that way it is a dry run
+(flyingrobots/parley#156): a `dry-run` job packs the artifact once and runs the release gate with
+no tag, as a person does before tagging, and a `dry-run-receive` job downloads the workflow
+artifact and compares its digest with the gate's. For the two npm packages that second job also
+offers the tarball to `npm stage publish` by path with `--dry-run`. Nothing is made public: no
+GitHub release, nothing staged, no protected environment, and the tag-triggered jobs do not run.
+
+Run it for a package after the schema release has merged and before pushing that package's tag.
+A dry run of the reader needs its writer dependency on npm, as its real release does.
+
+A dry run does not exercise `gh release create`, a real stage with an OIDC token and provenance,
+or the `npm` environment's approval. Those are first seen on the release itself.
+
 ## Releasing schema versions: two commits and a merge commit
 
 A package may be released as stable only after every schema it carries is released. Releasing

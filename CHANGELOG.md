@@ -9,6 +9,13 @@ the entry under it names each schema version it releases, and those are separate
 
 ### Fixed
 
+- An intermittent test failure, in both writers' suites (flyingrobots/parley#142). Several
+  redaction tests declared a short numeric secret (`4321`, `8675309`) and searched whole receipts
+  for it, and a receipt also holds the clock in milliseconds, run ids and hex digests: `4321`
+  turned up inside the timestamp `1795564321150` and failed the `sanity` job of the parley-emit
+  0.4.0 release, which passed when rerun. The numeric test secrets are now fifteen digits, longer
+  than a timestamp. No writer behaviour changes.
+
 - The repository ignores Python bytecode (`__pycache__/`, `*.pyc`). The Python writer's release
   workflow runs the file's tests before the release gate, the tests leave bytecode beside the
   file, and the gate refused the run with `gate.dirty_tree`. Found by the first dry run of that

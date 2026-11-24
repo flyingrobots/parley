@@ -557,16 +557,20 @@ class TestRedaction(unittest.TestCase):
         self.assertNotIn("receipts", o.stderr.text)
 
     def test_numbers_keys_and_nested_secrets(self):
+        # The numeric secrets in this suite are fifteen digits on purpose (flyingrobots/parley#142). These
+        # tests search whole receipts for the secret, and a receipt also holds the clock in milliseconds
+        # (thirteen digits), run ids and hex digests. A four-digit secret such as the 4321 this test
+        # first used turns up in a timestamp about once in a thousand lines, and did, on a release.
         d, _, env = scratch()
         resolved = lambda args, c: {"command": "count", "pin": int(args[1]), args[1]: True}  # noqa: E731
-        out1 = run_count(d, env, ["count", "--token", "4321"], lambda r: r.step("checked", "because", {4321: "key", "n": 4321}), resolved=resolved)
-        out2 = run_count(d, env, ["count", "--token", "9999"], lambda r: None, resolved=resolved)
+        out1 = run_count(d, env, ["count", "--token", "902718364550917"], lambda r: r.step("checked", "because", {902718364550917: "key", "n": 902718364550917}), resolved=resolved)
+        out2 = run_count(d, env, ["count", "--token", "902718364550918"], lambda r: None, resolved=resolved)
         head = out1.receipt_lines[0]
         self.assertEqual(head["resolved"]["pin"], "[redacted]")
         self.assertIs(head["resolved"]["[redacted]"], True)
         self.assertEqual(sorted(head["redacted"]["resolved"]), ["/[redacted]", "/pin"])
         self.assertEqual(head["inv"], out2.receipt_lines[0]["inv"])
-        self.assertNotIn("4321", out1.receipt)
+        self.assertNotIn("902718364550917", out1.receipt)
         o = run_count(d, {**env, "T_TOKEN": "abcdef"}, ["count", "--token", "abc"], lambda r: r.step("s", "b", {"a": "abcdef", "b": "abc", "c": "xabcdefx"}))
         step = next(x for x in o.receipt_lines if x["event"] == "receipt.step")
         self.assertEqual(step["detail"], {"a": "[redacted]", "b": "[redacted]", "c": "x[redacted]x"})
@@ -674,10 +678,10 @@ class TestRedactionConflict(unittest.TestCase):
         assert_valid(self, o)
 
     def test_a_distinctive_numeric_secret_appears_nowhere(self):
-        d, _, env = scratch_free("8675309")
-        o = run_count(d, env, ["count", "--token", "8675309"], lambda run: run.result({"event": "result", "value": 8675309}, T_COUNT))
+        d, _, env = scratch_free("867530986753091")
+        o = run_count(d, env, ["count", "--token", "867530986753091"], lambda run: run.result({"event": "result", "value": 867530986753091}, T_COUNT))
         self.assertEqual(o.status, 4)
-        self.assertNotIn("8675309", o.everything)
+        self.assertNotIn("867530986753091", o.everything)
         self.assertEqual(len(self.conflicts(o)), 1)
         assert_valid(self, o)
 
@@ -796,21 +800,21 @@ class TestRedactionConflict(unittest.TestCase):
         self.assert_gapless(o)
 
     def test_human_renders_the_refusal_as_prose_and_the_receipt_holds_the_error(self):
-        d, _, env = scratch_free("8675309")
-        o = run_count(d, env, ["count", "--human", "--token", "8675309"], lambda run: run.result({"event": "result", "value": 8675309}, T_COUNT))
+        d, _, env = scratch_free("867530986753091")
+        o = run_count(d, env, ["count", "--human", "--token", "867530986753091"], lambda run: run.result({"event": "result", "value": 867530986753091}, T_COUNT))
         self.assertEqual(o.status, 4)
         self.assertTrue(o.stderr.text.startswith("error redaction.schema_conflict: "))
         receipts = os.path.join(d, ".parley", "receipts")
         with open(os.path.join(receipts, next(f for f in os.listdir(receipts) if f.endswith(".jsonl"))), encoding="utf-8") as f:
             text = f.read()
-        self.assertNotIn("8675309", o.stdout.text + o.stderr.text + text)
+        self.assertNotIn("867530986753091", o.stdout.text + o.stderr.text + text)
         lines = [json.loads(line) for line in text.splitlines()]
         self.assertEqual([x for x in lines if x["event"] == "result"], [])
         self.assertEqual([x["code"] for x in lines if x["event"] == "error"], ["redaction.schema_conflict"])
         self.assertEqual(lines[-1]["status"], 4)
 
 
-UNCHECKED_SECRET = "8675309"
+UNCHECKED_SECRET = "867530986753091"
 CONTROL = {"type": "object", "required": ["value"], "properties": {"value": {"type": "integer"}}}
 # The reviewers' variants: `value` is an integer in every one, and each adds one construct outside
 # the checker's subset. The second item is wording the error line must not carry.
@@ -864,7 +868,7 @@ class TestRedactionUnchecked(unittest.TestCase):
 
     def test_the_control_inside_the_subset_is_a_conflict_as_before(self):
         d, _, env = scratch_free(UNCHECKED_SECRET)
-        o = run_count(d, env, ["count", "--token", UNCHECKED_SECRET], lambda run: run.result({"event": "result", "value": 8675309}, T_COUNT), unchecked_tool(CONTROL))
+        o = run_count(d, env, ["count", "--token", UNCHECKED_SECRET], lambda run: run.result({"event": "result", "value": 867530986753091}, T_COUNT), unchecked_tool(CONTROL))
         self.assertEqual(o.status, 4)
         self.assertEqual([x["code"] for x in o.stderr.objs], ["redaction.schema_conflict"])
 
@@ -876,7 +880,7 @@ class TestRedactionUnchecked(unittest.TestCase):
 
                 def body(run):
                     try:
-                        run.result({"event": "result", "value": 8675309}, T_COUNT)
+                        run.result({"event": "result", "value": 867530986753091}, T_COUNT)
                     except Exception as e:
                         raised.append(e)
                         raise
@@ -902,7 +906,7 @@ class TestRedactionUnchecked(unittest.TestCase):
 
         def body(run):
             run.result({"event": "result", "value": 7}, T_COUNT)
-            run.result({"event": "result", "n": 8675309, "note": "saw " + UNCHECKED_SECRET}, ("t.loose", "1.0.0"))
+            run.result({"event": "result", "n": 867530986753091, "note": "saw " + UNCHECKED_SECRET}, ("t.loose", "1.0.0"))
 
         o = run_count(d, env, ["count", "--token", UNCHECKED_SECRET], body, unchecked_tool(UNEVALUABLE["ref_into_defs"][0], {"id": "t.loose", "version": "1.0.0"}))
         self.assertEqual(o.status, 0)
@@ -936,10 +940,10 @@ class TestRedactionUnchecked(unittest.TestCase):
     def test_with_receipt_extra_neither_copy_is_written_whichever_copy_the_secret_is_in(self):
         schema = UNEVALUABLE["multiple_of"][0]
         d, _, env = scratch_free(UNCHECKED_SECRET)
-        o = run_count(d, env, ["count", "--token", UNCHECKED_SECRET], lambda run: run.result({"event": "result", "step": 1}, T_COUNT, receipt_extra={"value": 8675309}), unchecked_tool(schema))
+        o = run_count(d, env, ["count", "--token", UNCHECKED_SECRET], lambda run: run.result({"event": "result", "step": 1}, T_COUNT, receipt_extra={"value": 867530986753091}), unchecked_tool(schema))
         self.assert_withheld(o, ["/value"])
         d, _, env = scratch_free(UNCHECKED_SECRET)
-        o = run_count(d, env, ["count", "--token", UNCHECKED_SECRET], lambda run: run.result({"event": "result", "value": 8675309}, T_COUNT, receipt_extra={"step": 1}), unchecked_tool(schema))
+        o = run_count(d, env, ["count", "--token", UNCHECKED_SECRET], lambda run: run.result({"event": "result", "value": 867530986753091}, T_COUNT, receipt_extra={"step": 1}), unchecked_tool(schema))
         self.assert_withheld(o, ["/value"])
 
     def test_a_handler_that_catches_the_refusal_carries_on_and_end_0_cannot_undo_status_4(self):
@@ -948,7 +952,7 @@ class TestRedactionUnchecked(unittest.TestCase):
 
         def body(run):
             try:
-                run.result({"event": "result", "value": 8675309}, T_COUNT)
+                run.result({"event": "result", "value": 867530986753091}, T_COUNT)
             except pe.ParleyRedactionUnchecked:
                 pass
             run.result({"event": "result", "value": 7}, T_COUNT)
@@ -965,7 +969,7 @@ class TestRedactionUnchecked(unittest.TestCase):
 
     def test_human_renders_the_refusal_as_prose_and_the_receipt_holds_the_error(self):
         d, _, env = scratch_free(UNCHECKED_SECRET)
-        o = run_count(d, env, ["count", "--human", "--token", UNCHECKED_SECRET], lambda run: run.result({"event": "result", "value": 8675309}, T_COUNT), unchecked_tool(UNEVALUABLE["ref_into_defs"][0]))
+        o = run_count(d, env, ["count", "--human", "--token", UNCHECKED_SECRET], lambda run: run.result({"event": "result", "value": 867530986753091}, T_COUNT), unchecked_tool(UNEVALUABLE["ref_into_defs"][0]))
         self.assertEqual(o.status, 4)
         self.assertTrue(o.stderr.text.startswith("error redaction.schema_unchecked: "))
         receipts = os.path.join(d, ".parley", "receipts")
@@ -1284,7 +1288,7 @@ class TestRedactionExceptionsCarryNoSecret(unittest.TestCase):
                     self.assertNotIn(escaped, text)
 
     def test_an_ordinary_conflict_is_unchanged(self):
-        line, e = self.refused("8675309", {"type": "object", "properties": {"value": {"type": "integer"}}}, {"value": 8675309})
+        line, e = self.refused("867530986753091", {"type": "object", "properties": {"value": {"type": "integer"}}}, {"value": 867530986753091})
         self.assertEqual(e.pointers, ["/value"])
         self.assertEqual(line["detail"]["at"], ["/value"])
         self.assertEqual(str(e), line["problem"] + "; reported as redaction.schema_conflict")

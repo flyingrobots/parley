@@ -200,10 +200,10 @@ describe("parley-emit-py: secrets, the counter and stray output, checked by the 
   }, SLOW);
 
   test("PY-23h a result redaction made invalid: the process exits 4, the result reaches no stream, and the doctor passes", () => {
-    const c = py(join(PKG, "tests", "fixtures", "typed_secret_tool.py"), ["count", "--token", "8675309"], scratch());
+    const c = py(join(PKG, "tests", "fixtures", "typed_secret_tool.py"), ["count", "--token", "867530986753091"], scratch());
     expect(c.status).toBe(4);
     const { text } = receiptOf(c);
-    expect(c.stdout + c.stderr + text).not.toContain("8675309");
+    expect(c.stdout + c.stderr + text).not.toContain("867530986753091");
     expect(objs(c.stdout).map((o) => o.event)).toEqual(["run", "end"]);
     expect(objs(c.stdout).at(-1)).toMatchObject({ event: "end", status: 4 });
     expect(objs(c.stderr)).toEqual([expect.objectContaining({ event: "error", code: "redaction.schema_conflict", detail: { schema: { id: "typed-secret-tool.count", version: "1.0.0" }, at: ["/value"], redacted: ["/value"] } })]);
@@ -223,10 +223,10 @@ describe("parley-emit-py: secrets, the counter and stray output, checked by the 
       "an empty $defs": { type: "object", required: ["value"], properties: { value: { type: "integer" } }, $defs: {} },
     };
     for (const [name, schema] of Object.entries(variants)) {
-      const c = py(join(PKG, "tests", "fixtures", "typed_secret_tool.py"), ["count", "--token", "8675309"], scratch(), { TYPED_SECRET_SCHEMA: JSON.stringify(schema) });
+      const c = py(join(PKG, "tests", "fixtures", "typed_secret_tool.py"), ["count", "--token", "867530986753091"], scratch(), { TYPED_SECRET_SCHEMA: JSON.stringify(schema) });
       expect([name, c.status]).toEqual([name, 4]);
       const { text } = receiptOf(c);
-      expect(c.stdout + c.stderr + text).not.toContain("8675309");
+      expect(c.stdout + c.stderr + text).not.toContain("867530986753091");
       expect(objs(c.stdout).map((o) => o.event)).toEqual(["run", "end"]);
       expect(objs(c.stdout).at(-1)).toMatchObject({ event: "end", status: 4 });
       expect(objs(c.stderr)).toEqual([expect.objectContaining({ event: "error", code: "redaction.schema_unchecked", detail: { schema: { id: "typed-secret-tool.count", version: "1.0.0" }, redacted: ["/value"] } })]);

@@ -549,3 +549,37 @@ describe("parley-emit-py: the two checkers on patterns and malformed keywords", 
     expect(new Set(ts)).toEqual(new Set<Verdict>(["ok", "no", "unsupported"]));
   });
 });
+
+describe("parley-emit-py: a secret that coincides with one of the writer's own words", () => {
+  // PY-26 (spec §5.3): `--token create` beside the bookkeeping `op` `create`. Every line of every
+  // run is validated against the RELEASED snapshot of its exact pair with ajv.
+  const RELEASED = join(SCHEMAS_DIR, "released");
+  const ajv = new Ajv2020({ strict: false, allErrors: true }); addFormats(ajv);
+  const validators = new Map<string, ReturnType<typeof ajv.compile>>();
+  const invalid = (o: Record<string, unknown>): string | null => {
+    const stamp = o._schema as { id: string; version: string };
+    const file = join(RELEASED, stamp.id, `${stamp.version}.schema.json`);
+    if (!existsSync(file)) { expect(stamp.id.startsWith("parley.")).toBe(false); return null; }
+    const key = `${stamp.id}@${stamp.version}`;
+    if (!validators.has(key)) validators.set(key, ajv.compile(JSON.parse(readFileSync(file, "utf8")) as object));
+    const v = validators.get(key)!;
+    return v(o) ? null : `${key} ${ajv.errorsText(v.errors)}: ${JSON.stringify(o)}`;
+  };
+  const neutral = (secret: string) => {
+    for (let i = 0; i < 64; i++) { const at = scratch(["a.txt"]); if (!at.dir.includes(secret) && !at.env.XDG_STATE_HOME!.includes(secret)) return at; }
+    throw new Error(`no temporary directory free of ${secret} could be made`);
+  };
+
+  test("PY-26a under --help, --schema and an ordinary command, every line validates against its released snapshot", () => {
+    for (const secret of ["create", "delete", "append", "stdin", "tree", "true", "unreadable", "input", "op", "scope", "paths", "tool", "code", "status", "effects", "inputs", "argv", "/zq", "zq7kx9control"]) {
+      for (const mode of [["--help"], ["--schema"], []]) {
+        const c = py(join(PKG, "tests", "fixtures", "coincide_tool.py"), ["count", ...mode, "--token", secret], neutral(secret));
+        expect([secret, mode, c.status]).toEqual([secret, mode, 0]);
+        const lines = [...objs(c.stdout), ...objs(c.stderr), ...objs(receiptOf(c).text)];
+        expect(lines.length).toBeGreaterThan(4);
+        expect([secret, mode, lines.map(invalid).filter((x) => x !== null)]).toEqual([secret, mode, []]);
+        expect(violations(c)).toEqual([]);
+      }
+    }
+  }, SLOW);
+});

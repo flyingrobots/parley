@@ -2935,3 +2935,100 @@ describe("PE-31 a schema the checker cannot evaluate never escapes as an excepti
     expect(r.stdout.objs.filter((o) => o.event === "result").length).toBe(1);
   });
 });
+
+describe("PE-32 the protocol's own tokens and field names in a writer-built record are never scrubbed (spec §5.3)", () => {
+  // A declared secret can coincide with a word the writer itself emits: `create` is a secret's
+  // value and also a bookkeeping `op`. Those words are the protocol's public identity, not the
+  // tool's data. Every line of every run below is validated against its RELEASED snapshot.
+  const RELEASED = join(SCHEMAS_DIR, "released");
+  const ajv = new Ajv2020({ strict: false, allErrors: true }); addFormats(ajv);
+  const validators = new Map<string, ReturnType<typeof ajv.compile>>();
+  /** Why a line is invalid under the released snapshot of its exact pair, or null. A pair with no snapshot is the tool's own. */
+  const invalid = (o: Record<string, unknown>): string | null => {
+    const stamp = o._schema as { id: string; version: string };
+    const file = join(RELEASED, stamp.id, `${stamp.version}.schema.json`);
+    if (!existsSync(file)) { expect(stamp.id.startsWith("parley.")).toBe(false); return null; }
+    const key = `${stamp.id}@${stamp.version}`;
+    if (!validators.has(key)) validators.set(key, ajv.compile(JSON.parse(readFileSync(file, "utf8")) as object));
+    const v = validators.get(key)!;
+    return v(o) ? null : `${key} ${ajv.errorsText(v.errors)}: ${JSON.stringify(o)}`;
+  };
+  const scratch = (secret: string) => {
+    for (let i = 0; i < 64; i++) { const s = scratchAnywhere(); if (!s.dir.includes(secret) && !s.state.includes(secret)) return s; }
+    throw new Error(`no temporary directory free of ${secret} could be made`);
+  };
+  const MODES: Record<string, string[]> = { "--help": ["--help"], "--schema": ["--schema"], "an ordinary command": [] };
+  const coincide = async (secret: string, mode: string[]) => {
+    const { dir, env } = scratch(secret);
+    writeFileSync(join(dir, "a.txt"), "a");
+    const r = await runCount(dir, env, ["count", ...mode, "--token", secret], (run) => {
+      run.input("-", "x");
+      try { run.readInput("missing.txt"); } catch { /* recorded as input.unreadable */ }
+      run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" });
+    }, {}, [{ path: "a.txt" }, { path: "-", role: "stdin" }, { path: ".", role: "tree" }, { path: "missing.txt" }], { resolved: (args, command) => ({ command, zq: args.at(-1) }) });
+    return r;
+  };
+  const everyLine = (r: Awaited<ReturnType<typeof coincide>>) => [...r.stdout.objs, ...r.stderr.objs, ...r.receiptLines];
+
+  // The reviewed secrets, then the writer's own field names and the rest of its tokens.
+  const VALUES = ["create", "delete", "append", "stdin", "tree", "true", "false", "unreadable", "input", "unread", "run", "end", "command", "schema", "help", "count"];
+  const NAMES = ["op", "scope", "paths", "tool", "code", "problem", "remedy", "status", "effects", "bookkeeping", "inputs", "argv", "resolved", "redacted", "emits", "secrets", "intent", "network", "idempotent", "reads", "writes", "path", "role", "sha256", "inv", "error", "version", "name", "id"];
+  // `/zq` is the JSON Pointer the head records for the secret's own place in `resolved`.
+  for (const secret of [...VALUES, ...NAMES, "/zq", "zq7kx9control"]) {
+    for (const [label, mode] of Object.entries(MODES)) {
+      test(`the secret ${secret}, ${label}: every line validates against its released snapshot`, async () => {
+        const r = await coincide(secret, mode);
+        expect(r.status).toBe(0);
+        expect(everyLine(r).map(invalid).filter((x) => x !== null)).toEqual([]);
+        expect(r.violations).toEqual([]);
+      });
+    }
+  }
+
+  test("the bookkeeping op keeps its token under the secrets create, delete and append, on the command line and in the head", async () => {
+    for (const secret of ["create", "delete", "append", "reat"]) {
+      const r = await coincide(secret, ["--help"]);
+      const ops = (o: Record<string, unknown>) => (o.effects as { bookkeeping: { op: string }[] }).bookkeeping.map((b) => b.op);
+      const expected = ["create", "create", "delete", "create", "delete"];
+      expect([secret, ops(r.stdout.objs.find((o) => o.event === "command")!)]).toEqual([secret, expected]);
+      expect([secret, ops(r.receiptLines[0]!)]).toEqual([secret, expected]);
+    }
+  });
+
+  test("a secret's value is still replaced where it is the tool's data, in the same writer-built records", async () => {
+    const secret = "zq7kx9control";
+    const { dir, env } = scratch(secret);
+    const over = { commands: { count: { intent: `Count ${secret}`, effects: { reads: [`/data/${secret}`], writes: [], network: false, idempotent: true }, secrets: ["--token"], emits: [{ id: "t.count", version: "1.0.0" }] } } };
+    const r = await runCount(dir, env, ["count", "--help", "--token", secret], () => {}, over);
+    expect(r.status).toBe(0);
+    expect(r.stdout.text + r.stderr.text + r.receipt).not.toContain(secret);
+    const command = r.stdout.objs.find((o) => o.event === "command")!;
+    expect(command.intent).toBe("Count [redacted]");
+    expect((command.effects as { reads: string[] }).reads).toEqual(["/data/[redacted]"]);
+    expect(everyLine(r).map(invalid).filter((x) => x !== null)).toEqual([]);
+  });
+
+  test("an unreadable input keeps the writer's token input.unreadable under the secrets input and unreadable, and a tool's code that carries a secret is recorded as that token", async () => {
+    for (const [secret, code, recorded] of [["unreadable", undefined, "input.unreadable"], ["input", undefined, "input.unreadable"], ["zq7kx9control", "input.zq7kx9control", "input.unreadable"], ["zq7kx9control", "input.gone", "input.gone"]] as const) {
+      const { dir, env } = scratch(secret);
+      const r = await runCount(dir, env, ["count", "--token", secret], (run) => { if (code === undefined) run.inputUnreadable("missing.txt"); else run.inputUnreadable("missing.txt", code); }, {}, [{ path: "missing.txt" }], { resolved: (_a, command) => ({ command }) });
+      expect(r.status).toBe(0);
+      const inputs = r.receiptLines.find((o) => o.event === "receipt.inputs") as { inputs: { path: string; error?: string }[] };
+      expect([secret, code, inputs.inputs]).toEqual([secret, code, [{ path: "missing.txt", error: recorded }]]);
+      if (secret === "zq7kx9control") expect(r.stdout.text + r.stderr.text + r.receipt).not.toContain(secret);
+      expect(everyLine(r).map(invalid).filter((x) => x !== null)).toEqual([]);
+    }
+  });
+
+  test("a tool's own record is still scrubbed in full: a key that is the secret is renamed there", async () => {
+    const secret = "status";
+    const { dir, env } = scratch(secret);
+    const r = await runCount(dir, env, ["count", "--token", secret], (run) => { run.result({ event: "result", status: "fine", note: "the status is fine" }, { id: "t.loose", version: "1.0.0" }); }, { commands: { count: { intent: "count", effects: { reads: [], writes: [], network: false, idempotent: true }, secrets: ["--token"], emits: [{ id: "t.loose", version: "1.0.0" }] } } });
+    expect(r.status).toBe(0);
+    const result = r.stdout.objs.find((o) => o.event === "result")!;
+    expect(result["[redacted]"]).toBe("fine");
+    expect(result.note).toBe("the [redacted] is fine");
+    expect("status" in result).toBe(false);
+    expect(r.stdout.objs.at(-1)).toMatchObject({ event: "end", status: 0 });
+  });
+});

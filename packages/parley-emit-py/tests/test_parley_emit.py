@@ -1136,6 +1136,99 @@ class TestSchemaNeverEscapes(unittest.TestCase):
         self.assertIsNotNone(pe.schema_subset_gap({"minItems": 1.5}))
 
 
+COINCIDE_VALUES = ["create", "delete", "append", "stdin", "tree", "true", "false", "unreadable", "input", "unread", "run", "end", "command", "schema", "help", "count"]
+COINCIDE_NAMES = ["op", "scope", "paths", "tool", "code", "problem", "remedy", "status", "effects", "bookkeeping", "inputs", "argv", "resolved", "redacted",
+                  "emits", "secrets", "intent", "network", "idempotent", "reads", "writes", "path", "role", "sha256", "inv", "error", "version", "name", "id"]
+T_LOOSE = ("t.loose", "1.0.0")
+LOOSE_TOOL = {"commands": {"count": {
+    "intent": "count", "effects": {"reads": [], "writes": [], "network": False, "idempotent": True},
+    "secrets": ["--token"], "emits": [{"id": "t.loose", "version": "1.0.0"}],
+}}}
+
+
+class TestWriterTokens(unittest.TestCase):
+    """PY-26: the protocol's own tokens and field names in a writer-built record are never
+    scrubbed (spec section 5.3). A declared secret can coincide with a word the writer itself
+    emits; those words are the protocol's public identity, not the tool's data. The Bun oracle
+    validates the same runs against the released snapshots with ajv."""
+
+    def coincide(self, secret, mode):
+        d, _, env = scratch_free(secret)
+        with open(os.path.join(d, "a.txt"), "w") as f:
+            f.write("a")
+
+        def body(run):
+            run.input("-", "x")
+            try:
+                run.read_input("missing.txt")
+            except OSError:
+                pass
+            run.result({"event": "result", "value": 1}, T_COUNT)
+
+        return run_count(d, env, ["count", *mode, "--token", secret], body,
+                         inputs=[{"path": "a.txt"}, {"path": "-", "role": "stdin"}, {"path": ".", "role": "tree"}, {"path": "missing.txt"}],
+                         resolved=lambda args, c: {"command": c, "zq": args[-1]})
+
+    def test_every_line_validates_whatever_word_of_the_writers_the_secret_is(self):
+        # `/zq` is the JSON Pointer the head records for the secret's own place in `resolved`.
+        for secret in COINCIDE_VALUES + COINCIDE_NAMES + ["/zq", "zq7kx9control"]:
+            for mode in (["--help"], ["--schema"], []):
+                with self.subTest(secret=secret, mode=mode):
+                    o = self.coincide(secret, mode)
+                    self.assertEqual(o.status, 0)
+                    assert_valid(self, o)
+                    assert_lifecycle(self, o)
+
+    def test_the_bookkeeping_op_keeps_its_token(self):
+        for secret in ("create", "delete", "append", "reat"):
+            with self.subTest(secret):
+                o = self.coincide(secret, ["--help"])
+                expected = ["create", "create", "delete", "create", "delete"]
+                command = next(x for x in o.stdout.objs if x["event"] == "command")
+                self.assertEqual([b["op"] for b in command["effects"]["bookkeeping"]], expected)
+                self.assertEqual([b["op"] for b in o.receipt_lines[0]["effects"]["bookkeeping"]], expected)
+
+    def test_a_secrets_value_is_still_replaced_where_it_is_the_tools_data(self):
+        secret = "zq7kx9control"
+        d, _, env = scratch_free(secret)
+        over = {"commands": {"count": {
+            "intent": "Count " + secret, "effects": {"reads": ["/data/" + secret], "writes": [], "network": False, "idempotent": True},
+            "secrets": ["--token"], "emits": [{"id": "t.count", "version": "1.0.0", "schema": RESULT}],
+        }}}
+        o = run_count(d, env, ["count", "--help", "--token", secret], lambda run: None, over)
+        self.assertEqual(o.status, 0)
+        self.assertNotIn(secret, o.everything)
+        command = next(x for x in o.stdout.objs if x["event"] == "command")
+        self.assertEqual(command["intent"], "Count [redacted]")
+        self.assertEqual(command["effects"]["reads"], ["/data/[redacted]"])
+        assert_valid(self, o)
+
+    def test_an_unreadable_input_keeps_the_writers_token_and_a_tools_code_carrying_a_secret_is_recorded_as_it(self):
+        for secret, code, recorded in (("unreadable", None, "input.unreadable"), ("input", None, "input.unreadable"),
+                                       ("zq7kx9control", "input.zq7kx9control", "input.unreadable"), ("zq7kx9control", "input.gone", "input.gone")):
+            with self.subTest(secret=secret, code=code):
+                d, _, env = scratch_free(secret)
+                body = (lambda run: run.input_unreadable("missing.txt")) if code is None else (lambda run: run.input_unreadable("missing.txt", code))
+                o = run_count(d, env, ["count", "--token", secret], body, inputs=[{"path": "missing.txt"}], resolved=lambda args, c: {"command": c})
+                self.assertEqual(o.status, 0)
+                inputs = next(x for x in o.receipt_lines if x["event"] == "receipt.inputs")
+                self.assertEqual(inputs["inputs"], [{"path": "missing.txt", "error": recorded}])
+                if secret == "zq7kx9control":
+                    self.assertNotIn(secret, o.everything)
+                assert_valid(self, o)
+
+    def test_a_tools_own_record_is_still_scrubbed_in_full(self):
+        secret = "status"
+        d, _, env = scratch_free(secret)
+        o = run_count(d, env, ["count", "--token", secret], lambda run: run.result({"event": "result", "status": "fine", "note": "the status is fine"}, T_LOOSE), LOOSE_TOOL)
+        self.assertEqual(o.status, 0)
+        result = next(x for x in o.stdout.objs if x["event"] == "result")
+        self.assertEqual(result["[redacted]"], "fine")
+        self.assertEqual(result["note"], "the [redacted] is fine")
+        self.assertNotIn("status", result)
+        self.assertEqual(o.stdout.objs[-1]["status"], 0)
+
+
 class TestStartupFailure(unittest.TestCase):
     def test_no_writable_location(self):
         d, state, env = scratch()

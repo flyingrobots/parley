@@ -16,15 +16,15 @@ excluded, built and tested ([#48](https://github.com/flyingrobots/parley/issues/
 [#50](https://github.com/flyingrobots/parley/issues/50)), and a drill-down that opens the records a
 digest names ([#51](https://github.com/flyingrobots/parley/issues/51)).
 
-> **Status: implemented, first release.** The [specification](spec/) is at `0.2.0`, and its
+> **Status: implemented, second release.** The [specification](spec/) is at `0.2.1`, and its
 > seventeen message schemas are released and immutable ([CHANGELOG.md](CHANGELOG.md),
-> [schemas/](schemas/README.md)); two of them, `parley.query` and `parley.lens`, also have a draft
-> 1.1.0. Two writers implement it: the TypeScript library
+> [schemas/](schemas/README.md)); two of them, `parley.query` and `parley.lens`, are at 1.1.0, with
+> their 1.0.0 still released beside it. Two writers implement it: the TypeScript library
 > [`@flyingrobots/parley-emit`](packages/parley-emit/README.md) 0.4.0, which
 > also appends to the shared history stream when one is configured, and
 > [`parley_emit.py`](packages/parley-emit-py/README.md) 0.3.0, one vendorable Python file pinned
 > by its SHA-256. The reader library, [`@flyingrobots/parley-read`](packages/parley-read/README.md)
-> 0.2.0 (0.1.1 is the latest release), loads a repository's receipt bundles and answers recorded
+> 0.2.0, loads a repository's receipt bundles and answers recorded
 > reads. Both libraries are on npm
 > and released by tag: the workflow stages the version and the owner approves it
 > ([how](docs/workflows/release-parley-emit/README.md)).

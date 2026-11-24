@@ -153,8 +153,8 @@ Which budget field bounds what, and how the count is arrived at, is
 
 ## The two messages
 
-Both were released at 1.0.0 with spec `0.2.0`, so a change to either needs a new version. Both
-are now at **draft 1.1.0**, which adds optional fields and removes nothing
+Both were released at 1.0.0 with spec `0.2.0`, and both are at **1.1.0**, released with spec
+`0.2.1`, which adds optional fields and removes none
 ([flyingrobots/parley#133](https://github.com/flyingrobots/parley/issues/133)): `fold` on the
 query, and on the lens `fold` and a folded section's `stands_for`. The released 1.0.0 of each is
 unchanged under `schemas/released/`, and the reader validates a line against the version it
@@ -164,8 +164,8 @@ govern a release and a draft.
 
 | Schema | Version | Message |
 | --- | --- | --- |
-| `parley.query` | 1.1.0 (draft) | A read, recorded as an event; with `records`, a drill-down naming the records it opens |
-| `parley.lens` | 1.1.0 (draft) | The lens a result carries |
+| `parley.query` | 1.1.0 | A read, recorded as an event; with `records`, a drill-down naming the records it opens |
+| `parley.lens` | 1.1.0 | The lens a result carries |
 
 A read is a run, so both lines carry the §1.3 envelope. `run` on these lines is the read's own run,
 not the run being read: the read writes its own receipt like any other parley program, and `asker`

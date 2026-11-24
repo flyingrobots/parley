@@ -3,8 +3,9 @@
 **Status:** implemented. Two conforming writers ([`@flyingrobots/parley-emit`](../packages/parley-emit/README.md)
 in TypeScript and [`parley_emit.py`](../packages/parley-emit-py/README.md) in Python) and one reader
 ([`@flyingrobots/parley-read`](../packages/parley-read/README.md)) implement it and are tested against it;
-§8 and §9 remain informative. Its schemas were first released with this version (`CHANGELOG.md`).
-**Spec version:** `0.2.0`, versioned independently of any implementation.
+§8 and §9 remain informative. Its schemas were first released with spec `0.2.0`, and each later
+release is a dated heading in `CHANGELOG.md` that names the schema versions it publishes.
+**Spec version:** `0.2.1`, versioned independently of any implementation.
 **Normative terms:** **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT** and **MAY** are to be
 interpreted as described in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119) and
 [RFC 8174](https://www.rfc-editor.org/rfc/rfc8174) when, and only when, they appear in bold.

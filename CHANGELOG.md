@@ -7,49 +7,155 @@ the entry under it names each schema version it releases, and those are separate
 
 ## [Unreleased]
 
-### Added
+## [0.2.1] — 2026-11-24
 
-- Each release workflow can be started by hand as a dry run: it packs once, runs the release gate
-  with no tag, hands the artifact to a second job that checks its digest, and for the npm
-  packages offers the tarball to `npm stage publish --dry-run`. It makes nothing public and the
-  tag-triggered jobs do not run. A pushed tag cannot be taken back, so this is how a workflow is
-  seen to work on a runner first (flyingrobots/parley#156).
+The second release of the schemas, with spec `0.2.1`. It releases two schema versions, and the
+spec gains five normative sentences. Everything the `0.2.0` entry released stays released and
+unchanged: no released snapshot's bytes move.
+
+Released schema versions, snapshotted byte for byte at
+`schemas/released/<id>/<version>.schema.json` and immutable from this entry on (spec §4.5, §4.6):
+
+- `parley.query` 1.1.0
+- `parley.lens` 1.1.0
+
+`parley.query` 1.0.0 and `parley.lens` 1.0.0 stay released beside them. The other fifteen
+messages are at the versions the `0.2.0` entry names.
+
+**Compatibility.** Both are minor versions: each adds optional fields, removes no field and
+narrows no constraint of 1.0.0 (spec §4.5). Three things a consumer must know:
+
+- **A line is validated against the schema for its own advertised pair, never a neighbouring
+  one** (spec §4.5). A reader that holds 1.0.0 and not 1.1.0 can give a 1.1.0 line only the
+  partial check §4.5 permits, and must report it as partial. The 1.0.0 schemas are open, so a
+  1.0.0 `parley.query` may carry an unknown `fold` of any type and a 1.0.0 `parley.lens` an
+  unknown `fold` or `stands_for`; 1.1.0 defines those names and would reject such a value. Old
+  lines therefore keep validating only against 1.0.0, which a reader keeps shipping.
+- **One statement of `parley.lens` 1.0.0 does not hold of a 1.1.0 line.** 1.0.0 says
+  `loss.folded` depends on the window alone. In 1.1.0 it depends on the window, the view and
+  `fold`. It still never depends on the budget. The version on a lens line says which rule
+  produced it.
+- **What a fold is, is narrower.** Under 1.1.0 two runs fold only when their result records are
+  equal as well, compared one for one in `seq` order, and under a view whose surface holds
+  decision records those too: `receipt.step` under `how-it-decided` and `everything`, `cache.hit`
+  under those two and `what-ran`.
+
+The sentence-by-sentence review that preceded this freeze, with its findings, is
+[docs/topics/reader/freeze-review-1.1.0.md](docs/topics/reader/freeze-review-1.1.0.md)
+(flyingrobots/parley#146).
+
+Released alongside, each versioned on its own: `@flyingrobots/parley-emit` 0.4.0 and
+`@flyingrobots/parley-read` 0.2.0 on npm (parley-read depends on parley-emit `^0.4.0`, so
+parley-emit is published first), and `parley_emit.py` 0.3.0, a vendorable file pinned by its
+SHA-256. Each package's changelog says what changed in it. `@flyingrobots/parley-emit` 0.3.0,
+`@flyingrobots/parley-read` 0.1.2 and the package versions before them that this entry mentions
+below were steps on `main` between the two schema releases; npm holds the versions it holds, and
+the package changelogs say which were published.
+
+### Released: `parley.query` 1.1.0
+
+- An optional boolean `fold`. `false` asks the reader to fold nothing; absent or `true`, the
+  reader folds runs of one invocation with one result (flyingrobots/parley#133).
+- `fold`'s description says where a fold's runs are named: in the section of the run that stands
+  for them. A budget that leaves that run out leaves a count alone (flyingrobots/parley#146).
+
+### Released: `parley.lens` 1.1.0
+
+- An optional boolean `fold`, echoed from the query when the query states it
+  (flyingrobots/parley#133).
+- An optional `stands_for` in a run section's `folded`: the run ids of the other runs the section
+  stands for, this run excluded, as many as `others`. 1.0.0 gave a count and no way to the folded
+  runs. Each entry has `minLength: 1`, as every other run id in the schema has
+  (flyingrobots/parley#133, flyingrobots/parley#146).
+- `runs[].folded` states the fold's criterion: runs with an equal `inv` whose outcome, reason,
+  `end` status, diagnostic codes and head's `resolved` are equal, and whose result records are
+  equal one for one in `seq` order. A read's own `lens` and a record the protocol does not define
+  are results; a sidecar is compared by `bytes` and `sha256`; a run the window does not show to be
+  unredacted never folds. Decision records are compared under the views named above.
+- `runs[].folded` and `stands_for` state the order: the latest `t` among a run's records in the
+  window, then the greater run id, a run with no dated record last.
+- `stands_for` names runs and not their records' `seq`. A schema cannot check its length against
+  `others`. `budget.bytes` never shortens it: the section is whole or absent.
+- `loss.folded` counts every record the fold left out, so the sections' `folded.records` sum to
+  less than it when the budget cut a run that stands for others.
+
+### Changed in the spec
+
+These add or move a normative term, which is why the spec version moves to `0.2.1`.
+
+- **§5.1.** A program **MUST NOT** delete an incomplete receipt, one whose final line is not a
+  newline-terminated `end`, under its policy until the receipt has gone unmodified for at least 24
+  hours. It still counts toward the policy, so a complete receipt may be deleted in its place. No
+  lock is defined: a run that writes nothing for over a day and then appends while retention
+  deletes its receipt loses it. That window is accepted rather than closed by a cross-writer lock
+  protocol (flyingrobots/parley#112).
+- **§5.2.** A `.parley/.gitignore` that has the line `*` but also a negation pattern that can match
+  the directory `receipts` is a user's file. The program leaves it alone and uses the
+  state-directory fallback, and it **MUST** treat a negation it cannot evaluate as one that
+  matches. Before this, a file of `*`, `!receipts/` and `!receipts/**` met the letter of §5.2 while
+  leaving receipts where `git add` stages them (flyingrobots/parley#109).
+- **§5.3.** The schema document a `schema` line publishes is the program's static declaration and
+  **MUST** be published as declared. It is no longer scrubbed of a declared secret value that
+  occurs in it by coincidence, which rewrote `"type": "object"` when the secret was `object`
+  (flyingrobots/parley#111).
+- **§5.3, with one sentence added to the `4` row of §3.4.** A program **MUST NOT** publish a record
+  that redaction made invalid under its declared schema. It checks the redacted record before any
+  copy leaves the process, gives a failing record no `seq` and writes it nowhere, reports a
+  structured error naming each field by JSON Pointer and the schema's `id` and `version`, and
+  closes the run with status `4`. That error **MUST NOT** carry the value, a validator's message or
+  any part of the schema. Before this, an integer field equal to a declared secret was published
+  as the string `[redacted]` under the original schema by a run that ended with status 0
+  (flyingrobots/parley#131). No error code is enumerated by the spec or by any schema, so the
+  writers' new code `redaction.schema_conflict` changes neither.
+- **§4.5**, with no normative term added, removed or moved: it now says what the first release
+  did. A top-level schema file may hold a released version only with the snapshot's exact bytes,
+  and the first change after a release moves it to a new version
+  (flyingrobots/parley#107).
+
+### Changed in the packages
+
+Each package's own changelog is the record; this is the summary.
+
+- **A fold no longer hides a run whose result differs** (`@flyingrobots/parley-read` 0.2.0,
+  flyingrobots/parley#133). It emits `parley.query` and `parley.lens` at 1.1.0 and ships 1.0.0
+  beside them, so it validates the lines of both versions.
+- **A record that redaction made invalid is never published** (`@flyingrobots/parley-emit` 0.4.0,
+  `parley_emit.py` 0.3.0, flyingrobots/parley#131): the writers implement the §5.3 sentence above
+  with a `redaction.schema_conflict` error and status 4.
+- **A declared file input can be read through the run** (`run.readInput`, `run.read_input`;
+  flyingrobots/parley#132), so the receipt records the digest of the bytes the tool read. A
+  declared file not read that way is still digested when the handler finishes, and the writers'
+  references say so.
+- **A receipt-only field can no longer contradict the record** (flyingrobots/parley#130): both
+  writers refuse a `receiptExtra` value that differs from the record's.
+- Both npm release workflows stage a version (`npm stage publish`) for the owner to approve, in
+  place of `npm publish` (flyingrobots/parley#85).
+
+### Added: the SDL and the release gates
 
 - `schemas/parley.graphql`: Wesley SDL for all 17 messages, with interim `parley_` directives
   where Wesley 0.3.0-alpha.4 has no construct yet, each tied to the Wesley issue that retires it
   (flyingrobots/wesley#850 to flyingrobots/wesley#857). **It is not the source.** The hand-written
-  JSON Schemas stay the source of truth until flyingrobots/parley#119, and no schema byte or
-  version changes. A transitional test, `scripts/sdl-agreement.test.ts`, derives each message's
-  JSON Schema value from the SDL and requires it to equal the hand-written schema as parsed JSON.
-  All 17 agree, with no exceptions. Wesley is pinned exactly in `package.json` `config.wesley`, and
-  CI installs that version and fails if it is missing. Without it, `bun test` skips those cases
-  and says why (flyingrobots/parley#118).
-- `scripts/release-check.ts`, the release-eligibility checker, and the rule it enforces: a stable
-  Parley distribution must not embed, advertise or emit a repository-owned protocol schema
-  identity unless that exact `(id, version)` has been released and resolves to its frozen
-  definition. It reads what each package bundles and declares from a source tree, an npm tarball
-  or `parley_emit.py`, in three phases. `development` refuses only an inconsistent source and
-  reports which packages a draft blocks; `bun test` runs it. `candidate` judges a release pull
-  request. `publication` requires every schema release on the default branch already. Released
-  snapshots are compared byte for byte with a baseline the candidate did not choose (`--base`,
-  default the merge base with `origin/main`), and a package copy's source pin is verified by
-  content at the commit it names. Its output is JSON Lines stamped `parley.tooling.release_check`
-  1.0.0, a new tooling schema beside the script (`scripts/release-check.schema.json`).
-  `docs/workflows/release-spec` holds the rule, the phases and the procedure for releasing schema
-  versions in two commits and a merge commit. No spec text, schema byte, schema version or package version changes
-  (flyingrobots/parley#145).
-- Two rules in the release-eligibility checker, which moves its tooling schema
-  `parley.tooling.release_check` to 1.1.0. `candidate` refuses, with `release.heading_backdated`,
-  a newly snapshotted schema version named only under a release heading the baseline already has:
-  a new version is released by a heading that is itself new, identified by its version and not by
-  its date or text (flyingrobots/parley#152). And `--frozen-since REF` names a second reference,
-  independent of `--base`, whose snapshots must be byte-identical in the candidate. On the default
-  branch the baseline is `HEAD`, so without it `publication` there compared released snapshots
-  with the commit under test and did not see a coordinated edit that had merged. The reference
-  must resolve and be an ancestor of `HEAD` (`frozen_since.unresolved`,
-  `frozen_since.not_ancestor`), and `release.baseline` reports both references in three new
-  fields. No spec text, schema byte, protocol schema version or package version changes
-  (flyingrobots/parley#153).
+  JSON Schemas stay the source of truth until flyingrobots/parley#119. A transitional test,
+  `scripts/sdl-agreement.test.ts`, derives each message's JSON Schema value from the SDL and
+  requires it to equal the hand-written schema as parsed JSON. All 17 agree. Wesley is pinned
+  exactly in `package.json` `config.wesley`; CI installs that version and fails if it is missing,
+  and without it `bun test` skips those cases and says why (flyingrobots/parley#118).
+  `scripts/sdl-to-json-schema.ts` refuses SDL it cannot represent instead of passing it
+  (flyingrobots/parley#125).
+- **The release rule and the checker that enforces it** (`scripts/release-check.ts`,
+  flyingrobots/parley#145, flyingrobots/parley#152, flyingrobots/parley#153): a stable Parley
+  distribution must not embed, advertise or emit a repository-owned protocol schema identity
+  unless that exact `(id, version)` has been released and resolves to its frozen definition. The
+  checker reads what each package bundles and declares from a source tree, an npm tarball or
+  `parley_emit.py`, in three phases: `development`, `candidate` and `publication`. Released
+  snapshots are compared byte for byte with references the candidate did not choose (`--base` and
+  `--frozen-since`), a package copy's source pin is verified by content at the commit it names,
+  and a new version is released only by a heading that is itself new. Its output is JSON Lines
+  stamped `parley.tooling.release_check` 1.1.0, a tooling schema beside the script.
+  [docs/workflows/release-spec](docs/workflows/release-spec/README.md) holds the rule, the phases
+  and the procedure this release followed: the schema release in one commit, the package copies
+  re-synced from it in a second, joined by a merge commit.
 - The release gate, `bun run release-gate -- <package>` (`scripts/release-gate.ts`): for one
   package at the current commit it builds the artifact once, runs the checker's `publication`
   phase on that file with `--frozen-since` set to the package's previous release tag, refuses a
@@ -66,46 +172,6 @@ the entry under it names each schema version it releases, and those are separate
   `parley_emit.py` and creates its GitHub release with the changelog section, the file, its
   SHA-256 as `--vendor-info` prints it, and the report. The release was made by hand before
   (flyingrobots/parley#147).
-- `parley.query` 1.1.0, a draft: an optional boolean `fold`. `false` asks the reader to fold
-  nothing; absent or `true`, the reader folds runs of one invocation with one result.
-  1.0.0 stays released and unchanged (flyingrobots/parley#133). Changed in place by the
-  pre-freeze review (flyingrobots/parley#146): `fold`'s description no longer says the lens names
-  every run a fold stands for. It names them in the section of the run that stands for them, and
-  a budget that leaves that run out leaves a count alone.
-- `parley.lens` 1.1.0, a draft: an optional boolean `fold`, echoed from the query when the query
-  states it, and an optional `stands_for` in a run section's `folded`, the run ids of the other
-  runs the section stands for, most recent first. 1.0.0 gave a count and no way to the folded
-  runs. The descriptions of `folded` and `loss.folded` now state the criterion the reader applies
-  from `@flyingrobots/parley-read` 0.2.0: runs fold only when their result records are equal too,
-  and under a view whose surface holds decision records, those as well, so the fold depends on
-  the view as well as the window. 1.0.0 stays released and unchanged (flyingrobots/parley#133).
-  Changed in place by the pre-freeze review (flyingrobots/parley#146), descriptions and one
-  constraint on the new field:
-  - `runs[].folded` names the views exactly: `receipt.step` is compared under `how-it-decided`
-    and `everything`, `cache.hit` under those two and `what-ran`. It said the first two only.
-  - `runs[].folded` says result records are compared one for one in `seq` order, that a read's
-    own `lens` and a record the protocol does not define are results, that a sidecar is compared
-    by `bytes` and `sha256`, and that a run the window does not show to be unredacted never
-    folds.
-  - `runs[].folded` and `stands_for` state the order: the latest `t` among a run's records in
-    the window, then the greater run id, a run with no dated record last.
-  - `stands_for` says it names runs and not their records' `seq`, that a schema cannot check its
-    length against `others`, and that `budget.bytes` never shortens it: the section is whole or
-    absent.
-  - `loss.folded` says it counts every record the fold left out, so the sections'
-    `folded.records` sum to less than it when the budget cut a run that stands for others.
-  - One constraint: a `stands_for` entry has `minLength: 1`, as every other run id in the schema
-    has, so `[""]` no longer validates. The field is new in this draft, so nothing released
-    narrows.
-- Both are minor versions: each adds optional fields, removes no field and narrows no constraint
-  (spec §4.5). One statement the released lens schema makes does not hold of a 1.1.0 line: it says
-  `loss.folded` depends on the window alone, and in 1.1.0 it depends on the view and on `fold`
-  too. It still never depends on the budget. The review, its findings and the compatibility
-  statement for the release are in
-  [docs/topics/reader/freeze-review-1.1.0.md](docs/topics/reader/freeze-review-1.1.0.md).
-
-### Changed
-
 - The two npm release workflows run the gate as a job between `sanity` and `release`, and nothing
   public is created unless it passes. The tarball is packed once, by the gate; `release` and
   `publish` take that file, compare its SHA-256 with the gate job's output, and pack nothing.
@@ -116,72 +182,11 @@ the entry under it names each schema version it releases, and those are separate
   approving is the owner's step, and the release pages say so, with the protections that depend
   on settings the workflow cannot verify. No spec text, schema byte, schema version or package
   version changes (flyingrobots/parley#147).
-- The checks workflow fetches full history, which the release-eligibility check needs for its
-  baseline and for the commits the package copies are pinned to (flyingrobots/parley#145).
-- `@flyingrobots/parley-read` 0.2.0 emits `parley.query` and `parley.lens` at the draft 1.1.0
-  above and ships their released 1.0.0 beside them, so it validates the lines of both versions.
-  Its fold no longer hides a run whose result differs
-  (flyingrobots/parley#133; `packages/parley-read/CHANGELOG.md`). It is not tagged: these two
-  schema versions are to be released first, since a released package should not stamp a draft.
-- `@flyingrobots/parley-emit` 0.4.0 and `parley_emit.py` 0.3.0 implement the §5.3 sentence below:
-  a tool's record that redaction changed is validated against its declared schema before any copy
-  is written, and one that redaction made invalid is replaced by a `redaction.schema_conflict`
-  error and a run that ends with status 4 (flyingrobots/parley#131; each package's changelog).
-  `@flyingrobots/parley-read` 0.2.0, still untagged, moves its range to parley-emit `^0.4.0`. No
-  schema version moves and no released schema's bytes change.
-- `@flyingrobots/parley-emit` 0.3.0 and `parley_emit.py` 0.2.0 add `run.readInput` and
-  `run.read_input`: a tool reads a declared file input through the run, and the receipt records
-  the digest of the bytes it read, not of the file as the handler left it
-  (flyingrobots/parley#132). A declared file not read that way is still digested when the handler
-  finishes, and the writers' references now say so. `@flyingrobots/parley-read` 0.1.2 moves its
-  range to parley-emit `^0.3.0`. No schema or spec text changes.
-- `@flyingrobots/parley-read` 0.1.1 depends on parley-emit `^0.2.4`, the first 0.2 version on npm,
-  and is the first parley-read version staged by its workflow.
-- Both release workflows stage a version on npm (`npm stage publish`) for the owner to approve, in
-  place of `npm publish` (flyingrobots/parley#85). `@flyingrobots/parley-emit` 0.2.4 is the first
-  version released that way, after the release workflows' `sanity` jobs gained the pinned Wesley
-  that the suite needs under CI; no schema or spec text changes.
-- `scripts/sdl-to-json-schema.ts`, the transitional SDL derivation, now refuses SDL it cannot
-  represent instead of passing it: an unknown argument on a known directive, a duplicate field or
-  type definition, a nested list, a list-valued `@parley_message_ref` or list member of its type,
-  `@parley_exclusive` over other than two names, `forbidOtherwise` over other than one required
-  field, and a rule literal that violates its field's `minimum`, `maximum`, `minLength`, `pattern`
-  or `not`. A guarded `forbidOtherwise` rule on a nested path no longer rejects an object that omits
-  the path's parent. Two agreement tests no longer depend on current message wording. No emitted
-  line, schema byte or version changes (flyingrobots/parley#125).
-- Spec §4.5 now says what the first release did: a top-level schema file may hold a released
-  version only with the snapshot's exact bytes, and the first change after a release moves it to a
-  new draft version. This replaces the sentence that the change which snapshots a version bumps the
-  draft. No normative term was added, removed or moved, so the spec stays `0.2.0` and no schema
-  version moves (flyingrobots/parley#107).
-- Spec §5.2: a `.parley/.gitignore` that has the line `*` but also a negation pattern that can
-  match the directory `receipts` is a user's file. The program leaves it alone and uses the
-  state-directory fallback, and it **MUST** treat a negation it cannot evaluate as one that
-  matches. Before this, a file of `*`, `!receipts/` and `!receipts/**` met the letter of §5.2 while
-  leaving receipts where `git add` stages them (flyingrobots/parley#109).
-- Spec §5.3: the schema document a `schema` line publishes is the program's static declaration and
-  **MUST** be published as declared. It is no longer scrubbed of a declared secret value that
-  occurs in it by coincidence, which rewrote `"type": "object"` when the secret was `object`
-  (flyingrobots/parley#111).
-- Spec §5.1: a program **MUST NOT** delete an incomplete receipt, one whose final line is not a
-  newline-terminated `end`, under its policy until the receipt has gone unmodified for at least 24
-  hours. It still counts toward the policy, so a complete receipt may be deleted in its place. No lock is defined: a run that writes nothing for
-  over a day and then appends while retention deletes its receipt loses it. That window is accepted
-  rather than closed by a cross-writer lock protocol (flyingrobots/parley#112). Both writers
-  already behaved this way.
-- Spec §5.3, with one sentence added to the `4` row of §3.4: a program **MUST NOT** publish a
-  record that redaction made invalid under its declared schema. It checks the redacted record
-  before any copy leaves the process, gives a failing record no `seq` and writes it nowhere,
-  reports a structured error naming each field by JSON Pointer and the schema's `id` and
-  `version`, and closes the run with status `4`. That error **MUST NOT** carry the value, a
-  validator's message or any part of the schema. Before this, an integer field equal to a declared
-  secret was published as the string `[redacted]` under the original schema by a run that ended
-  with status 0. The owner decided option A, and status `4` over `2`, on 2026-11-24
-  (flyingrobots/parley#131). No error code is enumerated by the spec or by any schema, so the
-  writers' new code changes neither.
-- These sentences add or move a normative term, so the spec's next release is `0.2.1`. The status
-  line keeps saying `0.2.0` until that release is cut. No schema version moves, and no released
-  schema's bytes change. Decided under the owner's delegation of 2026-11-22.
+- Each release workflow can be started by hand as a dry run: it packs once, runs the release gate
+  with no tag, hands the artifact to a second job that checks its digest, and for the npm
+  packages offers the tarball to `npm stage publish --dry-run`. It makes nothing public and the
+  tag-triggered jobs do not run. A pushed tag cannot be taken back, so this is how a workflow is
+  seen to work on a runner first (flyingrobots/parley#156).
 
 ## [0.2.0] — 2026-11-22
 

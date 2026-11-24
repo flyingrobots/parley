@@ -94,6 +94,10 @@ export function buildReleased(dir: string): void {
     '# A tool-owned identity, which the rule does not govern.',
     'VENDOR_SCHEMA = {"id": "parley.tooling.vendor_info", "version": "1.0.0"}',
     "# BEGIN SCHEMAS", "# END SCHEMAS", "",
+    "# What the real file answers to --vendor-info: the digest of its own bytes.",
+    'if __name__ == "__main__":',
+    "    import hashlib, json",
+    '    print(json.dumps({"event": "vendor.info", "sha256": hashlib.sha256(open(__file__, "rb").read()).hexdigest()}))', "",
   ].join("\n"));
   put(dir, "packages/parley-emit-py/scripts/sync_schemas.py", readFileSync(join(REPO, "packages/parley-emit-py/scripts/sync_schemas.py"), "utf8"));
   commit(dir, "S: release 0.2.0 of the schemas");

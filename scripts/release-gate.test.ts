@@ -33,6 +33,11 @@ const BLOCKED = ["parley.lens@1.1.0", "parley.query@1.1.0"];
 const templates = { drafts: join(scratch, "template-drafts"), released: join(scratch, "template-released") };
 beforeAll(() => {
   buildReleased(templates.drafts);
+  // The reader depends on the writer by range, as the real one does: that is what --consumer proves.
+  const reader = JSON.parse(get(templates.drafts, "packages/parley-read/package.json"));
+  put(templates.drafts, "packages/parley-read/package.json", text({ ...reader, dependencies: { [EMIT]: "^0.4.0" } }));
+  commit(templates.drafts, "the reader depends on the writer");
+  acceptOnMain(templates.drafts);
   for (const p of PACKAGES) git(templates.drafts, "tag", p.previous);
   addDrafts(templates.drafts);
   for (const p of PACKAGES) put(templates.drafts, `packages/${p.dir}/CHANGELOG.md`, `# Changelog\n\n## [Unreleased]\n\n## [${p.version}] — 2026-11-24\n\n- A release.\n`);
@@ -216,7 +221,7 @@ describe("the release gate (flyingrobots/parley#147)", () => {
     put(dir, "notes.txt", "not committed\n");
     const dirty = gate({ package: "parley-emit", repo: dir });
     expect(refused(dirty)).toEqual(["gate.dirty_tree"]);
-    expect(dirty.lines.find((l) => l.event === "gate.refusal")).toMatchObject({ problem: expect.stringContaining("1 path(s) (notes.txt)") });
+    expect(dirty.report.gate.refusals[0]?.problem).toContain("1 path(s) (notes.txt)");
     expect(dirty.report.source.clean).toBe(false);
     rmSync(join(dir, "notes.txt"));
 
@@ -255,6 +260,35 @@ describe("the release gate (flyingrobots/parley#147)", () => {
     expect(gate({ package: "parley-read", repo: dir, artifact: join(scratch, "no-such.tgz") }).passed).toBe(false);
   }, 2 * SLOW);
 
+  test("GATE-11: --consumer runs the clean consumer on the packed tarball once the artifact is otherwise releasable, records the writer in the report, and refuses when it refuses", () => {
+    const dir = fixture("released");
+    const asked: Parameters<typeof checkConsumer>[0][] = [];
+    const answer = (refusals: ConsumerResult["refusals"]) => (o: Parameters<typeof checkConsumer>[0]): ConsumerResult => {
+      asked.push(o);
+      return { event: "consumer.result", passed: refusals.length === 0, dir: join(scratch, "elsewhere"), installed: true, reader: { name: READ, version: "0.2.0", integrity: "sha512-reader" }, dependency: { name: EMIT, version: "0.4.0", resolved: "https://registry.npmjs.org/@flyingrobots/parley-emit/-/parley-emit-0.4.0.tgz", integrity: "sha512-writer" }, smoke: null, refusals };
+    };
+    const out = outDir();
+    const ok = gate({ package: "parley-read", repo: dir, out, consumer: true, consumerCheck: answer([]) });
+    expect(ok.passed).toBe(true);
+    // It was asked about the one tarball, the writer the reader depends on, and this repository.
+    expect(asked).toEqual([{ tarball: join(out, "flyingrobots-parley-read-0.2.0.tgz"), dependency: EMIT, workspace: dir }]);
+    expect(ok.report.consumer?.dependency).toEqual({ name: EMIT, version: "0.4.0", resolved: "https://registry.npmjs.org/@flyingrobots/parley-emit/-/parley-emit-0.4.0.tgz", integrity: "sha512-writer" });
+    expect(ok.lines.some((l) => l.event === "gate.consumer")).toBe(true);
+    const linked = gate({ package: "parley-read", repo: dir, consumer: true, consumerCheck: answer([{ code: "consumer.dependency_linked", problem: "it resolved from the workspace" }]) });
+    expect(linked.passed).toBe(false);
+    expect(refused(linked)).toEqual(["consumer.dependency_linked"]);
+    expect(linked.report.gate.passed).toBe(false);
+    // A refused artifact is not installed anywhere: the consumer is not reached.
+    asked.length = 0;
+    const draft = gate({ package: "parley-read", repo: fixture("drafts"), consumer: true, consumerCheck: answer([]) });
+    expect(draft.passed).toBe(false);
+    expect(asked).toEqual([]);
+    expect(draft.report.consumer).toBeNull();
+    // A package that depends on no package here has nothing to prove that way.
+    expect(() => runGate({ package: "parley-emit", repo: dir, consumer: true })).toThrow(/depends on none/);
+    expect(() => runGate({ package: "parley-emit-py", repo: dir, consumer: true })).toThrow(/depends on none/);
+  }, 2 * SLOW);
+
   test("GATE-7: a usage error is one schema'd line on stderr and exit 2; --help describes the command", () => {
     const validate = new Ajv2020({ strict: false, allErrors: true }).compile(schemaOf("release-gate.schema.json"));
     for (const args of [[], ["parley-nothing"], ["parley-read", "--frobnicate"], ["parley-read", "--out"], ["parley-read", "parley-emit"]]) {
@@ -276,6 +310,102 @@ describe("the release gate (flyingrobots/parley#147)", () => {
     expect(h[0]).toMatchObject({ event: "gate.help" });
     expect(validate(h[0]), JSON.stringify(validate.errors)).toBe(true);
   }, SLOW);
+});
+
+describe("the workflows' own steps, run here (flyingrobots/parley#147)", () => {
+  interface Step { name?: string; uses?: string; run?: string; if?: string; id?: string }
+  interface Job { needs?: string | string[]; steps: Step[] }
+  const WORKFLOWS = [
+    { file: "release-parley-emit.yml", pkg: PACKAGES[0], output: "tarball" },
+    { file: "release-parley-read.yml", pkg: PACKAGES[1], output: "tarball" },
+    { file: "release-parley-emit-py.yml", pkg: PACKAGES[2], output: "file" },
+  ] as const;
+  const jobs = (file: string) => (Bun.YAML.parse(readFileSync(join(REPO, ".github/workflows", file), "utf8")) as { jobs: Record<string, Job> }).jobs;
+
+  /** A fixture the workflow's `bun run release-gate` resolves in: a root manifest whose script is this tree's gate. */
+  function withScript(of: keyof typeof templates): string {
+    const dir = fixture(of);
+    put(dir, "package.json", text({ name: "fixture", private: true, scripts: { "release-gate": `bun run ${join(REPO, "scripts/release-gate.ts")}` } }));
+    commit(dir, "the root manifest, with the gate as a script");
+    acceptOnMain(dir);
+    return dir;
+  }
+
+  /**
+   * Run a job's `run` steps from `from` on, as the runner does: in order, with `bash -e`, and after
+   * a failure only the steps marked `if: always()`. Steps that `uses` an action are recorded and
+   * not run. Returns which steps ran and which one failed.
+   */
+  function runSteps(job: Job, from: number, cwd: string, env: Record<string, string>, expressions: Record<string, string> = {}) {
+    const ran: string[] = [], skipped: string[] = [];
+    let failed: string | null = null;
+    job.steps.slice(from).forEach((step, i) => {
+      const label = step.name ?? step.uses ?? `step ${from + i}`;
+      if (failed !== null && step.if !== "always()") { skipped.push(label); return; }
+      if (step.run === undefined) { ran.push(label); return; }
+      const script = step.run.replace(/\$\{\{\s*([^}]+?)\s*\}\}/g, (_m, e: string) => { if (!(e in expressions)) throw new Error(`no value for the expression ${e}`); return expressions[e]!; });
+      const r = spawnSync("bash", ["-e", "-c", script], { cwd, encoding: "utf8", env: { ...process.env, ...env } });
+      ran.push(label);
+      if (r.status !== 0 && failed === null) failed = label;
+    });
+    return { ran, skipped, failed };
+  }
+  function runner() {
+    const temp = join(scratch, `runner-${++made}`);
+    mkdirSync(temp, { recursive: true });
+    const env = { RUNNER_TEMP: temp, GITHUB_STEP_SUMMARY: join(temp, "summary.md"), GITHUB_OUTPUT: join(temp, "output.txt") };
+    writeFileSync(env.GITHUB_STEP_SUMMARY, "");
+    writeFileSync(env.GITHUB_OUTPUT, "");
+    return { temp, env };
+  }
+  const gateAt = (job: Job) => job.steps.findIndex((s) => /release-gate/.test(s.run ?? ""));
+
+  test("GATE-9: with a package bundling a draft schema, each workflow's gate job stops at the gate: the report is printed, no digest is recorded and nothing is uploaded", () => {
+    const dir = withScript("drafts");
+    for (const { file, pkg } of WORKFLOWS) {
+      const gate = jobs(file).gate!;
+      const { temp, env } = runner();
+      const r = runSteps(gate, gateAt(gate), dir, { ...env, GITHUB_REF_NAME: `${pkg.dir}-v${pkg.version}` });
+      expect(r.failed, file).toMatch(/release gate/);
+      // After the refusal only the summary ran; the digest and the artifact upload did not.
+      expect(r.ran, file).toEqual([r.failed!, "Print the release report"]);
+      expect(r.skipped.some((s) => s.startsWith("actions/upload-artifact@")), file).toBe(true);
+      expect(readFileSync(env.GITHUB_OUTPUT, "utf8"), file).toBe("");
+      const summary = readFileSync(env.GITHUB_STEP_SUMMARY, "utf8");
+      expect(summary, file).toContain('"passed": false');
+      expect(summary, file).toContain("parley.query@1.1.0 has no snapshot");
+      expect(summary, file).toContain("parley.lens@1.1.0 has no snapshot");
+      expect(JSON.parse(readFileSync(join(temp, "release/release-report.json"), "utf8")).gate.passed, file).toBe(false);
+    }
+  }, 2 * SLOW);
+
+  test("GATE-10: once the schemas are released, the gate job's steps pass and hand on one digest, and the release job's check refuses any other file", () => {
+    const dir = withScript("released");
+    // The reader's gate also installs from npm (--consumer), which a test does not do; its steps
+    // are the same as the writer's otherwise, and CONS-1 to CONS-3 hold the consumer check.
+    for (const { file, pkg, output } of WORKFLOWS.filter((w) => w.pkg.dir !== "parley-read")) {
+      const all = jobs(file), gate = all.gate!;
+      const { temp, env } = runner();
+      const r = runSteps(gate, gateAt(gate), dir, { ...env, GITHUB_REF_NAME: `${pkg.dir}-v${pkg.version}` }, { "runner.temp": temp });
+      expect(r.failed, file).toBeNull();
+      expect(r.skipped, file).toEqual([]);
+      const digest = sha("sha256", join(temp, "release", pkg.file));
+      expect(readFileSync(env.GITHUB_OUTPUT, "utf8"), file).toBe(`sha256=${digest}\nfile=${pkg.file}\n`);
+      expect(readFileSync(env.GITHUB_STEP_SUMMARY, "utf8"), file).toContain(`"sha256": "${digest}"`);
+
+      // The release job: its verification step, on what the gate left and on a file that is not it.
+      const release = all.release!;
+      const verify = release.steps.findIndex((s) => (s.run ?? "").includes("needs.gate.outputs.sha256"));
+      const only = { ...release, steps: [release.steps[verify]!] };
+      const work = join(scratch, `work-${++made}`);
+      cpSync(join(temp, "release"), join(work, "release-assets"), { recursive: true });
+      const outputs = { "needs.gate.outputs.sha256": digest, [`needs.gate.outputs.${output}`]: pkg.file };
+      const envs = { ...env, SHA256: digest, FILE: pkg.file };
+      expect(runSteps(only, 0, work, envs, outputs).failed, file).toBeNull();
+      writeFileSync(join(work, "release-assets", pkg.file), "another file under the same name\n");
+      expect(runSteps(only, 0, work, envs, outputs).failed, file).not.toBeNull();
+    }
+  }, 2 * SLOW);
 });
 
 describe("the clean consumer (flyingrobots/parley#147)", () => {
@@ -392,7 +522,10 @@ describe("the gate's output (flyingrobots/parley#147)", () => {
     for (const event of ["gate.artifact", "gate.frozen_since", "gate.result", "release.baseline", "release.package", "release.summary", "release.refusal"]) expect(seen.has(event), event).toBe(true);
     // Every refusal code the gate's schema admits was produced by a case above, and no other.
     const declared: string[] = schemaOf("release-gate.schema.json").$defs.code.enum;
-    expect([...seen].filter((x) => x.startsWith("refusal:")).map((x) => x.slice(8)).sort()).toEqual(declared.filter((c) => !c.startsWith("consumer.")).sort());
+    // The consumer's codes are relayed from scripts/clean-consumer.ts, whose own cases produce them.
+    const mine = (c: string) => !c.startsWith("consumer.");
+    expect([...seen].filter((x) => x.startsWith("refusal:")).map((x) => x.slice(8)).filter(mine).sort()).toEqual(declared.filter(mine).sort());
+    expect(declared.filter((c) => !mine(c)).sort()).toEqual([...schemaOf("clean-consumer.schema.json").oneOf[0].properties.refusals.items.properties.code.enum].sort());
     expect(everyReport.length).toBeGreaterThan(20);
     for (const r of everyReport) expect(report(JSON.parse(JSON.stringify(r))), JSON.stringify(report.errors) + " for " + JSON.stringify(r).slice(0, 400)).toBe(true);
     expect(existsSync(join(REPO, "scripts/release-report.schema.json"))).toBe(true);

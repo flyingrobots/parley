@@ -105,6 +105,8 @@ export interface GateOptions {
   frozenSince?: string;
   /** Prove the packed package against its dependencies as npm serves them (scripts/clean-consumer.ts). */
   consumer?: boolean;
+  /** The consumer check to run; the real one unless a test supplies another, since the real one installs from npm. */
+  consumerCheck?: typeof checkConsumer;
 }
 export interface Gate { passed: boolean; lines: GateLine[]; report: Report }
 
@@ -253,7 +255,7 @@ export function runGate(o: GateOptions): Gate {
     // ---- the clean consumer: only for an artifact that is otherwise releasable --------------------
     let consumer: Omit<ConsumerResult, "event"> | null = null;
     if (o.consumer && own.length === 0 && summary?.event === "release.summary" && summary.passed) {
-      const { event: _event, ...result } = checkConsumer({ tarball: path, dependency: proved[0]!, workspace: repo });
+      const { event: _event, ...result } = (o.consumerCheck ?? checkConsumer)({ tarball: path, dependency: proved[0]!, workspace: repo });
       consumer = result;
       lines.push({ event: "gate.consumer", ...result });
       for (const r of result.refusals) refuse(r.code, r.problem);

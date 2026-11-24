@@ -23,10 +23,10 @@ Spec version `0.2.0`. The package version moves with this code; each message sch
 own (spec §4.4). The schemas it ships are the versions released with spec `0.2.0`, copied from
 `schemas/` at the commit recorded in `src/schemas.ts`, byte-identical by test (spec §4.5).
 
-This is a library with no command, for Bun 1.2 or later. Version 0.1.0 is released (tag
-`parley-read-v0.1.0`); its first publish to npm is made by hand by the owner
-([docs/workflows/release-parley-read](../../docs/workflows/release-parley-read/README.md)), after
-which `bun add @flyingrobots/parley-read` installs it with `@flyingrobots/parley-emit` `^0.2.0`.
+This is a library with no command, for Bun 1.2 or later. Version 0.1.1 is released (tag
+`parley-read-v0.1.1`) and on npm once the owner approves it
+([docs/workflows/release-parley-read](../../docs/workflows/release-parley-read/README.md));
+`bun add @flyingrobots/parley-read` installs it with `@flyingrobots/parley-emit` `^0.2.4`.
 Inside this repository it is the workspace package `@flyingrobots/parley-read`.
 
 ## Loading a directory's receipts

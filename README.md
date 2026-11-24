@@ -23,10 +23,9 @@ digest names ([#51](https://github.com/flyingrobots/parley/issues/51)).
 > also appends to the shared history stream when one is configured, and
 > [`parley_emit.py`](packages/parley-emit-py/README.md) 0.1.2, one vendorable Python file pinned
 > by its SHA-256. The reader library, [`@flyingrobots/parley-read`](packages/parley-read/README.md)
-> 0.1.0, loads a repository's receipt bundles and answers recorded reads. Both libraries are released
-> by tag: the workflow stages the version on npm and the owner approves it
-> ([how](docs/workflows/release-parley-emit/README.md)); parley-read's first npm publish is made by
-> hand ([how](docs/workflows/release-parley-read/README.md)).
+> 0.1.1, loads a repository's receipt bundles and answers recorded reads. Both libraries are on npm
+> and released by tag: the workflow stages the version and the owner approves it
+> ([how](docs/workflows/release-parley-emit/README.md)).
 > §8 and §9 of the spec stay informative. See the
 > [open issues](https://github.com/flyingrobots/parley/issues).
 

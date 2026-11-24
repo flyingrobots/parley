@@ -21,6 +21,8 @@ the entry under it names each schema version it releases, and those are separate
 
 ### Changed
 
+- `@flyingrobots/parley-read` 0.1.1 depends on parley-emit `^0.2.4`, the first 0.2 version on npm,
+  and is the first parley-read version staged by its workflow.
 - Both release workflows stage a version on npm (`npm stage publish`) for the owner to approve, in
   place of `npm publish` (flyingrobots/parley#85). `@flyingrobots/parley-emit` 0.2.4 is the first
   version released that way, after the release workflows' `sanity` jobs gained the pinned Wesley

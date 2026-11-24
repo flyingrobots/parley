@@ -12,7 +12,7 @@ and the first publish.
    §4.5); the shipped schemas are the top-level files in `schemas/` at the commit pinned in
    `src/schemas.ts`, so run `bun run sync-schemas` there first if they moved.
 2. Set `version` in `packages/parley-read/package.json` to the same number. Its dependency on
-   `@flyingrobots/parley-emit` is a caret range (`^0.2.0` for 0.1.0), never `workspace:*`: npm
+   `@flyingrobots/parley-emit` is a caret range (`^0.2.4` for 0.1.1), never `workspace:*`: npm
    publishes a `workspace:` range verbatim, and no installer outside this repository can resolve
    it. The range must admit the version of `packages/parley-emit` in the repository, so the
    workspace still links the local copy; `scripts/release.test.ts` checks both.
@@ -46,8 +46,10 @@ These commands need an interactive login and cannot be run from CI.
 
 npm attaches a trusted publisher to a package that already exists, so **the first version of a new
 package is published by hand by the owner, with a one-time password**, as parley-emit's 0.1.0 was.
-Until then the `publish` job of the first tag fails with a 404 from the registry (the package does
-not exist), and that failure is expected: the GitHub release exists and carries the tarball.
+This was done for parley-read on 2026-11-24 with 0.1.0; what follows records how, for the next new
+package. Until then the `publish` job of the first tag fails with a 404 from the registry (the
+package does not exist), and that failure is expected: the GitHub release exists and carries the
+tarball.
 
 From a clean checkout of the tag, after parley-emit's required version is on npm:
 

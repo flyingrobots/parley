@@ -2,11 +2,11 @@
 // first, the head next, the `end` event last and immutable; every record's payload scrubbed of
 // declared secrets before any copy leaves the process. The envelope is applied after scrubbing
 // and is never scrubbed: the run id and the receipt path were chosen secret-free at startup.
-import { closeSync, mkdirSync, openSync, writeSync } from "node:fs";
-import { join } from "node:path";
+import { closeSync, mkdirSync, openSync, readFileSync, writeSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { checkRecord } from "./check.ts";
 import type { HistoryProjection, HistorySink } from "./history.ts";
-import { computeInv, digestInput, sha256, type InputDecl, type InputDescriptor } from "./inv.ts";
+import { canonical, computeInv, digestInput, sha256, type InputDecl, type InputDescriptor } from "./inv.ts";
 import { carriesSecret, scrub } from "./redact.ts";
 import { isHistoryRefusal, type HistoryRefusal } from "./refusal.ts";
 
@@ -93,6 +93,8 @@ export class Run {
   private inputsSettled = false;
   private supplied = new Map<string, Uint8Array>();
   private unread = new Map<string, string>();
+  /** Digests of the declared files read through `readInput`, taken at the read. */
+  private read = new Map<string, string>();
   private finalStatus: number | null = null;
   private readonly init: RunInit;
 
@@ -376,13 +378,19 @@ export class Run {
     const scrubbed = this.scrubPayload(payload, found, how.writer === true, how.writer === true ? how.verbatim : undefined);
     const extraFound: string[] = [];
     const extra = receiptExtra ? this.scrubPayload(receiptExtra, extraFound, how.writer === true) : undefined;
+    // The copies of one event agree on every field they share (§1.3): compared as scrubbed, since
+    // that is what is written, and before a seq is taken, so a refusal leaves no gap.
+    if (extra) for (const k of Object.keys(extra)) {
+      if (k in scrubbed && canonical(extra[k]) !== canonical(scrubbed[k])) throw new TypeError(`receiptExtra.${k} differs from the record's ${k}; the copies of an event must agree on every field they share (spec §1.3)`);
+    }
     const at = this.next();
     const rec = this.envelope(scrubbed, schema, at);
     const human = this.init.human !== undefined;
     if (how.to.stdout) this.writeOrSkip("stdout", human ? this.prose(rec) : this.line(rec), how.deferFailures);
     if (how.to.stderr) this.writeOrSkip("stderr", human ? this.prose(rec) : this.line(rec), how.deferFailures);
     if (how.to.receipt) {
-      const full = extra ? this.envelope({ ...scrubbed, ...extra, event: scrubbed.event }, schema, at) : rec;
+      // A shared field is written from the payload, so the copies agree byte for byte on it.
+      const full = extra ? this.envelope({ ...scrubbed, ...Object.fromEntries(Object.entries(extra).filter(([k]) => !(k in scrubbed))) }, schema, at) : rec;
       const text = JSON.stringify(full);
       if (!how.noSidecar && Buffer.byteLength(text, "utf8") > SIDECAR_THRESHOLD) this.sidecar(at.seq, text);
       else this.write("receipt", text + "\n");
@@ -505,10 +513,43 @@ export class Run {
     return out;
   }
 
-  /** Supply the bytes of a declared input the writer cannot read itself, such as stdin. */
+  /**
+   * Supply the bytes of a declared input the writer cannot read itself, such as stdin. For a
+   * declared file, `readInput` reads and records in one step.
+   */
   input(path: string, bytes: Uint8Array | string): void {
     this.supplied.set(path, typeof bytes === "string" ? Buffer.from(bytes, "utf8") : bytes);
     this.unread.delete(path);
+    this.read.delete(path);
+  }
+
+  /**
+   * Read a declared file input and record it: the bytes returned are the bytes whose digest the
+   * receipt carries for that input, whatever happens to the file afterwards (§2.2,
+   * flyingrobots/parley#132). This is the way to read a declared file. A file the program reads
+   * by other means is digested when the handler finishes, and that digest describes the file as
+   * it is then, which a tool that edits in place has already changed.
+   *
+   * `path` is the declared path, resolved as a declared input is: against the run's `cwd` when
+   * relative. When the file cannot be read, the input is recorded as `inputUnreadable` records it
+   * and the file system's error is thrown. Throws `TypeError` for a path that is not a declared
+   * input, for a `stdin` input (supply it with `input`) or a `tree` input, and once the inputs
+   * are settled. A later `readInput`, `input` or `inputUnreadable` for the same path replaces
+   * the record.
+   */
+  readInput(path: string): Buffer {
+    if (this.closed) throw new ParleyClosed();
+    if (this.inputsSettled) throw new TypeError("the inputs are already settled; call readInput before finaliseInputs or end (spec §2.2)");
+    const decl = this.init.inputs.find((i) => i.path === path);
+    if (!decl) throw new TypeError(`${JSON.stringify(path)} is not a declared input of this run`);
+    if (decl.role === "stdin" || decl.role === "tree") throw new TypeError(`${JSON.stringify(path)} is a ${decl.role} input; readInput reads a declared file`);
+    let bytes: Buffer;
+    try { bytes = readFileSync(resolve(this.cwd, path)); } catch (e) { this.inputUnreadable(path); throw e; }
+    // The digest is taken now, so the caller may do what it likes with the buffer.
+    this.read.set(path, sha256(bytes));
+    this.supplied.delete(path);
+    this.unread.delete(path);
+    return bytes;
   }
 
   /**
@@ -523,6 +564,7 @@ export class Run {
     if (!this.init.inputs.some((i) => i.path === path)) throw new TypeError(`${JSON.stringify(path)} is not a declared input of this run`);
     if (!CODE.test(code)) throw new TypeError(`code ${JSON.stringify(code)} is not two or more dot-separated lowercase segments (spec §6)`);
     this.supplied.delete(path);
+    this.read.delete(path);
     this.unread.set(path, code);
   }
 
@@ -531,8 +573,10 @@ export class Run {
     if (this.inputsSettled || this.init.inputs.length === 0) { this.inputsSettled = true; return []; }
     this.inputsSettled = true;
     const raw = this.init.inputs.map((i): InputDescriptor => {
-      const code = this.unread.get(i.path);
-      return code === undefined ? digestInput(this.cwd, i, this.supplied.get(i.path)) : { path: i.path, ...(i.role ? { role: i.role } : {}), error: code };
+      const code = this.unread.get(i.path), read = this.read.get(i.path);
+      if (code !== undefined) return { path: i.path, ...(i.role ? { role: i.role } : {}), error: code };
+      if (read !== undefined) return { path: i.path, ...(i.role ? { role: i.role } : {}), sha256: read };
+      return digestInput(this.cwd, i, this.supplied.get(i.path));
     });
     // The preimage and the record both take the redacted descriptors (§2.2: no secret value in inv).
     const inputs = scrub(raw, this.init.secretValues, "", [], { skipKeys: DIGEST_KEYS, scalars: false }) as InputDescriptor[];

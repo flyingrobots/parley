@@ -173,6 +173,98 @@ describe("PE-2 inv", () => {
     expect(refused).toEqual(["undeclared", "settled"]);
     expect(r.violations).toEqual([]);
   });
+
+  const digestOf = (text: string) => createHash("sha256").update(text).digest("hex");
+  const inputsOf = (r: { receiptLines: Record<string, unknown>[] }) => r.receiptLines.find((o) => o.event === "receipt.inputs") as { inputs: { path: string; role?: string; sha256?: string; error?: string }[]; inv?: string };
+
+  test("an input read through readInput and then rewritten is recorded as the bytes read", async () => {
+    // PE-2h (flyingrobots/parley#132): an in-place editor. The receipt says what the answer was
+    // computed from, which is the bytes the tool read, not the bytes it left behind.
+    const { dir, env } = scratch(); writeFileSync(join(dir, "input.txt"), "before");
+    let read = "";
+    const r = await runCount(dir, env, ["count"], (run) => {
+      read = run.readInput("input.txt").toString("utf8");
+      writeFileSync(join(run.cwd, "input.txt"), "after");
+      run.result({ event: "result", value: read.length }, { id: "t.count", version: "1.0.0" });
+    }, {}, [{ path: "input.txt" }]);
+    expect(read).toBe("before");
+    expect(readFileSync(join(dir, "input.txt"), "utf8")).toBe("after");
+    expect(inputsOf(r).inputs).toEqual([{ path: "input.txt", sha256: digestOf("before") }]);
+    // The same question as a run that read the same bytes and left the file alone.
+    writeFileSync(join(dir, "input.txt"), "before");
+    const untouched = await runCount(dir, env, ["count"], (run) => { run.readInput("input.txt"); }, {}, [{ path: "input.txt" }]);
+    expect(inputsOf(r).inv).toMatch(/^[0-9a-f]{64}$/);
+    expect(inputsOf(r).inv).toBe(inputsOf(untouched).inv);
+    expect(r.status).toBe(0);
+    expect(r.violations).toEqual([]);
+  });
+
+  test("a declared file never read through the writer is digested when the handler finishes", async () => {
+    // PE-2i (flyingrobots/parley#132): the default path, kept. The tool reads the file itself and
+    // rewrites it; the writer digests what is on disk at finalisation, bytes the tool never read.
+    const { dir, env } = scratch(); writeFileSync(join(dir, "input.txt"), "before");
+    const r = await runCount(dir, env, ["count"], (run) => {
+      const read = readFileSync(join(run.cwd, "input.txt"), "utf8");
+      writeFileSync(join(run.cwd, "input.txt"), "after");
+      run.result({ event: "result", value: read.length }, { id: "t.count", version: "1.0.0" });
+    }, {}, [{ path: "input.txt" }]);
+    expect(inputsOf(r).inputs).toEqual([{ path: "input.txt", sha256: digestOf("after") }]);
+    expect(r.violations).toEqual([]);
+  });
+
+  test("readInput on a file that cannot be read throws and records the input unread", async () => {
+    // PE-2j (flyingrobots/parley#132): the same record inputUnreadable leaves, and the error
+    // reaches the caller. The file appearing later does not change the record.
+    const { dir, env } = scratch();
+    let caught: unknown;
+    const r = await runCount(dir, env, ["count"], (run) => {
+      try { run.readInput("input.txt"); } catch (e) { caught = e; }
+      writeFileSync(join(run.cwd, "input.txt"), "late");
+      run.error({ code: "input.missing", problem: "could not read input.txt" });
+    }, {}, [{ path: "input.txt" }]);
+    expect((caught as NodeJS.ErrnoException).code).toBe("ENOENT");
+    expect(inputsOf(r).inputs).toEqual([{ path: "input.txt", error: "input.unreadable" }]);
+    expect([...r.stdout.objs, ...r.receiptLines].some((o) => "inv" in o)).toBe(false);
+    expect(r.status).toBe(2);
+    expect(r.violations).toEqual([]);
+  });
+
+  test("readInput resolves like a declared input, keeps its digest, and refuses what it cannot record", async () => {
+    // PE-2k (flyingrobots/parley#132).
+    const { dir, env } = scratch();
+    const elsewhere = mkdtempSync(join(tmpdir(), "parley-emit-abs-"));
+    writeFileSync(join(dir, "rel.txt"), "relative"); writeFileSync(join(elsewhere, "abs.txt"), "absolute");
+    mkdirSync(join(dir, "src")); writeFileSync(join(dir, "src", "a.txt"), "one");
+    const abs = join(elsewhere, "abs.txt");
+    const refused: string[] = [];
+    const attempt = (what: string, f: () => unknown) => { try { f(); } catch (e) { if (e instanceof TypeError) refused.push(what); } };
+    const r = await runCount(dir, env, ["count"], (run) => {
+      // Mutating the returned buffer does not move the recorded digest.
+      const bytes = run.readInput("rel.txt"); bytes.fill(0);
+      expect(run.readInput(abs).toString("utf8")).toBe("absolute");
+      attempt("undeclared", () => run.readInput("typo.txt"));
+      attempt("stdin", () => run.readInput("-"));
+      attempt("tree", () => run.readInput("src"));
+      // A later read replaces the earlier record; so does a later run.input or inputUnreadable.
+      writeFileSync(join(run.cwd, "twice.txt"), "first"); run.readInput("twice.txt");
+      writeFileSync(join(run.cwd, "twice.txt"), "second"); run.readInput("twice.txt");
+      writeFileSync(join(run.cwd, "supplied.txt"), "on disk"); run.readInput("supplied.txt"); run.input("supplied.txt", "supplied later");
+      writeFileSync(join(run.cwd, "retracted.txt"), "on disk"); run.readInput("retracted.txt"); run.inputUnreadable("retracted.txt", "input.retracted");
+      run.finaliseInputs();
+      attempt("settled", () => run.readInput("rel.txt"));
+    }, {}, [{ path: "rel.txt" }, { path: abs }, { path: "-", role: "stdin" }, { path: "src", role: "tree" }, { path: "twice.txt" }, { path: "supplied.txt" }, { path: "retracted.txt" }], {});
+    expect(r.status).toBe(0);
+    expect(refused).toEqual(["undeclared", "stdin", "tree", "settled"]);
+    const got = Object.fromEntries(inputsOf(r).inputs.map((i) => [i.path, i.sha256 ?? i.error]));
+    expect(got["rel.txt"]).toBe(digestOf("relative"));
+    expect(got[abs]).toBe(digestOf("absolute"));
+    expect(got["-"]).toBe("input.unread");
+    expect(got["twice.txt"]).toBe(digestOf("second"));
+    expect(got["supplied.txt"]).toBe(digestOf("supplied later"));
+    expect(got["retracted.txt"]).toBe("input.retracted");
+    expect(inputsOf(r).inv).toBeUndefined();
+    expect(r.violations).toEqual([]);
+  });
 });
 
 describe("PE-3 bootstrap before work", () => {
@@ -987,6 +1079,30 @@ describe("PE-17 the head is first and sinks fail gracefully (F-6, F-7, F-8)", ()
     expect(receiptLines.at(-1)).toMatchObject({ event: "end", status: 4 });
     expect(receiptLines.some((o) => o.event === "error" && String(o.code).startsWith("sink."))).toBe(true);
     expect(s.stderr.objs.some((o) => o.event === "error")).toBe(true);
+  });
+
+  // flyingrobots/parley#130: the copies of one event agree on every field they share (spec §1.3),
+  // so a receiptExtra key the payload also carries must hold an equal value, or the call is refused
+  // before either copy is written.
+  test("a receiptExtra field that contradicts the payload is refused before either copy is written", async () => {
+    const { dir, env } = scratch();
+    const ref = { id: "t.count", version: "1.0.0" };
+    const r = await runCount(dir, env, ["count"], (run) => {
+      expect(() => run.result({ event: "result", value: 1 }, ref, { value: 2 })).toThrow(TypeError);
+      expect(() => run.result({ event: "result", value: 1 }, ref, { event: "other" })).toThrow(TypeError);
+      expect(() => run.result({ event: "result", value: 1, at: { a: 1, b: [1, 2] } }, ref, { at: { b: [2, 1], a: 1 } })).toThrow(TypeError);
+      // Equal shared values pass, key order aside, and receipt-only fields are still allowed.
+      run.result({ event: "result", value: 3, at: { a: 1, b: [1, 2] } }, ref, { value: 3, at: { b: [1, 2], a: 1 }, rows: ["x"] });
+    });
+    expect(r.violations).toEqual([]);
+    const { receiptLines } = check(dir, r);
+    const results = (lines: Record<string, unknown>[]) => lines.filter((o) => o.event === "result");
+    expect(results(r.stdout.objs).map((o) => o.value)).toEqual([3]);
+    expect(results(receiptLines)).toHaveLength(1);
+    expect(results(receiptLines)[0]).toMatchObject({ value: 3, rows: ["x"] });
+    // A refused call takes no seq: the one counter has no gap.
+    const seqs = receiptLines.map((o) => o.seq as number);
+    expect(seqs).toEqual(seqs.map((_, i) => seqs[0]! + i));
   });
 
   test("envelope keys supplied by the tool are refused", async () => {

@@ -21,7 +21,7 @@
     "sync-schemas": "bun run scripts/sync-schemas.ts"
   },
   "dependencies": {
-    "@flyingrobots/parley-emit": "^0.2.4",
+    "@flyingrobots/parley-emit": "^0.3.0",
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1"
   },

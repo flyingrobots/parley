@@ -43,6 +43,33 @@ derivation, and the README's last section names every place it differs.
     `receipt.inputs` first when inputs are declared, then the status — 2 after a reported error,
     4 after any sink failure, else 0 or what the tool passed to `run.end`.
 
+## Declared file inputs
+
+`run.read_input(path)` is the way a handler reads a declared file input. It reads the file at the
+declared path, resolved against the run's `cwd` when relative, returns the bytes, and records them
+for that input. `receipt.inputs` carries the digest of those bytes, and `inv` is derived from it,
+whatever the file holds when the run ends. The package
+[README](../../../packages/parley-emit-py/README.md#read-a-declared-file-with-runread_input) has a
+captured run of a tool that edits its input in place.
+
+A declared file that was not read through the writer, and whose bytes were not supplied with
+`run.input(path, data)`, is read by the writer when the inputs are finalised: at
+`run.finalise_inputs()`, or at `end` once the handler has finished. The digest recorded is of the
+file as it is then. For a tool that read the file by its own means and then rewrote it, or a file
+something else changed during the run, that digest and `inv` describe bytes the tool did not
+read. The run still exits 0, and the writer gives no warning.
+
+| The handler, for a declared file | What `receipt.inputs` records |
+| --- | --- |
+| calls `run.read_input(path)` | the digest of the bytes returned |
+| calls `run.input(path, data)` | the digest of the bytes supplied |
+| calls `run.input_unreadable(path, code=...)` | `error` with that code, no digest, no `inv` |
+| does none of these | the digest of the file when the inputs are finalised, or `error: input.unreadable` if it cannot be read then |
+
+The last call for a path is the record. `read_input` on a file that cannot be read records the
+input as `input_unreadable` does and raises the `OSError`. It raises `ValueError` for a path that
+is not a declared input, for a `stdin` or `tree` input, and after the inputs are settled.
+
 ## Exit status
 
 | Status | When |

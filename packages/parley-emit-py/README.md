@@ -108,7 +108,7 @@ and `count files --human` printed `2 file(s)` and nothing else, exit 0.
 | --- | --- |
 | `define_tool(name=, version=, commands=, retention=, sources=None, human=None)` | Checks the declaration: a non-empty name and version, at least one command, an intent and the four effects per command, a SemVer version on every emitted and error type, a positive retention count. `commands` maps a name to `{intent, effects, secrets?, emits: [{id, version, schema?}], errors?}` |
 | `main(tool, argv, handler, *, cwd, env, home, stdout, stderr, session, now, inputs, resolved)` | Runs one invocation and returns the exit status. `argv` is `[tool.name, *sys.argv[1:]]`; `handler(run, args)` is called with the arguments that remain once the writer's flags and the command, the first argument, are set aside (see [Arguments and flags](#arguments-and-flags)). Nothing raised inside escapes as a traceback |
-| `Run` | `result(record, schema, receipt_extra=None)`, `page(cursor, has_more, record=None, receipt_extra=None)`, `step(decision, because, detail=...)`, `warning(code, problem, **fields)`, `error(code, problem, receipt_extra=None, **fields)`, `input(path, data)`, `input_unreadable(path, code="input.unreadable")`, `finalise_inputs()`, `end(status=None)`; `id`, `cwd`, `receipt_path`, `receipt_dir`, `dry_run`, `ended`, `status`, `sink_failed`. A schema is `("id", "version")` or `{"id": ..., "version": ...}`; diagnostic fields are `remedy`, `remedy_target`, `measured`, `limit`, `retryable` and `detail` |
+| `Run` | `result(record, schema, receipt_extra=None)`, `page(cursor, has_more, record=None, receipt_extra=None)`, `step(decision, because, detail=...)`, `warning(code, problem, **fields)`, `error(code, problem, receipt_extra=None, **fields)`, `read_input(path)`, `input(path, data)`, `input_unreadable(path, code="input.unreadable")`, `finalise_inputs()`, `end(status=None)`; `id`, `cwd`, `receipt_path`, `receipt_dir`, `dry_run`, `ended`, `status`, `sink_failed`. A schema is `("id", "version")` or `{"id": ..., "version": ...}`; diagnostic fields are `remedy`, `remedy_target`, `measured`, `limit`, `retryable` and `detail` |
 | `check_record(value, schema)`, `validate_line(line, extra=None)`, `schema_subset_gap(schema)` | The bounded JSON Schema checker (below) |
 | `SCHEMAS`, `SCHEMA_SOURCE`, `schema_for(pair)`, `schema_text_digests()` | The embedded schemas and their pins |
 | `compute_inv`, `canonical`, `digest_tree`, `digest_input`, `sha256` | The `inv` derivation and its parts |
@@ -181,12 +181,92 @@ paths in its `exclude` list. The run id, receipt path, session and clock are not
 With no declared inputs, `inv` covers the tool, version, command and `resolved` only and is on the
 bootstrap line; with inputs it arrives in `receipt.inputs` before `end`, and an unreadable input
 (`input.unreadable`, or `input.unread` for a stdin input the handler never supplied with
-`run.input("-", data)`) omits it. When the handler itself fails to read a declared input it calls
+`run.input("-", data)`) omits it. `resolved` is in the preimage, so keep it order-normalised and
+free of volatile values such as the working directory.
+
+## Declared inputs
+
+`main`'s `inputs` callback maps the command's arguments to declared inputs,
+`{"path": ..., "role": ..., "exclude": [...]}`. A relative path is resolved against the run's
+working directory; an absolute path stands. Roles: a file (default), `tree` for a directory,
+`stdin` for bytes the handler supplies with `run.input("-", data)`.
+
+### Read a declared file with `run.read_input`
+
+`run.read_input(path)` reads a declared file, returns its `bytes`, and records the digest of
+exactly those bytes. Reading and recording are one step, so the receipt's digest for that input is
+of what the tool consumed, whatever happens to the file afterwards. **This is the way to read a
+declared file input.** `path` is the declared path, resolved as the declaration is: against the
+run's `cwd` when relative.
+
+A tool that edits a file in place, declared as its input:
+
+```python
+import os
+import sys
+
+import parley_emit as pe
+
+tool = pe.define_tool(
+    name="upcase", version="0.1.0",
+    commands={
+        "file": {
+            "intent": "Rewrite a file in upper case, in place",
+            "effects": {"reads": ["<file>"], "writes": ["<file>"], "network": False, "idempotent": True},
+            "secrets": [],
+            "emits": [],
+        },
+    },
+    retention={"count": 50},
+)
+
+
+def handler(run, args):
+    path = args[0]
+    before = run.read_input(path).decode("utf-8")  # read and recorded in one step
+    with open(os.path.join(run.cwd, path), "w", encoding="utf-8") as f:
+        f.write(before.upper())  # the file no longer holds what was read
+    run.step(f"rewrote {path} in upper case", "the receipt records the bytes read, not the bytes written", {"bytes": len(before)})
+
+
+sys.exit(pe.main(tool, ["upcase", *sys.argv[1:]], handler,
+                 resolved=lambda args, command: {"command": command, "file": args[0]},
+                 inputs=lambda args, command: [{"path": args[0]}]))
+```
+
+Captured from that program run as `upcase file input.txt` on Python 3.9.6 on 2026-11-24, in a
+directory whose `input.txt` held the six bytes `before`. Afterwards the file held `BEFORE`, the
+exit status was 0, and the receipt's `receipt.inputs` line was:
+
+```jsonl
+{"event":"receipt.inputs","t":1795528119808,"seq":3,"run":"01M86X1NFY1HEVS7BT4XE8PKJP","inputs":[{"path":"input.txt","sha256":"6db7d803e74f1ffa7d8f5adc0bf95b3e15bf4c8373fffadf546227cc6c6742cb"}],"inv":"14084fa18df646f47e9511399468cb1d043d792a4f943c46b2a37f233d8fed4e","_schema":{"id":"parley.receipt.inputs","version":"1.0.0"}}
+```
+
+`6db7d803…` is the SHA-256 of `before`, the bytes read. The SHA-256 of `BEFORE`, the bytes left on
+disk, is `c341c7fe…`, and it appears nowhere in the receipt. The `inv` is the one the TypeScript
+writer's README shows for the same program.
+
+**An input not read through the writer is digested when the handler finishes.** A declared file
+the tool opens itself, with `open` or anything else, is read again by the writer at finalisation
+(`run.finalise_inputs()`, or `end`), and the digest recorded is of the file as it is at that
+moment. If the tool rewrote the file, or anything else changed it during the run, the receipt and
+`inv` describe bytes the tool did not read, and the run still exits 0. The writer does not warn
+about this. A tool that already holds the bytes of a declared file can record them with
+`run.input(path, data)` instead; `read_input` is that, with the read included.
+
+When the file cannot be read, `read_input` records the input with `error: input.unreadable`, as
+`run.input_unreadable` does, and raises the `OSError` to the caller. It raises `ValueError` for a
+path that is not a declared input, for a `stdin` input (supply it with `run.input`) or a `tree`
+input (the writer digests a tree itself, at finalisation), and after the inputs are settled. The
+last of `read_input`, `input` and `input_unreadable` for a path is the record.
+
+### Unreadable inputs
+
+When the handler itself fails to read a declared input by its own means, it calls
 `run.input_unreadable(path)`, so the writer records the input as unread instead of opening the
 path at finalisation and digesting bytes the program never saw (spec §2.2,
 flyingrobots/parley#110); it raises `ValueError` for an undeclared path and after the inputs are
-settled. `resolved` is in the preimage, so keep it order-normalised and
-free of volatile values such as the working directory.
+settled.
 
 ## Retention, per tool
 
@@ -252,6 +332,10 @@ Everything the handler passes to `result`, `page`, `step`, `warning` and `error`
 included; the raw and resolved arguments; input paths and digests; captured stray output; the
 traceback of an exception that escaped the handler; and copies of every result, error and warning.
 Declared secrets are replaced before writing; an undeclared secret is not, so declare it.
+
+A `receipt_extra` field the record also carries must hold an equal JSON value: the copies of one
+event agree on every field they share (spec §1.3). A different value raises `ValueError` before
+either copy is written.
 
 ## Testing
 

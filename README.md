@@ -20,9 +20,9 @@ digest names ([#51](https://github.com/flyingrobots/parley/issues/51)).
 > seventeen message schemas are released and immutable ([CHANGELOG.md](CHANGELOG.md),
 > [schemas/](schemas/README.md)); two of them, `parley.query` and `parley.lens`, also have a draft
 > 1.1.0. Two writers implement it: the TypeScript library
-> [`@flyingrobots/parley-emit`](packages/parley-emit/README.md) 0.2.4, which
+> [`@flyingrobots/parley-emit`](packages/parley-emit/README.md) 0.3.0, which
 > also appends to the shared history stream when one is configured, and
-> [`parley_emit.py`](packages/parley-emit-py/README.md) 0.1.2, one vendorable Python file pinned
+> [`parley_emit.py`](packages/parley-emit-py/README.md) 0.2.0, one vendorable Python file pinned
 > by its SHA-256. The reader library, [`@flyingrobots/parley-read`](packages/parley-read/README.md)
 > 0.2.0 (0.1.1 is the latest release), loads a repository's receipt bundles and answers recorded
 > reads. Both libraries are on npm
@@ -62,15 +62,22 @@ The moment you want a receipt is *after* something went wrong, which is exactly 
 stream is gone. A receipt on disk can be read by a session that did not run the command, tomorrow,
 by a different agent. Streams are only available to whoever knew in advance to capture them.
 
-## Reading is an act (planned)
+## Reading is an act
 
-The stream exists; reading it this way does not
-([#2](https://github.com/flyingrobots/parley/issues/2)). Spec §8 and §9 stay informative in v0.2:
-§8's rules now have an implementation and tests behind them, and promoting them is a spec
-version's decision, not a library's. A query
-against history declares **who is asking and why**, and the answer is shaped by that.
+A query against history declares **who is asking and why**, and the answer is shaped by that.
 There is no view-from-nowhere: purpose is what makes relevance computable, and a reading carries
 the lens it came through so a later reader knows what it was.
+
+This is implemented in [`@flyingrobots/parley-read`](packages/parley-read/README.md): a query
+entry point, five preset views that order a result by purpose, a bounded digest that states its
+lens and what it excluded, and a drill-down that opens the records a digest names. Purpose selects
+a preset view; the asker's identity and free-text notes are recorded and do not change the ranking.
+A [cold resume on real history](docs/topics/reader/cold-resume.md) records what an agent with no
+other context reconstructed from fifty real receipts, checked against `git log`, and what it
+missed.
+
+What is not settled is the protocol text. Spec §8 and §9 stay informative in v0.2: the mechanisms
+exist and are tested, and making them normative is a spec version's decision, not a library's.
 
 ## Where this sits
 

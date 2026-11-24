@@ -74,7 +74,7 @@ conforming (`bun run doctor --stdout ... --stderr ... --receipt ...`).
 | --- | --- |
 | §3.1 | Creates the receipt before announcing it; the bootstrap line is the first line on any stream, `seq: 0`, stdout only, before the handler runs |
 | §5, §5.2 | `.parley/receipts/<run>.jsonl` under the initial working directory, after `.parley/.gitignore` holds a line `*` (created if absent, linked into place whole, never overwritten). The receipt goes to `$XDG_STATE_HOME/parley/<repo-hash>/receipts/` instead, with a `receipt.relocated` warning, when the ignore file is a user's (without `*`, or with a negation that can re-include `receipts/`, such as `!receipts/` or `!*/`; a negation the writer cannot evaluate counts as one) or when the working-directory path would carry a declared secret value; an unwritable working directory falls back the same way, silently (the bootstrap line says where). No writable location is `startup.receipt_unwritable`; a state path that would also carry the secret is `startup.secret_in_path`; both exit 3 |
-| §1.3 | One counter for the run; copies of one event share `seq`, `t` and `event`; a receipt copy may carry more (`receiptExtra`) |
+| §1.3 | One counter for the run; copies of one event share `seq`, `t` and `event`; a receipt copy may carry more (`receiptExtra`). A `receiptExtra` field the record also carries must hold an equal JSON value, or the call throws `TypeError` before either copy is written and before a `seq` is taken; an equal shared field is written from the record (flyingrobots/parley#130) |
 | §2.2 | `inv` over tool, version, command, the redacted resolved interpretation and the bytes of every declared input (see below); on the bootstrap line and head when no inputs are declared, else in `receipt.inputs` before `end`; omitted when any input is unreadable. With no declared inputs it identifies the question only, not the state of the world |
 | §5.3 | Scrub widely, resolve narrowly (flyingrobots/parley#93): only the running command's credential sources are resolved and listed in `redacted.sources`, and another command's never are, while the declared flags and variables of every command, whichever command runs, are scrubbed and those present are named in `redacted.env`. Their values are replaced with `[redacted]` in `argv`, `resolved`, `inputs` and the payload of every later record, `end` included, before any copy leaves the process. Replacement is within strings, longest secret first; a number, boolean or bigint whose decimal form is a secret becomes `[redacted]` (a PIN parsed to a number is still the PIN); an object key carrying a secret is renamed. The head's `redacted` records where; a later surfacing is recorded by a `redaction` event; `end.redacted` aggregates. The envelope, the writer's digests and the public identity a writer-built record carries (the tool's name and version, a command's name, a schema's id and version, discovery lines included, and the `code` of a diagnostic the writer itself raises, whose corruption would put an invalid line on the stream; a tool's own diagnostic is not writer-built and its `code` is scrubbed like anything else) are never scrubbed, and a writer-built scalar (`status`, `dry_run`, `network`) is never a secret. The schema document a `schema` line publishes is the tool's static declaration and is published as declared (flyingrobots/parley#111); every other discovery field is scrubbed: a run id or receipt path that would carry a secret is never chosen; a session that carries one is `startup.secret_in_identity`, exit 3; the tool's own name and version are public and printed as they are |
 | §5 | A receipt record over 65,536 bytes becomes a sidecar `<run>/<seq>.json` with a `sidecar` event in its place; if the sidecar cannot be written the record is kept inline, so the bundle stays complete, and the failure is a `sink.sidecar_failed` error with status 4 |
@@ -152,13 +152,84 @@ which is why a redacted receipt is never replayed (spec §2.3).
 `{ path, role?, exclude? }`; it may be async. A relative path is resolved against the initial
 working directory; an absolute path stands, and enters the `inv` preimage as given, so prefer
 relative paths and never a temporary one. Roles: a file (default), `tree` for a directory,
-`stdin` for bytes the handler supplies with `run.input("-", bytes)`. An input the writer cannot
-read is recorded with `error: input.unreadable`; a stdin input never supplied is `input.unread`.
-Either omits `inv`. When the handler itself fails to read a declared input, it calls
-`run.inputUnreadable(path)` (optionally with its own code), so the writer records the input as
-unread instead of reading the path at finalisation and digesting bytes the program never saw
-(spec §2.2, flyingrobots/parley#110). It throws for a path that is not a declared input, and
-after the inputs are settled.
+`stdin` for bytes the handler supplies with `run.input("-", bytes)`.
+
+### Read a declared file with `run.readInput`
+
+`run.readInput(path)` reads a declared file, returns its bytes as a `Buffer`, and records the
+digest of exactly those bytes. Reading and recording are one step, so the receipt's digest for
+that input is of what the tool consumed, whatever happens to the file afterwards. **This is the
+way to read a declared file input.** `path` is the declared path, resolved as the declaration is:
+against the run's `cwd` when relative.
+
+A tool that edits a file in place, declared as its input:
+
+```ts
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { defineTool, main } from "@flyingrobots/parley-emit";
+
+const tool = defineTool({
+  name: "upcase", version: "0.1.0",
+  commands: {
+    file: {
+      intent: "Rewrite a file in upper case, in place",
+      effects: { reads: ["<file>"], writes: ["<file>"], network: false, idempotent: true },
+      secrets: [],
+      emits: [],
+    },
+  },
+  retention: { count: 50 },
+});
+
+const status = await main(tool, ["upcase", ...process.argv.slice(2)], (run, args) => {
+  const path = args[0]!;
+  const before = run.readInput(path).toString("utf8"); // read and recorded in one step
+  writeFileSync(join(run.cwd, path), before.toUpperCase()); // the file no longer holds what was read
+  run.step(`rewrote ${path} in upper case`, "the receipt records the bytes read, not the bytes written", { bytes: before.length });
+}, {
+  resolved: (args, command) => ({ command, file: args[0] }),
+  inputs: (args) => [{ path: args[0]! }],
+});
+process.exit(status);
+```
+
+Captured from that program run as `upcase file input.txt` on 2026-11-24, in a directory whose
+`input.txt` held the six bytes `before`. Afterwards the file held `BEFORE`, the exit status was 0,
+and the receipt's `receipt.inputs` line was:
+
+```jsonl
+{"event":"receipt.inputs","t":1795528119743,"seq":3,"run":"01M86X1NDVF3YERXCQC6RS4TZZ","inputs":[{"path":"input.txt","sha256":"6db7d803e74f1ffa7d8f5adc0bf95b3e15bf4c8373fffadf546227cc6c6742cb"}],"inv":"14084fa18df646f47e9511399468cb1d043d792a4f943c46b2a37f233d8fed4e","_schema":{"id":"parley.receipt.inputs","version":"1.0.0"}}
+```
+
+`6db7d803…` is the SHA-256 of `before`, the bytes read. The SHA-256 of `BEFORE`, the bytes left on
+disk, is `c341c7fe…`, and it appears nowhere in the receipt.
+
+**An input not read through the writer is digested when the handler finishes.** A declared file
+the tool opens itself, with `readFileSync` or anything else, is read again by the writer at
+finalisation (`run.finaliseInputs()`, or `end`), and the digest recorded is of the file as it is
+at that moment. If the tool rewrote the file, or anything else changed it during the run, the
+receipt and `inv` describe bytes the tool did not read, and the run still exits 0. The writer does
+not warn about this. A tool that already holds the bytes of a declared file can record them with
+`run.input(path, bytes)` instead; `readInput` is that, with the read included.
+
+When the file cannot be read, `readInput` records the input with `error: input.unreadable`, as
+`run.inputUnreadable` does, and throws the file system's error to the caller. It throws
+`TypeError` for a path that is not a declared input, for a `stdin` input (supply it with
+`run.input`) or a `tree` input (the writer digests a tree itself, at finalisation), and after the
+inputs are settled. The last of `readInput`, `input` and `inputUnreadable` for a path is the
+record.
+
+### Unreadable inputs
+
+An input the writer cannot read is recorded with `error: input.unreadable`; a stdin input never
+supplied is `input.unread`. Either omits `inv`. When the handler itself fails to read a declared
+input by its own means, it calls `run.inputUnreadable(path)` (optionally with its own code), so
+the writer records the input as unread instead of reading the path at finalisation and digesting
+bytes the program never saw (spec §2.2, flyingrobots/parley#110). It throws for a path that is
+not a declared input, and after the inputs are settled.
+
+### Trees
 
 A `tree` must not contain a credential source (spec §2.2: its bytes must not reach `inv` through
 a directory digest). Name such files in `exclude`, as relative paths under the tree; if you cannot

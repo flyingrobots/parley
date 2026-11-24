@@ -60,9 +60,18 @@ this repository until the root `CHANGELOG.md` releases them; it still reads 1.0.
   still loads `validated` rather than `partial` (RD-110h). The keys of `SCHEMA_SOURCE.files` for
   those two are `released/<id>/1.0.0.schema.json`.
 - A read declares the schema documents of the types it emits itself, instead of leaving the
-  writer to find them in its own copy: `@flyingrobots/parley-emit` `^0.2.4` on npm ships 1.0.0 of
+  writer to find them in its own copy: `@flyingrobots/parley-emit` 0.3.0 ships 1.0.0 of
   both messages and no 1.1.0.
 - A read's own receipt records `v` `0.2.0`.
+
+## [0.1.2] — 2026-11-24
+
+No change to behaviour or to the schemas it ships. A read's own receipt records `v` `0.1.2`.
+
+### Changed
+
+- The dependency on `@flyingrobots/parley-emit` is `^0.3.0`, up from `^0.2.4`, so the range admits
+  the version in the repository (flyingrobots/parley#132).
 
 ## [0.1.1] — 2026-11-24
 

@@ -12,7 +12,7 @@ and the first publish.
    §4.5); the shipped schemas are the top-level files in `schemas/` at the commit pinned in
    `src/schemas.ts`, so run `bun run sync-schemas` there first if they moved.
 2. Set `version` in `packages/parley-read/package.json` to the same number. Its dependency on
-   `@flyingrobots/parley-emit` is a caret range (`^0.2.4` for 0.1.1), never `workspace:*`: npm
+   `@flyingrobots/parley-emit` is a caret range (`^0.3.0` for 0.1.2), never `workspace:*`: npm
    publishes a `workspace:` range verbatim, and no installer outside this repository can resolve
    it. The range must admit the version of `packages/parley-emit` in the repository, so the
    workspace still links the local copy; `scripts/release.test.ts` checks both.

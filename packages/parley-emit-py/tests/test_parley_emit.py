@@ -323,6 +323,132 @@ class TestInv(unittest.TestCase):
         self.assertEqual(refused, ["undeclared", "settled"])
         assert_valid(self, o)
 
+    @staticmethod
+    def inputs_of(o):
+        return next(x for x in o.receipt_lines if x["event"] == "receipt.inputs")
+
+    @staticmethod
+    def put(path, text):
+        with open(path, "w") as f:
+            f.write(text)
+
+    def test_an_input_read_through_read_input_then_rewritten_is_recorded_as_the_bytes_read(self):
+        # PY-15h (flyingrobots/parley#132): an in-place editor. The receipt says what the answer
+        # was computed from, which is the bytes the tool read, not the bytes it left behind.
+        d, _, env = scratch()
+        p = os.path.join(d, "input.txt")
+        self.put(p, "before")
+        read = []
+
+        def body(run):
+            read.append(run.read_input("input.txt"))
+            self.put(os.path.join(run.cwd, "input.txt"), "after")
+            run.result({"event": "result", "value": len(read[0])}, T_COUNT)
+
+        o = run_count(d, env, ["count"], body, inputs=[{"path": "input.txt"}])
+        self.assertEqual(read, [b"before"])
+        with open(p) as f:
+            self.assertEqual(f.read(), "after")
+        self.assertEqual(self.inputs_of(o)["inputs"], [{"path": "input.txt", "sha256": hashlib.sha256(b"before").hexdigest()}])
+        # The same question as a run that read the same bytes and left the file alone.
+        self.put(p, "before")
+        untouched = run_count(d, env, ["count"], lambda run: run.read_input("input.txt"), inputs=[{"path": "input.txt"}])
+        self.assertRegex(self.inv_of(o), r"^[0-9a-f]{64}$")
+        self.assertEqual(self.inv_of(o), self.inv_of(untouched))
+        self.assertEqual(o.status, 0)
+        assert_valid(self, o)
+
+    def test_a_declared_file_never_read_through_the_writer_is_digested_when_the_handler_finishes(self):
+        # PY-15i (flyingrobots/parley#132): the default path, kept. The tool reads the file itself
+        # and rewrites it; the writer digests what is on disk at finalisation, bytes the tool
+        # never read.
+        d, _, env = scratch()
+        self.put(os.path.join(d, "input.txt"), "before")
+
+        def body(run):
+            with open(os.path.join(run.cwd, "input.txt")) as f:
+                read = f.read()
+            self.put(os.path.join(run.cwd, "input.txt"), "after")
+            run.result({"event": "result", "value": len(read)}, T_COUNT)
+
+        o = run_count(d, env, ["count"], body, inputs=[{"path": "input.txt"}])
+        self.assertEqual(self.inputs_of(o)["inputs"], [{"path": "input.txt", "sha256": hashlib.sha256(b"after").hexdigest()}])
+        assert_valid(self, o)
+
+    def test_read_input_on_a_file_that_cannot_be_read_raises_and_records_the_input_unread(self):
+        # PY-15j (flyingrobots/parley#132): the same record input_unreadable leaves, and the error
+        # reaches the caller. The file appearing later does not change the record.
+        d, _, env = scratch()
+        caught = []
+
+        def body(run):
+            try:
+                run.read_input("input.txt")
+            except OSError as e:
+                caught.append(e)
+            self.put(os.path.join(run.cwd, "input.txt"), "late")
+            run.error("input.missing", "could not read input.txt")
+
+        o = run_count(d, env, ["count"], body, inputs=[{"path": "input.txt"}])
+        self.assertEqual([type(e) for e in caught], [FileNotFoundError])
+        self.assertEqual(self.inputs_of(o)["inputs"], [{"path": "input.txt", "error": "input.unreadable"}])
+        self.assertFalse(any("inv" in x for x in o.stdout.objs + o.receipt_lines))
+        self.assertEqual(o.status, 2)
+        assert_valid(self, o)
+
+    def test_read_input_resolves_like_a_declared_input_and_refuses_what_it_cannot_record(self):
+        # PY-15k (flyingrobots/parley#132).
+        d, _, env = scratch()
+        elsewhere = tempfile.mkdtemp(prefix="parley-py-abs-")
+        absolute = os.path.join(elsewhere, "abs.txt")
+        self.put(os.path.join(d, "rel.txt"), "relative")
+        self.put(absolute, "absolute")
+        os.mkdir(os.path.join(d, "src"))
+        self.put(os.path.join(d, "src", "a.txt"), "one")
+        refused = []
+
+        def attempt(what, f):
+            try:
+                f()
+            except ValueError:
+                refused.append(what)
+
+        def body(run):
+            self.assertEqual(run.read_input("rel.txt"), b"relative")
+            self.assertEqual(run.read_input(absolute), b"absolute")
+            attempt("undeclared", lambda: run.read_input("typo.txt"))
+            attempt("stdin", lambda: run.read_input("-"))
+            attempt("tree", lambda: run.read_input("src"))
+            # A later read replaces the earlier record; so does a later run.input or
+            # run.input_unreadable.
+            self.put(os.path.join(run.cwd, "twice.txt"), "first")
+            run.read_input("twice.txt")
+            self.put(os.path.join(run.cwd, "twice.txt"), "second")
+            run.read_input("twice.txt")
+            self.put(os.path.join(run.cwd, "supplied.txt"), "on disk")
+            run.read_input("supplied.txt")
+            run.input("supplied.txt", "supplied later")
+            self.put(os.path.join(run.cwd, "retracted.txt"), "on disk")
+            run.read_input("retracted.txt")
+            run.input_unreadable("retracted.txt", "input.retracted")
+            run.finalise_inputs()
+            attempt("settled", lambda: run.read_input("rel.txt"))
+
+        decl = [{"path": "rel.txt"}, {"path": absolute}, {"path": "-", "role": "stdin"}, {"path": "src", "role": "tree"},
+                {"path": "twice.txt"}, {"path": "supplied.txt"}, {"path": "retracted.txt"}]
+        o = run_count(d, env, ["count"], body, inputs=decl)
+        self.assertEqual(o.status, 0)
+        self.assertEqual(refused, ["undeclared", "stdin", "tree", "settled"])
+        got = {i["path"]: i.get("sha256", i.get("error")) for i in self.inputs_of(o)["inputs"]}
+        self.assertEqual(got["rel.txt"], hashlib.sha256(b"relative").hexdigest())
+        self.assertEqual(got[absolute], hashlib.sha256(b"absolute").hexdigest())
+        self.assertEqual(got["-"], "input.unread")
+        self.assertEqual(got["twice.txt"], hashlib.sha256(b"second").hexdigest())
+        self.assertEqual(got["supplied.txt"], hashlib.sha256(b"supplied later").hexdigest())
+        self.assertEqual(got["retracted.txt"], "input.retracted")
+        self.assertIsNone(self.inv_of(o))
+        assert_valid(self, o)
+
 
 class TestRedaction(unittest.TestCase):
     def test_declared_secrets_in_the_head(self):

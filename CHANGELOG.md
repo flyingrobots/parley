@@ -21,6 +21,12 @@ the entry under it names each schema version it releases, and those are separate
 
 ### Changed
 
+- `@flyingrobots/parley-emit` 0.3.0 and `parley_emit.py` 0.2.0 add `run.readInput` and
+  `run.read_input`: a tool reads a declared file input through the run, and the receipt records
+  the digest of the bytes it read, not of the file as the handler left it
+  (flyingrobots/parley#132). A declared file not read that way is still digested when the handler
+  finishes, and the writers' references now say so. `@flyingrobots/parley-read` 0.1.2 moves its
+  range to parley-emit `^0.3.0`. No schema or spec text changes.
 - `@flyingrobots/parley-read` 0.1.1 depends on parley-emit `^0.2.4`, the first 0.2 version on npm,
   and is the first parley-read version staged by its workflow.
 - Both release workflows stage a version on npm (`npm stage publish`) for the owner to approve, in

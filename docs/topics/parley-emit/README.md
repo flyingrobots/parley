@@ -12,7 +12,7 @@ it. This page is the reference for what the package does on `main`; the package
 | --- | --- |
 | `defineTool(spec)` | Checks a tool's declaration for the things the writer needs: a non-empty name and version, at least one command, an intent per command, a SemVer version on every emitted type, and a positive retention count. Effects, secrets, error types, source resolvers and the `--human` renderer are carried as declared |
 | `main(spec, argv, handler, options)` | Parses the writer-owned flags (`--human`, `--humanize`, `--dry-run`, `--schema`, `--help`, `-h`) before the first `--`, which ends them (flyingrobots/parley#103), chooses the receipt location, opens the shared history stream when one is configured, resolves declared sources, redacts, bootstraps, writes the head, enforces retention, runs the handler under the top-level handler, closes with `end`, returns the exit status |
-| `Run` | `result`, `page`, `step`, `warning`, `error`, `input`, `inputUnreadable`, `finaliseInputs`, `end`; `receiptPath`, `cwd`, `dryRun`, `ended`, `status` |
+| `Run` | `result`, `page`, `step`, `warning`, `error`, `readInput`, `input`, `inputUnreadable`, `finaliseInputs`, `end`; `receiptPath`, `cwd`, `dryRun`, `ended`, `status` |
 | `SCHEMAS`, `SCHEMA_SOURCE` | The seventeen schemas the package ships, the released versions of spec `0.2.0`'s release, with the commit and digest of each |
 | `computeInv`, `canonical`, `digestTree`, `sha256` | The documented `inv` derivation and its parts |
 | `chooseLocation`, `repoRoot`, `stateBase`, `bookkeepingFor` | Receipt placement and the bookkeeping a run declares |
@@ -75,6 +75,34 @@ it. This page is the reference for what the package does on `main`; the package
    booleans whose decimal form is a secret, and in object keys; the envelope never is. The default
    descriptor sinks retry a full pipe and continue a partial write; a sidecar that cannot be
    written is kept inline.
+
+## Declared file inputs
+
+`run.readInput(path)` is the way a handler reads a declared file input. It reads the file at the
+declared path, resolved against the run's `cwd` when relative, returns the bytes, and records
+their SHA-256 at that moment. `receipt.inputs` carries that digest for the input, and `inv` is
+derived from it, whatever the file holds when the run ends. The package
+[README](../../../packages/parley-emit/README.md#read-a-declared-file-with-runreadinput) has a
+captured run of a tool that edits its input in place.
+
+A declared file that was not read through the writer, and whose bytes were not supplied with
+`run.input(path, bytes)`, is read by the writer when the inputs are finalised: at
+`run.finaliseInputs()`, or at `end` once the handler has finished. The digest recorded is of the
+file as it is then. For a tool that read the file by its own means and then rewrote it, or a file
+something else changed during the run, that digest and `inv` describe bytes the tool did not
+read. The run still exits 0, and the writer gives no warning.
+
+| The handler, for a declared file | What `receipt.inputs` records |
+| --- | --- |
+| calls `run.readInput(path)` | the digest of the bytes returned |
+| calls `run.input(path, bytes)` | the digest of the bytes supplied |
+| calls `run.inputUnreadable(path, code?)` | `error` with that code, no digest, no `inv` |
+| does none of these | the digest of the file when the inputs are finalised, or `error: input.unreadable` if it cannot be read then |
+
+The last call for a path is the record. `readInput` on a file that cannot be read records the
+input as `inputUnreadable` does and throws the file system's error. It throws `TypeError` for a
+path that is not a declared input, for a `stdin` or `tree` input, and after the inputs are
+settled.
 
 ## The shared history stream
 

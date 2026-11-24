@@ -5,8 +5,35 @@ on its own; the spec and each message schema move separately (spec §4.4).
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-11-24
+
+A declared file input can be read through the run, so the receipt records the bytes the tool read
+(flyingrobots/parley#132), and a `receiptExtra` field can no longer contradict the record
+(flyingrobots/parley#130). No change to the spec or to the schemas the package ships.
+
+### Added
+
+- **`run.readInput(path)`**. It reads a declared file input, returns the bytes as a `Buffer`, and
+  records the SHA-256 of exactly those bytes, taken at the read. `receipt.inputs` and `inv` then
+  describe what the tool consumed, whatever the file holds when the run ends. The path is resolved
+  as the declaration is, against the run's `cwd` when relative. A file that cannot be read is
+  recorded as `run.inputUnreadable` records it, and the file system's error is thrown. It throws
+  `TypeError` for a path that is not a declared input, for a `stdin` or `tree` input, and after
+  the inputs are settled.
+
+### Changed
+
+- The README and the living reference present `run.readInput` as the way to read a declared file
+  input, with a captured run of a tool that edits its input in place.
+
 ### Fixed
 
+- A tool that reads a declared file and then rewrites it had no single step that recorded the
+  bytes it read: the writer digested the file when the handler finished, so the receipt and `inv`
+  described the rewritten file. `run.readInput` is that step. **The default path is unchanged**: a
+  declared file the tool does not read through the writer, and does not supply with `run.input`,
+  is still digested when the inputs are finalised, and can describe bytes the tool did not read.
+  The documentation now says so. A tool gets the fix by calling `run.readInput`.
 - **A `receiptExtra` field can no longer contradict the record** (flyingrobots/parley#130).
   `run.result({ value: 1 }, schema, { value: 2 })` used to put `1` on stdout and `2` in the
   receipt under one `seq`, against spec §1.3 (copies agree on every field they share). The call now

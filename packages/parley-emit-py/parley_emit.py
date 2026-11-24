@@ -28,7 +28,7 @@ import time
 import traceback
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple, Union
 
-__version__ = "0.1.2"
+__version__ = "0.2.0"
 SPEC_VERSION = "0.2.0"
 
 REDACTED = "[redacted]"
@@ -1264,9 +1264,43 @@ class Run:
         return self._emit({"stderr": True, "receipt": True}, {"event": "error", **d}, SCHEMA_IDS["error"], receipt_extra)
 
     def input(self, path: str, data: Union[bytes, str]) -> None:
-        """Supply the bytes of a declared input the writer cannot read itself, such as stdin."""
+        """Supply the bytes of a declared input the writer cannot read itself, such as stdin. For a
+        declared file, `read_input` reads and records in one step."""
         self._supplied[path] = data.encode("utf-8") if isinstance(data, str) else bytes(data)
         self._unread.pop(path, None)
+
+    def read_input(self, path: str) -> bytes:
+        """Read a declared file input and record it: the bytes returned are the bytes whose digest
+        the receipt carries for that input, whatever happens to the file afterwards (spec section
+        2.2, flyingrobots/parley#132). This is the way to read a declared file. A file the program
+        reads by other means is digested when the handler finishes, and that digest describes the
+        file as it is then, which a tool that edits in place has already changed.
+
+        `path` is the declared path, resolved as a declared input is: against the run's `cwd` when
+        relative. When the file cannot be read, the input is recorded as `input_unreadable` records
+        it and the `OSError` is raised. Raises `ValueError` for a path that is not a declared
+        input, for a `stdin` input (supply it with `input`) or a `tree` input, and once the inputs
+        are settled. A later `read_input`, `input` or `input_unreadable` for the same path replaces
+        the record."""
+        with self._lock:
+            if self._closed:
+                raise ParleyClosed()
+            if self._inputs_settled:
+                raise ValueError("the inputs are already settled; call read_input before finalise_inputs or end (spec section 2.2)")
+            decl = next((i for i in self._inputs if i["path"] == path), None)
+            if decl is None:
+                raise ValueError(f"{path!r} is not a declared input of this run")
+            if decl.get("role") in ("stdin", "tree"):
+                raise ValueError(f"{path!r} is a {decl['role']} input; read_input reads a declared file")
+            try:
+                with open(os.path.join(self.cwd, path), "rb") as f:
+                    data = f.read()
+            except OSError:
+                self.input_unreadable(path)
+                raise
+            self._supplied[path] = data
+            self._unread.pop(path, None)
+            return data
 
     def input_unreadable(self, path: str, code: str = "input.unreadable") -> None:
         """Say that the program could not read a declared input, so the writer records it with

@@ -5,6 +5,15 @@ on its own; the spec and each message schema move separately (spec §4.4).
 
 ## [Unreleased]
 
+## [0.1.2] — 2026-11-24
+
+No change to behaviour or to the schemas it ships. A read's own receipt records `v` `0.1.2`.
+
+### Changed
+
+- The dependency on `@flyingrobots/parley-emit` is `^0.3.0`, up from `^0.2.4`, so the range admits
+  the version in the repository (flyingrobots/parley#132).
+
 ## [0.1.1] — 2026-11-24
 
 No change to behaviour or to the schemas it ships. A read's own receipt records `v` `0.1.1`.

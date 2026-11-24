@@ -11,7 +11,8 @@
 // source; `candidate` judges a release pull request, admitting the snapshots and the dated heading
 // it adds; `publication` requires them at the baseline. The baseline is a git ref the candidate did
 // not choose (`--base`, default the merge base with origin/main): released snapshots are compared
-// with it, never only with the tree under test.
+// with it, never only with the tree under test. On the default branch that merge base is HEAD, so
+// `--frozen-since` names a second, earlier ref for the same comparison (flyingrobots/parley#153).
 //
 // This is repository tooling (see AGENTS.md): JSON Lines stamped `parley.tooling.release_check`,
 // schema beside the script, no run identity and no claim to the protocol. `--human` prints prose.
@@ -23,7 +24,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } 
 import { tmpdir } from "node:os";
 import { basename, join, relative, resolve } from "node:path";
 
-export const OUTPUT_SCHEMA = { id: "parley.tooling.release_check", version: "1.0.0" } as const;
+export const OUTPUT_SCHEMA = { id: "parley.tooling.release_check", version: "1.1.0" } as const;
 
 export type Phase = "development" | "candidate" | "publication";
 export const PHASES: readonly Phase[] = ["development", "candidate", "publication"];
@@ -31,17 +32,24 @@ export const PHASES: readonly Phase[] = ["development", "candidate", "publicatio
 export type Code =
   | "artifact.unreadable" | "inventory.unreadable" | "inventory.empty" | "inventory.declared_not_bundled"
   | "copy.stale" | "toplevel.differs"
-  | "schema.unreleased" | "release.heading_missing" | "release.not_accepted" | "definition.differs"
+  | "schema.unreleased" | "release.heading_missing" | "release.heading_backdated" | "release.not_accepted" | "definition.differs"
   | "snapshot.modified" | "snapshot.deleted" | "snapshot.mismatched" | "baseline.unresolved"
+  | "frozen_since.unresolved" | "frozen_since.not_ancestor"
   | "pin.malformed" | "pin.commit_missing" | "pin.unreachable" | "pin.content_differs" | "pin.bundle_differs";
 
 /** What `development` refuses: an inconsistent source. Everything else it reports as a blocker. */
 const INCONSISTENT: ReadonlySet<Code> = new Set<Code>([
   "artifact.unreadable", "inventory.unreadable", "inventory.empty", "inventory.declared_not_bundled",
   "copy.stale", "toplevel.differs", "snapshot.modified", "snapshot.deleted", "snapshot.mismatched", "pin.malformed",
+  // A reference the caller named and the check cannot use is never passed over, whatever the phase.
+  "frozen_since.unresolved", "frozen_since.not_ancestor",
 ]);
 
-export interface Baseline { event: "release.baseline"; phase: Phase; base: string; commit: string | null; resolved: boolean; snapshots: number }
+export interface Baseline {
+  event: "release.baseline"; phase: Phase; base: string; commit: string | null; resolved: boolean; snapshots: number;
+  /** The frozen-since reference as it was asked for, the commit it names and the snapshots there; null when none was given, or when it names no commit. */
+  frozen_since: string | null; frozen_since_commit: string | null; frozen_since_snapshots: number | null;
+}
 export interface Refusal { event: "release.refusal"; phase: Phase; package: string | null; code: Code; problem: string; id?: string; version?: string; path?: string }
 export interface PackageLine {
   event: "release.package"; phase: Phase; package: string; version: string | null; source: "tree" | "artifact"; path: string;
@@ -70,6 +78,12 @@ export interface Options {
   repo?: string;
   /** The trusted baseline, a git ref. Default: the merge base of HEAD and origin/main. */
   base?: string;
+  /**
+   * A second reference, independent of `base`: every snapshot at it must be byte-identical here.
+   * On the default branch the baseline is HEAD, so this is what compares a release with an earlier
+   * commit (flyingrobots/parley#153). It must name an ancestor of HEAD.
+   */
+  frozenSince?: string;
   /** Packed artifacts to inspect in place of the source tree: npm tarballs and vendorable `.py` files. */
   artifacts?: string[];
 }
@@ -81,11 +95,21 @@ export class CheckError extends Error {
 
 // ---- shared with scripts/schemas.test.ts: what the changelog and the snapshot tree say ----------
 
-/** The `## [Unreleased]` entry, and every dated release entry joined, of a root `CHANGELOG.md`. */
-export function changelogEntries(changelog: string): { unreleased: string; dated: string } {
+export interface Entries {
+  unreleased: string;
+  /** Every dated release entry, joined. */
+  dated: string;
+  /** The dated release entries one by one. `version` is what identifies a heading: its date and its text can be edited. */
+  releases: { version: string; date: string; entry: string }[];
+}
+/** The `## [Unreleased]` entry and the dated release entries of a root `CHANGELOG.md`. */
+export function changelogEntries(changelog: string): Entries {
   const unreleased = /^## \[Unreleased\]\n([\s\S]*?)(?=^## \[|(?![\s\S]))/m.exec(changelog)?.[1] ?? "";
-  const dated = changelog.split(/^(?=## \[)/m).filter((e) => /^## \[\d+\.\d+\.\d+\] — \d{4}-\d{2}-\d{2}/.test(e)).join("\n");
-  return { unreleased, dated };
+  const releases = changelog.split(/^(?=## \[)/m).flatMap((entry) => {
+    const m = /^## \[(\d+\.\d+\.\d+)\] — (\d{4}-\d{2}-\d{2})/.exec(entry);
+    return m ? [{ version: m[1] ?? "", date: m[2] ?? "", entry }] : [];
+  });
+  return { unreleased, dated: releases.map((r) => r.entry).join("\n"), releases };
 }
 /** Whether a changelog entry names a schema version, in the form every entry uses: `` `id` version ``. */
 export function names(entry: string, id: string, version: string): boolean {
@@ -142,11 +166,11 @@ class Git {
 }
 
 /** One state of the repository: the working tree, or a commit. */
-interface State { changelog(): { unreleased: string; dated: string }; snapshot(id: string, version: string): Buffer | null; snapshots(): string[]; read(path: string): Buffer | null }
+interface State { changelog(): Entries; snapshot(id: string, version: string): Buffer | null; snapshots(): string[]; read(path: string): Buffer | null }
 
 function workingTree(repo: string): State {
   const read = (path: string) => { try { return readFileSync(join(repo, path)); } catch { return null; } };
-  let entries: { unreleased: string; dated: string } | undefined;
+  let entries: Entries | undefined;
   return {
     read,
     changelog: () => (entries ??= changelogEntries(read("CHANGELOG.md")?.toString("utf8") ?? "")),
@@ -160,7 +184,7 @@ function workingTree(repo: string): State {
   };
 }
 function atCommit(git: Git, commit: string): State {
-  let entries: { unreleased: string; dated: string } | undefined;
+  let entries: Entries | undefined;
   let paths: string[] | undefined;
   return {
     read: (path) => git.show(commit, path),
@@ -300,7 +324,9 @@ function readArtifact(path: string): Inventory {
 // ---- the rules --------------------------------------------------------------------------------
 
 interface Finding { code: Code; problem: string; id?: string; version?: string; path?: string }
-interface World { git: Git; head: string | null; tree: State; base: State | null; baseCommit: string | null; treeIndex: Map<string, { path: string; value: unknown }> }
+/** The frozen-since reference: as asked for, the commit it names, and the repository there when it is usable. */
+interface Frozen { label: string; commit: string | null; state: State | null }
+interface World { git: Git; head: string | null; tree: State; base: State | null; baseCommit: string | null; frozen: Frozen | null; treeIndex: Map<string, { path: string; value: unknown }> }
 
 /** Every schema the working tree holds, by pair: the top-level file where there is one, else the snapshot. */
 function indexTree(repo: string, tree: State): World["treeIndex"] {
@@ -318,11 +344,25 @@ function indexTree(repo: string, tree: State): World["treeIndex"] {
 function repositoryFindings(w: World, repo: string, baseLabel: string): Finding[] {
   const out: Finding[] = [];
   if (!w.base) out.push({ code: "baseline.unresolved", problem: `the baseline ${baseLabel} names no commit in this repository, so released snapshots cannot be compared with anything the candidate did not choose` });
-  for (const path of w.base?.snapshots() ?? []) {
-    const was = w.base?.read(path), now = w.tree.read(path);
-    if (!was) continue;
-    if (!now) out.push({ code: "snapshot.deleted", path, problem: `${path} is a released snapshot at the baseline and is gone; a released version is immutable (spec §4.5)` });
-    else if (!was.equals(now)) out.push({ code: "snapshot.modified", path, problem: `${path} is a released snapshot whose bytes differ from the baseline's; a released version is immutable, so a change needs a new version (spec §4.5)` });
+  // Two references the candidate did not choose, compared the same way and reported once per path.
+  const told = new Set<string>();
+  const compare = (then: State | null, at: string, whose: string) => {
+    for (const path of then?.snapshots() ?? []) {
+      const was = then?.read(path), now = w.tree.read(path);
+      if (!was) continue;
+      const code: Code | null = !now ? "snapshot.deleted" : !was.equals(now) ? "snapshot.modified" : null;
+      if (!code || told.has(`${code} ${path}`)) continue;
+      told.add(`${code} ${path}`);
+      if (code === "snapshot.deleted") out.push({ code, path, problem: `${path} is a released snapshot at ${at} and is gone; a released version is immutable (spec §4.5)` });
+      else out.push({ code, path, problem: `${path} is a released snapshot whose bytes differ from ${whose}; a released version is immutable, so a change needs a new version (spec §4.5)` });
+    }
+  };
+  compare(w.base, "the baseline", "the baseline's");
+  if (w.frozen) {
+    const f = w.frozen, name = `the frozen-since reference ${f.label}`;
+    if (!f.commit) out.push({ code: "frozen_since.unresolved", problem: `${name} names no commit in this repository, so the snapshots cannot be compared with it` });
+    else if (!f.state) out.push({ code: "frozen_since.not_ancestor", problem: `${name} (${f.commit}) is not an ancestor of HEAD${w.head ? ` (${w.head})` : ""}: it is not an earlier state of the history being released, so agreeing with it would establish nothing` });
+    else compare(f.state, `${name} (${f.commit})`, `those at ${name} (${f.commit})`);
   }
   for (const path of w.tree.snapshots()) {
     const m = SNAPSHOT.exec(path), doc = parseJson(w.tree.read(path) ?? "") as { $id?: unknown } | undefined, pair = pairOf(doc);
@@ -354,6 +394,15 @@ function releaseStatus(w: World, rules: "tree" | "base", pair: Pair, bundled: Bu
   if (!names(authority.changelog().dated, pair.id, pair.version)) {
     if (proposed && names(w.tree.changelog().dated, pair.id, pair.version)) out.push({ code: "release.not_accepted", ...pair, problem: `${k} is named by a dated release heading in this tree and by none at the baseline: its release is proposed, not accepted on the default branch` });
     else out.push({ code: "release.heading_missing", ...pair, problem: `${k} has a snapshot, and no dated release heading in CHANGELOG.md names it; a release is a version heading that names the schema versions it publishes (spec §4.5)` });
+  }
+  // A release pull request releases a version by adding a heading. Naming a new snapshot under a
+  // heading the baseline already has puts it in a release that was cut before it existed
+  // (flyingrobots/parley#152). Headings are compared by version, never by date or text.
+  if (!proposed && rules === "tree" && w.base && !w.base.snapshot(pair.id, pair.version)) {
+    const naming = w.tree.changelog().releases.filter((r) => names(r.entry, pair.id, pair.version));
+    const had = new Set(w.base.changelog().releases.map((r) => r.version));
+    if (naming.length > 0 && naming.every((r) => had.has(r.version)))
+      out.push({ code: "release.heading_backdated", ...pair, problem: `${k} has a snapshot the baseline does not, and the only dated heading naming it is ${naming.map((r) => `[${r.version}]`).join(", ")}, which the baseline already has; a new version is released by a new heading, not by adding it to a release that was already cut` });
   }
   if (bundled && canon(parseJson(bytes)) !== canon(bundled.schema)) out.push({ code: "definition.differs", ...pair, problem: `the definition bundled for ${k} is not its released snapshot's, as a JSON value` });
   return out;
@@ -426,7 +475,12 @@ export function checkRelease(o: Options): Line[] {
   }
   const tree = workingTree(repo);
   const base = baseCommit ? atCommit(git, baseCommit) : null;
-  const w: World = { git, head, tree, base, baseCommit, treeIndex: indexTree(repo, tree) };
+  let frozen: Frozen | null = null;
+  if (o.frozenSince !== undefined) {
+    const commit = git.commit(o.frozenSince);
+    frozen = { label: o.frozenSince, commit, state: commit && head && git.isAncestor(commit, head) ? atCommit(git, commit) : null };
+  }
+  const w: World = { git, head, tree, base, baseCommit, frozen, treeIndex: indexTree(repo, tree) };
   const { phase } = o;
 
   const inventories: Inventory[] = o.artifacts?.length
@@ -436,7 +490,9 @@ export function checkRelease(o: Options): Line[] {
       .map((d) => readPackageDir(join(repo, "packages", d), { source: "tree", path: relative(repo, join(repo, "packages", d)), sha256: null }, false));
 
   const refuses = (f: Finding) => phase !== "development" || INCONSISTENT.has(f.code);
-  const lines: Line[] = [{ event: "release.baseline", phase, base: baseLabel, commit: baseCommit, resolved: baseCommit !== null, snapshots: base?.snapshots().length ?? 0 }];
+  const lines: Line[] = [{ event: "release.baseline", phase, base: baseLabel, commit: baseCommit, resolved: baseCommit !== null, snapshots: base?.snapshots().length ?? 0,
+    frozen_since: frozen?.label ?? null, frozen_since_commit: frozen?.commit ?? null, frozen_since_snapshots: frozen?.commit ? atCommit(git, frozen.commit).snapshots().length : null,
+  }];
   const refusal = (pkg: string | null, f: Finding): Refusal => ({ event: "release.refusal", phase, package: pkg, code: f.code, problem: f.problem, ...(f.id ? { id: f.id } : {}), ...(f.version ? { version: f.version } : {}), ...(f.path ? { path: f.path } : {}) });
 
   const shared = repositoryFindings(w, repo, baseLabel);
@@ -472,7 +528,8 @@ export function stamp(l: Line) { return { ...l, _schema: OUTPUT_SCHEMA }; }
 
 export function human(l: Line): string {
   switch (l.event) {
-    case "release.baseline": return `BASELINE  ${l.base} ${l.resolved ? `= ${l.commit}, ${l.snapshots} released snapshot(s)` : "names no commit"}`;
+    case "release.baseline": return `BASELINE  ${l.base} ${l.resolved ? `= ${l.commit}, ${l.snapshots} released snapshot(s)` : "names no commit"}`
+      + (l.frozen_since === null ? "" : `; frozen since ${l.frozen_since} ${l.frozen_since_commit ? `= ${l.frozen_since_commit}, ${l.frozen_since_snapshots} released snapshot(s)` : "names no commit"}`);
     case "release.refusal": return `REFUSED   ${l.package ?? "(repository)"}  ${l.code}${l.id ? `  ${l.id}@${l.version}` : ""}${l.path ? `  ${l.path}` : ""}  ${l.problem}`;
     case "release.package": {
       const why = [...l.blocking.map((b) => `${b.id}@${b.version} (${b.code})`), ...l.blockers];
@@ -484,21 +541,21 @@ export function human(l: Line): string {
   }
 }
 
-const USAGE = "release-check --phase development|candidate|publication [--base REF] [--repo DIR] [--artifact FILE]... [--human]";
+const USAGE = "release-check --phase development|candidate|publication [--base REF] [--frozen-since REF] [--repo DIR] [--artifact FILE]... [--human]";
 export const HELP: Help = {
   event: "release.help",
   usage: USAGE,
   intent: "Say whether each package may be released as stable: every protocol schema it bundles or declares is released and frozen",
   phases: {
     development: "refuses an inconsistent source only; reports each package's eligibility and the schema identities that block it",
-    candidate: "judges a release pull request: admits the snapshots and the dated heading it adds relative to the baseline",
+    candidate: "judges a release pull request: admits the snapshots it adds relative to the baseline, each named by a dated heading that is new too",
     publication: "requires every schema release at the baseline already; nothing proposed counts",
   },
   exit: { "0": "passed", "1": "refused", "2": "the check could not run" },
 };
 
 function parseArgs(argv: string[]): { help: boolean; prose: boolean; options: Options } {
-  let phase: string | undefined, base: string | undefined, repo: string | undefined, help = false, prose = false;
+  let phase: string | undefined, base: string | undefined, frozenSince: string | undefined, repo: string | undefined, help = false, prose = false;
   const artifacts: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i] ?? "";
@@ -507,13 +564,14 @@ function parseArgs(argv: string[]): { help: boolean; prose: boolean; options: Op
     else if (a === "--help" || a === "-h") help = true;
     else if (a === "--phase") phase = value();
     else if (a === "--base") base = value();
+    else if (a === "--frozen-since") frozenSince = value();
     else if (a === "--repo") repo = value();
     else if (a === "--artifact") artifacts.push(value());
     else throw new CheckError("release_check.usage", `unrecognised argument ${JSON.stringify(a)}; usage: ${USAGE}`);
   }
   if (help) return { help, prose, options: { phase: "development" } };
   if (!PHASES.includes(phase as Phase)) throw new CheckError("release_check.usage", `--phase must be one of ${PHASES.join(", ")}${phase === undefined ? "" : `, not ${JSON.stringify(phase)}`}; usage: ${USAGE}`);
-  return { help, prose, options: { phase: phase as Phase, ...(base === undefined ? {} : { base }), ...(repo === undefined ? {} : { repo }), ...(artifacts.length ? { artifacts } : {}) } };
+  return { help, prose, options: { phase: phase as Phase, ...(base === undefined ? {} : { base }), ...(frozenSince === undefined ? {} : { frozenSince }), ...(repo === undefined ? {} : { repo }), ...(artifacts.length ? { artifacts } : {}) } };
 }
 
 if (import.meta.main) {

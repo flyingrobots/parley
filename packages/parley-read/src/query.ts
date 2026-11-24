@@ -360,7 +360,7 @@ export interface QueryOptions extends LoadOptions {
 }
 
 /** The reading program's default identity; the drill-down (`open.ts`) records under the same one. */
-export const READER = { name: "parley-read", version: "0.1.0" } as const;
+export const READER = { name: "parley-read", version: "0.1.1" } as const;
 
 /** Collects the read's own lines and forwards them to a caller's sink when there is one. */
 export class Tee implements Sink {

@@ -5,6 +5,18 @@ on its own; the spec and each message schema move separately (spec §4.4).
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-11-24
+
+No change to behaviour or to the schemas it ships. A read's own receipt records `v` `0.1.1`.
+
+### Changed
+
+- The dependency on `@flyingrobots/parley-emit` is `^0.2.4`, up from `^0.2.0`. 0.2.4 is the first
+  0.2 version on npm; 0.2.0 to 0.2.3 exist as tags only, so the old range named versions no
+  installer could resolve. An install of 0.1.0 already resolved to 0.2.4.
+- First version released through the workflow: staged on npm by `release-parley-read.yml` and
+  approved by the owner (flyingrobots/parley#85). 0.1.0 was published by hand.
+
 ## [0.1.0] — 2026-11-22
 
 The first public version. It depends on `@flyingrobots/parley-emit` `^0.2.0`, so parley-emit 0.2.0

@@ -7,7 +7,12 @@ jobs:
   checks:
     runs-on: ubuntu-latest
     steps:
+      # Full history: the release-eligibility check (scripts/release-check.ts, run by bun test)
+      # compares released snapshots with the merge base with origin/main and verifies each
+      # package's schema pin at the commit it names. A shallow clone has neither.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest

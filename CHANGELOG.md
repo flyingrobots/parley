@@ -18,6 +18,21 @@ the entry under it names each schema version it releases, and those are separate
   All 17 agree, with no exceptions. Wesley is pinned exactly in `package.json` `config.wesley`, and
   CI installs that version and fails if it is missing. Without it, `bun test` skips those cases
   and says why (flyingrobots/parley#118).
+- `scripts/release-check.ts`, the release-eligibility checker, and the rule it enforces: a stable
+  Parley distribution must not embed, advertise or emit a repository-owned protocol schema
+  identity unless that exact `(id, version)` has been released and resolves to its frozen
+  definition. It reads what each package bundles and declares from a source tree, an npm tarball
+  or `parley_emit.py`, in three phases. `development` refuses only an inconsistent source and
+  reports which packages a draft blocks; `bun test` runs it. `candidate` judges a release pull
+  request. `publication` requires every schema release on the default branch already. Released
+  snapshots are compared byte for byte with a baseline the candidate did not choose (`--base`,
+  default the merge base with `origin/main`), and a package copy's source pin is verified by
+  content at the commit it names. Its output is JSON Lines stamped `parley.tooling.release_check`
+  1.0.0, a new tooling schema beside the script (`scripts/release-check.schema.json`).
+  `docs/workflows/release-spec` holds the rule, the phases and the procedure for releasing schema
+  versions in two commits and a merge commit. The release workflows do not call the checker yet
+  (flyingrobots/parley#147). No spec text, schema byte, schema version or package version changes
+  (flyingrobots/parley#145).
 - `parley.query` 1.1.0, a draft: an optional boolean `fold`. `false` asks the reader to fold
   nothing; absent or `true`, the reader folds runs of one invocation with one result.
   1.0.0 stays released and unchanged (flyingrobots/parley#133). Changed in place by the
@@ -58,6 +73,8 @@ the entry under it names each schema version it releases, and those are separate
 
 ### Changed
 
+- The checks workflow fetches full history, which the release-eligibility check needs for its
+  baseline and for the commits the package copies are pinned to (flyingrobots/parley#145).
 - `@flyingrobots/parley-read` 0.2.0 emits `parley.query` and `parley.lens` at the draft 1.1.0
   above and ships their released 1.0.0 beside them, so it validates the lines of both versions.
   Its fold no longer hides a run whose result differs

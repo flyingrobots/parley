@@ -5,6 +5,7 @@ import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 import { readFileSync } from "node:fs";
 import { check } from "./check-examples.ts";
+import { changelogEntries, names as named, snapshotPath } from "./release-check.ts";
 
 import { schemaFiles, loadSchemas } from "./check-examples.ts";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
@@ -392,15 +393,14 @@ describe("schemas/", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  const changelog = readFileSync("CHANGELOG.md", "utf8");
-  const unreleased = /^## \[Unreleased\]\n([\s\S]*?)(?=^## \[)/m.exec(changelog)?.[1] ?? "";
-  const dated = changelog.split(/^(?=## \[)/m).filter((e) => /^## \[\d+\.\d+\.\d+\] — \d{4}-\d{2}-\d{2}/.test(e)).join("\n");
-  const named = (entry: string, id: string, version: string) => new RegExp("`" + id.replace(/\./g, "\\.") + "` " + version.replace(/\./g, "\\.") + "\\b").test(entry);
+  // How the changelog names a schema version is shared with the release-eligibility checker
+  // (scripts/release-check.ts), so the two cannot come to read a release differently.
+  const { unreleased, dated } = changelogEntries(readFileSync("CHANGELOG.md", "utf8"));
 
   test("every top-level schema is released byte for byte or is a draft under Unreleased", () => {
     for (const f of files.filter((x) => !x.startsWith("released/"))) {
       const id = idOf(f), version = String(load(f)._schema?.version ?? load(f).properties._schema.properties.version.const);
-      const snap = `schemas/released/${id}/${version}.schema.json`;
+      const snap = snapshotPath(id, version);
       let snapText: string | undefined;
       try { snapText = readFileSync(snap, "utf8"); } catch { snapText = undefined; }
       if (snapText !== undefined) expect(readFileSync(`schemas/${f}`, "utf8"), f).toBe(snapText);

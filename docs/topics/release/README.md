@@ -32,6 +32,11 @@ its version fails `bun test`.
 
 The first release, `0.2.0` in the root changelog, released all seventeen schemas at once.
 
+Those checks compare the tree with itself, and they admit a draft. Whether a package may be
+released as stable is a separate question with its own checker, which compares released snapshots
+with a baseline and refuses a package that carries a draft:
+[Releasing the spec and its schemas](../../workflows/release-spec/README.md).
+
 ## A package depends on a package here by range
 
 `@flyingrobots/parley-read` depends on `@flyingrobots/parley-emit` by a caret range that admits the

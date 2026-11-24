@@ -1290,6 +1290,205 @@ class TestRedactionExceptionsCarryNoSecret(unittest.TestCase):
         self.assertEqual(str(e), line["problem"] + "; reported as redaction.schema_conflict")
 
 
+OWN_CONTROL = "zq7kx9control"
+OWN_SECRETS = ["code", "problem", "remedy", "decision", "because", "detail", "event", "status", "uncaught.exception", "boom", "traceback", "stream", "text", OWN_CONTROL]
+# `run.step("d", "b")` is the TOOL's record, scrubbed in full: under these two secrets its own
+# field is renamed, the schema rejects it and the redaction check withholds it (spec section 5.3,
+# flyingrobots/parley#131). The step raises the conflict, so the handler never reaches its own
+# raise: status 4, one redaction.schema_conflict, no uncaught.exception.
+OWN_TOOL_STEP_WITHHELD = ("decision", "because")
+
+
+class TestWriterRaisedRecords(unittest.TestCase):
+    """PY-28: a record the writer raises on its own account is writer-built, and `main` always
+    ends the run (spec sections 3.3 and 5.3, flyingrobots/parley#161). `uncaught.exception`,
+    `uncaught.exit`, `uncaught.writer_failure`, the retention steps and the captured-output step
+    are the writer's records, not the tool's: a declared secret that equals one of their field
+    names must not rename the field, withhold the record or stop `main` from writing `end`. The
+    Bun oracle validates the same runs, as real processes, against the released snapshots."""
+
+    def carrying(self, o, secret):
+        """Every string VALUE that carries the secret, outside the places that hold the protocol's
+        own words: `event`, a diagnostic's `code`, the `_schema` stamp, the run id and a
+        `redaction` line's `at`, which is a pointer made of the record's field names. A field
+        NAME is never collected: in a writer-built record it is the protocol's word and stays."""
+        hits = []
+
+        def walk(v, where):
+            if isinstance(v, str):
+                if secret in v:
+                    hits.append(f"{where}: {v}")
+            elif isinstance(v, list):
+                for i, x in enumerate(v):
+                    walk(x, f"{where}/{i}")
+            elif isinstance(v, dict):
+                for k, x in v.items():
+                    walk(x, f"{where}/{k}")
+
+        for x in o.stdout.objs + o.stderr.objs + o.receipt_lines:
+            for k, v in x.items():
+                if k in ("event", "code", "_schema", "run") or (x["event"] == "redaction" and k == "at"):
+                    continue
+                walk(v, f"{x['event']}@{x['seq']}/{k}")
+        return hits
+
+    def settled(self, o, secret, status):
+        """What every run here must show, whatever the secret."""
+        self.assertIs(type(o.status), int)
+        self.assertEqual(o.status, status)
+        self.assertTrue(o.stdout.text.endswith("\n"))
+        self.assertEqual((o.stdout.objs[-1]["event"], o.stdout.objs[-1]["status"]), ("end", status))
+        self.assertEqual((o.receipt_lines[-1]["event"], o.receipt_lines[-1]["status"]), ("end", status))
+        assert_valid(self, o)
+        assert_lifecycle(self, o)
+        self.assertEqual(self.carrying(o, secret), [])
+
+    def run_secret(self, secret, body, over=None, d=None, env=None):
+        if d is None:
+            d, _, env = scratch_free(secret)
+        return run_count(d, env, ["count", "--token", secret], body, over=over)
+
+    def test_a_handler_that_only_raises_ends_with_uncaught_exception_and_status_2(self):
+        def body(run):
+            raise RuntimeError("boom")
+
+        for secret in OWN_SECRETS:
+            with self.subTest(secret):
+                o = self.run_secret(secret, body)
+                self.settled(o, secret, 2)
+                self.assertEqual([x["code"] for x in o.stderr.objs], ["uncaught.exception"])
+                line = o.stderr.objs[0]
+                self.assertEqual(line["problem"], "uncaught RuntimeError: [redacted]" if secret == "boom" else "uncaught RuntimeError: boom")
+                self.assertIsInstance(line["remedy"], str)
+                kept = next(x for x in o.receipt_lines if x["event"] == "error")
+                self.assertEqual(kept["code"], "uncaught.exception")
+                self.assertIsInstance(kept["detail"]["traceback"], str)
+                if secret in ("boom", OWN_CONTROL):
+                    self.assertNotIn(secret, o.everything)
+
+    def test_a_handler_that_records_a_step_and_raises(self):
+        def body(run):
+            run.step("d", "b")
+            raise RuntimeError("boom")
+
+        for secret in OWN_SECRETS:
+            with self.subTest(secret):
+                o = self.run_secret(secret, body)
+                steps = [x for x in o.receipt_lines if x["event"] == "receipt.step"]
+                if secret in OWN_TOOL_STEP_WITHHELD:
+                    self.settled(o, secret, 4)
+                    self.assertEqual([x["code"] for x in o.stderr.objs], ["redaction.schema_conflict"])
+                    self.assertEqual(steps, [])
+                else:
+                    self.settled(o, secret, 2)
+                    self.assertEqual([x["code"] for x in o.stderr.objs], ["uncaught.exception"])
+                    self.assertEqual([(x["decision"], x["because"]) for x in steps], [("d", "b")])
+
+    def test_the_writers_retention_step_is_written_and_the_run_ends_with_status_0(self):
+        over = {"retention": {"count": 1}}
+        for secret in OWN_SECRETS:
+            with self.subTest(secret):
+                d, _, env = scratch_free(secret)
+                run_count(d, env, ["count"], lambda run: None, over=over)
+                o = self.run_secret(secret, lambda run: None, over=over, d=d, env=env)
+                self.settled(o, secret, 0)
+                self.assertEqual(o.stderr.objs, [])
+                steps = [x for x in o.receipt_lines if x["event"] == "receipt.step"]
+                self.assertEqual([x["decision"] for x in steps], ["retention: deleted 1 receipt bundle(s)"])
+                self.assertIsInstance(steps[0]["because"], str)
+                self.assertEqual(len(steps[0]["detail"]["receipts"]), 1)
+
+    def test_captured_output_is_kept_in_a_writer_built_step_with_the_text_scrubbed(self):
+        for secret in OWN_SECRETS:
+            with self.subTest(secret):
+                o = self.run_secret(secret, lambda run, secret=secret: print("a library says " + secret))
+                self.settled(o, secret, 0)
+                self.assertEqual(o.stderr.objs, [])
+                steps = [x for x in o.receipt_lines if x["event"] == "receipt.step"]
+                self.assertEqual([x["decision"] for x in steps], ["captured stray output"])
+                self.assertEqual(steps[0]["detail"], {"stream": "stdout", "text": "a library says [redacted]\n"})
+                # The receipt records where the text was replaced; the pointer is made of the writer's field names.
+                self.assertIn("/detail/text", [x["at"] for x in o.receipt_lines if x["event"] == "redaction"])
+
+    def test_a_tools_value_equal_to_the_secret_is_replaced_beside_the_field_name_that_stays(self):
+        class code(Exception):  # noqa: N801 - the class name is the secret
+            pass
+
+        def body(run):
+            raise code("the code is code")
+
+        o = self.run_secret("code", body)
+        self.settled(o, "code", 2)
+        self.assertEqual(o.stderr.objs[0]["code"], "uncaught.exception")
+        self.assertEqual(o.stderr.objs[0]["problem"], "uncaught [redacted]: the [redacted] is [redacted]")
+
+    def test_sys_exit_in_the_handler_is_reported_whatever_the_secret(self):
+        for secret in ("code", "problem", "remedy", OWN_CONTROL):
+            with self.subTest(secret):
+                o = self.run_secret(secret, lambda run: sys.exit(5))
+                self.settled(o, secret, 2)
+                self.assertEqual([x["code"] for x in o.stderr.objs], ["uncaught.exit"])
+
+    def test_a_failure_inside_the_writer_is_reported_whatever_the_secret(self):
+        saved = pe._retain
+
+        def broken(*a, **k):
+            raise RuntimeError("the writer broke")
+
+        for secret in ("code", "problem", "remedy", "detail", "traceback", OWN_CONTROL):
+            with self.subTest(secret):
+                try:
+                    pe._retain = broken
+                    o = self.run_secret(secret, lambda run: None)
+                finally:
+                    pe._retain = saved
+                self.settled(o, secret, 2)
+                self.assertEqual([x["code"] for x in o.stderr.objs], ["uncaught.writer_failure"])
+
+    def test_main_never_raises_when_its_own_report_of_the_tools_failure_fails_and_the_status_is_4(self):
+        # Nothing can be said about an exception that raises when it is described, so building
+        # the uncaught.exception line fails inside main's own handling. The run failed and the
+        # error that says why could not be written: protocol output that could not be written is
+        # status 4 (spec section 3.4), not the 2 of a failure that was reported.
+        class Undescribable(Exception):
+            def __str__(self):
+                raise RuntimeError("no description")
+
+        def body(run):
+            raise Undescribable()
+
+        d, _, env = scratch()
+        o = run_count(d, env, ["count"], body)
+        self.assertEqual(o.status, 4)
+        self.assertEqual((o.stdout.objs[-1]["event"], o.stdout.objs[-1]["status"]), ("end", 4))
+        self.assertEqual([x["code"] for x in o.stderr.objs], ["uncaught.writer_failure"])
+        assert_valid(self, o)
+        assert_lifecycle(self, o)
+
+    def test_main_still_ends_the_run_when_no_error_line_can_be_written_at_all(self):
+        # The writer's own error path is made to fail, so neither report can be written; `end`
+        # still is, with status 4.
+        saved = pe.Run.writer_error
+
+        def broken(self, *a, **k):
+            raise RuntimeError("no error line can be built")
+
+        def body(run):
+            raise RuntimeError("boom")
+
+        d, _, env = scratch()
+        try:
+            pe.Run.writer_error = broken
+            o = run_count(d, env, ["count"], body)
+        finally:
+            pe.Run.writer_error = saved
+        self.assertEqual(o.status, 4)
+        self.assertEqual(o.stderr.objs, [])
+        self.assertEqual((o.stdout.objs[-1]["event"], o.stdout.objs[-1]["status"]), ("end", 4))
+        assert_valid(self, o)
+        assert_lifecycle(self, o)
+
+
 class TestStartupFailure(unittest.TestCase):
     def test_no_writable_location(self):
         d, state, env = scratch()

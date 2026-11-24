@@ -9,6 +9,7 @@ import { doctor } from "../../../scripts/doctor.ts";
 import { checkRecord, defineTool, main, ParleyRedactionConflict, ParleyRedactionUnchecked, schemaSubsetGap, SCHEMA_SOURCE, SCHEMAS, transformDigest, ulid, writeWholeLine, historyDays, declaredProjection, findSuspectedSecret, isHistoryRefusal, refuse, refuseSuspectedSecrets, SECRET_PATTERNS, HISTORY_DEFAULT_DAYS, HISTORY_MAX_DAYS, type HistoryTransform, type MainOptions, type Run, type Sink, type ToolSpec } from "../src/index.ts";
 import { inspectSegment } from "../../../scripts/doctor.ts";
 import { retain } from "../src/tool.ts";
+import { Run as RunClass } from "../src/run.ts";
 
 const SCHEMAS_DIR = resolve(import.meta.dir, "../../../schemas");
 
@@ -3092,5 +3093,202 @@ describe("PE-33 the redaction exceptions carry what the published line carries, 
     expect(thrown.pointers).toEqual(["/value"]);
     expect(line.detail.at).toEqual(["/value"]);
     expect(thrown.message).toBe(`${line.problem}; reported as redaction.schema_conflict`);
+  });
+});
+
+describe("PE-34 a record the writer raises on its own account is writer-built, and main always ends the run (spec §3.3, §5.3, flyingrobots/parley#161)", () => {
+  // `uncaught.exception`, the retention steps, the projection step and the captured-console step
+  // are the writer's records, not the tool's. A declared secret that equals one of their field
+  // names must not rename the field, withhold the record or stop `main` from writing `end`. Every
+  // line of every run below is validated against its RELEASED snapshot.
+  const RELEASED = join(SCHEMAS_DIR, "released");
+  const ajv = new Ajv2020({ strict: false, allErrors: true }); addFormats(ajv);
+  const validators = new Map<string, ReturnType<typeof ajv.compile>>();
+  const invalid = (o: Record<string, unknown>): string | null => {
+    const stamp = o._schema as { id: string; version: string };
+    const file = join(RELEASED, stamp.id, `${stamp.version}.schema.json`);
+    if (!existsSync(file)) { expect(stamp.id.startsWith("parley.")).toBe(false); return null; }
+    const key = `${stamp.id}@${stamp.version}`;
+    if (!validators.has(key)) validators.set(key, ajv.compile(JSON.parse(readFileSync(file, "utf8")) as object));
+    const v = validators.get(key)!;
+    return v(o) ? null : `${key} ${ajv.errorsText(v.errors)}: ${JSON.stringify(o)}`;
+  };
+  const scratch = (secret: string) => {
+    for (let i = 0; i < 64; i++) { const s = scratchAnywhere(); if (!s.dir.includes(secret) && !s.state.includes(secret)) return s; }
+    throw new Error(`no temporary directory free of ${secret} could be made`);
+  };
+  type R = Awaited<ReturnType<typeof runCount>>;
+  const everyLine = (r: R) => [...r.stdout.objs, ...r.stderr.objs, ...r.receiptLines];
+  /**
+   * Every string VALUE that carries the secret, outside the places that hold the protocol's own
+   * words: `event`, a diagnostic's `code`, the `_schema` stamp, the run id and a `redaction`
+   * line's `at`, which is a pointer made of the record's field names. A field NAME is never
+   * collected: in a writer-built record it is the protocol's word and stays.
+   */
+  const carrying = (r: R, secret: string): string[] => {
+    const hits: string[] = [];
+    const walk = (v: unknown, where: string, own: boolean) => {
+      if (typeof v === "string") { if (!own && v.includes(secret)) hits.push(`${where}: ${v}`); return; }
+      if (Array.isArray(v)) { v.forEach((x, i) => walk(x, `${where}/${i}`, own)); return; }
+      if (v && typeof v === "object") for (const [k, x] of Object.entries(v)) walk(x, `${where}/${k}`, own);
+    };
+    for (const o of everyLine(r)) for (const [k, x] of Object.entries(o)) walk(x, `${String(o.event)}@${String(o.seq)}/${k}`, k === "event" || k === "code" || k === "_schema" || k === "run" || (o.event === "redaction" && k === "at"));
+    return hits;
+  };
+  /** What every run here must show, whatever the secret: an integer status, `end` last on stdout and in the receipt with that status, valid lines, no violation, and the secret in no value. */
+  const settled = (r: R, secret: string, status: number) => {
+    expect([secret, r.status]).toEqual([secret, status]);
+    expect(r.stdout.text.endsWith("\n")).toBe(true);
+    expect(r.stdout.objs.at(-1)).toMatchObject({ event: "end", status });
+    expect(r.receiptLines.at(-1)).toMatchObject({ event: "end", status });
+    expect(everyLine(r).map(invalid).filter((x) => x !== null)).toEqual([]);
+    expect(r.violations).toEqual([]);
+    expect(carrying(r, secret)).toEqual([]);
+  };
+
+  // The field names of parley.error, parley.warning and parley.receipt.step, the names inside the
+  // writer's own `detail`, its own code, the exception's message, and one control.
+  const CONTROL = "zq7kx9control";
+  const SECRETS = ["code", "problem", "remedy", "decision", "because", "detail", "event", "status", "uncaught.exception", "boom", "stack", "method", "text", CONTROL];
+  // `run.step("d", "b")` is the TOOL's record, scrubbed in full: under these two secrets its own
+  // field is renamed, the released schema rejects it and the redaction check withholds it (§5.3,
+  // flyingrobots/parley#131). The step throws the conflict, so the handler never reaches its own
+  // throw: status 4, one redaction.schema_conflict, no uncaught.exception.
+  const TOOL_STEP_WITHHELD = new Set(["decision", "because"]);
+
+  for (const secret of SECRETS) {
+    test(`the secret ${secret}: a handler that only throws ends with uncaught.exception, its field names intact, and status 2`, async () => {
+      const { dir, env } = scratch(secret);
+      const r = await runCount(dir, env, ["count", "--token", secret], () => { throw new Error("boom"); });
+      settled(r, secret, 2);
+      expect(r.stderr.objs.map((o) => o.code)).toEqual(["uncaught.exception"]);
+      const line = r.stderr.objs[0] as { problem: string; remedy: string };
+      expect(line.problem).toBe(secret === "boom" ? "uncaught Error: [redacted]" : "uncaught Error: boom");
+      expect(typeof line.remedy).toBe("string");
+      const kept = r.receiptLines.find((o) => o.event === "error") as { code: string; problem: string; detail: { stack: string } };
+      expect(kept.code).toBe("uncaught.exception");
+      expect(typeof kept.detail.stack).toBe("string");
+      if (secret === "boom" || secret === CONTROL) expect(r.stdout.text + r.stderr.text + r.receipt).not.toContain(secret);
+    });
+
+    test(`the secret ${secret}: a handler that emits a step of its own and then throws ends with status ${TOOL_STEP_WITHHELD.has(secret) ? "4, the tool's step withheld" : "2 and uncaught.exception"}`, async () => {
+      const { dir, env } = scratch(secret);
+      const r = await runCount(dir, env, ["count", "--token", secret], (run) => { run.step("d", "b"); throw new Error("boom"); });
+      const steps = r.receiptLines.filter((o) => o.event === "receipt.step");
+      if (TOOL_STEP_WITHHELD.has(secret)) {
+        settled(r, secret, 4);
+        expect(r.stderr.objs.map((o) => o.code)).toEqual(["redaction.schema_conflict"]);
+        expect(steps).toEqual([]);
+      } else {
+        settled(r, secret, 2);
+        expect(r.stderr.objs.map((o) => o.code)).toEqual(["uncaught.exception"]);
+        expect(steps.map((o) => [o.decision, o.because])).toEqual([["d", "b"]]);
+      }
+    });
+
+    test(`the secret ${secret}: the writer's retention step is written with its field names intact, and the run ends with status 0`, async () => {
+      const { dir, env } = scratch(secret);
+      await runCount(dir, env, ["count"], () => {}, { retention: { count: 1 } });
+      const r = await runCount(dir, env, ["count", "--token", secret], () => {}, { retention: { count: 1 } });
+      settled(r, secret, 0);
+      expect(r.stderr.objs).toEqual([]);
+      const steps = r.receiptLines.filter((o) => o.event === "receipt.step") as unknown as { decision: string; because: string; detail: { receipts: string[] } }[];
+      expect(steps.length).toBe(1);
+      expect(steps[0]!.decision).toBe("retention: deleted 1 receipt bundle(s)");
+      expect(typeof steps[0]!.because).toBe("string");
+      expect(steps[0]!.detail.receipts.length).toBe(1);
+    });
+
+    test(`the secret ${secret}: captured console output is kept in a writer-built step, the text scrubbed, and the run ends with status 0`, async () => {
+      const { dir, env } = scratch(secret);
+      const r = await runCount(dir, env, ["count", "--token", secret], () => { console.log(`a library says ${secret}`); });
+      settled(r, secret, 0);
+      expect(r.stderr.objs).toEqual([]);
+      const steps = r.receiptLines.filter((o) => o.event === "receipt.step") as unknown as { decision: string; because: string; detail: { method: string; text: string } }[];
+      expect(steps.length).toBe(1);
+      expect(steps[0]!.decision).toBe("captured console output");
+      expect(steps[0]!.detail).toEqual({ method: "log", text: "a library says [redacted]" });
+      // The receipt records where the text was replaced; the pointer is made of the writer's field names.
+      expect(r.receiptLines.filter((o) => o.event === "redaction").map((o) => o.at)).toContain("/detail/text");
+    });
+  }
+
+  for (const secret of ["decision", "because", "detail", "segments", CONTROL]) {
+    test(`the secret ${secret}: the projection step and the history-retention step are written, and the run ends with status 0`, async () => {
+      const { dir, env } = scratch(secret);
+      const hist = mkdtempSync(join(tmpdir(), "parley-hist-"));
+      const day = (ms: number) => new Date(ms).toISOString().slice(0, 10) + ".jsonl";
+      const stale = day(Date.now() - 400 * 86_400_000);
+      writeFileSync(join(hist, stale), "{}\n");
+      const r = await runCount(dir, { ...env, PARLEY_HISTORY: hist, PARLEY_HISTORY_DAYS: "2" }, ["count", "--token", secret], () => {}, {}, [], { history: { transform: (rec) => rec, name: "identity" } });
+      settled(r, secret, 0);
+      // The stream copy is another matter and a warning, never an error: the check on what a
+      // transform returns counts a field name equal to the secret as the secret, so those lines
+      // stay off the shared stream (flyingrobots/parley#164). The receipt has every one.
+      expect(r.stderr.objs.map((o) => [o.event, o.code]).filter(([e, c]) => e !== "warning" || c !== "history.transform_unredacted")).toEqual([]);
+      if (secret === CONTROL) expect(r.stderr.objs).toEqual([]);
+      const decisions = (r.receiptLines.filter((o) => o.event === "receipt.step") as unknown as { decision: string; because: string }[]).map((o) => o.decision);
+      expect(decisions).toEqual(["the shared stream's copy of this run is a projection by identity", "history retention: deleted 1 segment(s)"]);
+      expect(existsSync(join(hist, stale))).toBe(false);
+    });
+  }
+
+  test("a tool's value equal to the secret is replaced inside the writer's own record, beside the field name that stays", async () => {
+    const { dir, env } = scratch("code");
+    class CodeError extends Error { override name = "code"; }
+    const r = await runCount(dir, env, ["count", "--token", "code"], () => { throw new CodeError("the code is code"); });
+    settled(r, "code", 2);
+    const line = r.stderr.objs[0] as { code: string; problem: string };
+    expect(line.code).toBe("uncaught.exception");
+    expect(line.problem).toBe("uncaught [redacted]: the [redacted] is [redacted]");
+  });
+
+  test("main never rejects: when its own report of the tool's failure fails, the run still ends, with status 4", async () => {
+    // Nothing can be said about a thrown value that throws when it is described, so building the
+    // uncaught.exception line fails inside main's own handling. The run failed and the error that
+    // says why could not be written: protocol output that could not be written is status 4 (§3.4).
+    const { dir, env } = scratchAnywhere();
+    const r = await runCount(dir, env, ["count"], () => { throw { toString() { throw new Error("no description"); } }; });
+    expect(r.status).toBe(4);
+    expect(r.stdout.objs.at(-1)).toMatchObject({ event: "end", status: 4 });
+    expect(r.receiptLines.at(-1)).toMatchObject({ event: "end", status: 4 });
+    expect(r.stderr.objs.map((o) => o.code)).toEqual(["uncaught.writer_failure"]);
+    expect(everyLine(r).map(invalid).filter((x) => x !== null)).toEqual([]);
+    expect(r.violations).toEqual([]);
+  });
+
+  test("main never rejects: when no error line can be written at all, the run still ends, with status 4", async () => {
+    // The writer's own error path is made to fail, so neither report can be written; `end` still is.
+    const { dir, env } = scratchAnywhere();
+    const proto = RunClass.prototype as unknown as { writerError: unknown };
+    const saved = proto.writerError;
+    let r: R;
+    try {
+      proto.writerError = () => { throw new Error("no error line can be built"); };
+      r = await runCount(dir, env, ["count"], () => { throw new Error("boom"); });
+    } finally { proto.writerError = saved; }
+    expect(saved).toBeInstanceOf(Function);
+    expect(r.status).toBe(4);
+    expect(r.stderr.objs).toEqual([]);
+    expect(r.stdout.objs.at(-1)).toMatchObject({ event: "end", status: 4 });
+    expect(r.receiptLines.at(-1)).toMatchObject({ event: "end", status: 4 });
+    expect(everyLine(r).map(invalid).filter((x) => x !== null)).toEqual([]);
+    expect(r.violations).toEqual([]);
+  });
+
+  test("main never rejects: a failure outside the handler after the head is uncaught.writer_failure and a complete failed receipt, status 2", async () => {
+    // A history sink whose `dir` throws once the head has been built from it: the stream's
+    // retention reads it next, outside the handler and outside any report of the tool's failure.
+    const { dir, env } = scratchAnywhere();
+    const hist = mkdtempSync(join(tmpdir(), "parley-hist-"));
+    let reads = 0;
+    const sink = { path: join(hist, "2026-01-01.jsonl"), get dir(): string { reads += 1; if (reads > 2) throw new Error("the sink broke"); return hist; }, append() {}, close() {} };
+    const r = await runCount(dir, env, ["count"], () => {}, {}, [], { history: sink });
+    expect(r.status).toBe(2);
+    expect(r.stdout.objs.at(-1)).toMatchObject({ event: "end", status: 2 });
+    expect(r.receiptLines.at(-1)).toMatchObject({ event: "end", status: 2 });
+    expect(r.stderr.objs.map((o) => [o.code, o.problem])).toEqual([["uncaught.writer_failure", "the writer itself failed: Error: the sink broke"]]);
+    expect(everyLine(r).map(invalid).filter((x) => x !== null)).toEqual([]);
+    expect(r.violations).toEqual([]);
   });
 });

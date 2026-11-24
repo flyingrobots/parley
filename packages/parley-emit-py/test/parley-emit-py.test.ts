@@ -583,3 +583,71 @@ describe("parley-emit-py: a secret that coincides with one of the writer's own w
     }
   }, SLOW);
 });
+
+describe("parley-emit-py: a record the writer raises on its own account, and a main that always ends the run", () => {
+  // PY-28 (spec §3.3, §5.3, flyingrobots/parley#161): tests/fixtures/own_records_tool.py as a
+  // real process, with a declared secret equal to each field name of the writer's own records.
+  // Every line of every run is validated against the RELEASED snapshot of its exact pair with ajv.
+  const RELEASED = join(SCHEMAS_DIR, "released");
+  const ajv = new Ajv2020({ strict: false, allErrors: true }); addFormats(ajv);
+  const validators = new Map<string, ReturnType<typeof ajv.compile>>();
+  const invalid = (o: Record<string, unknown>): string | null => {
+    const stamp = o._schema as { id: string; version: string };
+    const file = join(RELEASED, stamp.id, `${stamp.version}.schema.json`);
+    if (!existsSync(file)) { expect(stamp.id.startsWith("parley.")).toBe(false); return null; }
+    const key = `${stamp.id}@${stamp.version}`;
+    if (!validators.has(key)) validators.set(key, ajv.compile(JSON.parse(readFileSync(file, "utf8")) as object));
+    const v = validators.get(key)!;
+    return v(o) ? null : `${key} ${ajv.errorsText(v.errors)}: ${JSON.stringify(o)}`;
+  };
+  const neutral = (secret: string) => {
+    for (let i = 0; i < 64; i++) { const at = scratch([]); if (!at.dir.includes(secret) && !at.env.XDG_STATE_HOME!.includes(secret)) return at; }
+    throw new Error(`no temporary directory free of ${secret} could be made`);
+  };
+  const FIXTURE = join(PKG, "tests", "fixtures", "own_records_tool.py");
+  const CONTROL = "zq7kx9control";
+  const SECRETS = ["code", "problem", "remedy", "decision", "because", "detail", "event", "status", "uncaught.exception", "boom", "traceback", "stream", "text", CONTROL];
+  // The tool's own step is scrubbed in full: under these two its field is renamed and it is withheld (§5.3).
+  const TOOL_STEP_WITHHELD = new Set(["decision", "because"]);
+  /** A real process: the exit status is an integer, stdout ends with a newline-terminated `end` carrying it, stderr is JSON Lines only, and every line validates. */
+  const settled = (c: Captured, secret: string, mode: string, status: number) => {
+    expect([secret, mode, c.status]).toEqual([secret, mode, status]);
+    expect(c.stdout.endsWith("\n")).toBe(true);
+    expect(objs(c.stdout).at(-1)).toMatchObject({ event: "end", status });
+    const lines = [...objs(c.stdout), ...objs(c.stderr), ...objs(receiptOf(c).text)];
+    expect([secret, mode, lines.map(invalid).filter((x) => x !== null)]).toEqual([secret, mode, []]);
+    expect(violations(c)).toEqual([]);
+    return objs(receiptOf(c).text);
+  };
+
+  test("PY-28a a handler that raises, alone and after a step of its own, under each secret", () => {
+    for (const secret of SECRETS) {
+      const alone = py(FIXTURE, ["count", "throw", "--token", secret], neutral(secret));
+      settled(alone, secret, "throw", 2);
+      expect([secret, objs(alone.stderr).map((o) => [o.code, o.problem])]).toEqual([secret, [["uncaught.exception", secret === "boom" ? "uncaught RuntimeError: [redacted]" : "uncaught RuntimeError: boom"]]]);
+      if (secret === "boom" || secret === CONTROL) expect(alone.stdout + alone.stderr + receiptOf(alone).text).not.toContain(secret);
+
+      const after = py(FIXTURE, ["count", "step-throw", "--token", secret], neutral(secret));
+      const withheld = TOOL_STEP_WITHHELD.has(secret);
+      const receipt = settled(after, secret, "step-throw", withheld ? 4 : 2);
+      expect([secret, objs(after.stderr).map((o) => o.code)]).toEqual([secret, [withheld ? "redaction.schema_conflict" : "uncaught.exception"]]);
+      expect([secret, receipt.filter((o) => o.event === "receipt.step").map((o) => [o.decision, o.because])]).toEqual([secret, withheld ? [] : [["d", "b"]]]);
+    }
+  }, SLOW);
+
+  test("PY-28b the writer's retention step and its captured-output step under each secret: status 0", () => {
+    for (const secret of SECRETS) {
+      const at = neutral(secret);
+      expect(py(FIXTURE, ["count", "quiet"], at).status).toBe(0);
+      const kept = py(FIXTURE, ["count", "quiet", "--token", secret], at);
+      const retained = settled(kept, secret, "quiet", 0);
+      expect(kept.stderr).toBe("");
+      expect([secret, retained.filter((o) => o.event === "receipt.step").map((o) => o.decision)]).toEqual([secret, ["retention: deleted 1 receipt bundle(s)"]]);
+
+      const printed = py(FIXTURE, ["count", "print", "--token", secret], neutral(secret));
+      const receipt = settled(printed, secret, "print", 0);
+      expect(printed.stderr).toBe("");
+      expect([secret, receipt.filter((o) => o.event === "receipt.step").map((o) => [o.decision, o.detail])]).toEqual([secret, [["captured stray output", { stream: "stdout", text: "a library says [redacted]\n" }]]]);
+    }
+  }, SLOW);
+});

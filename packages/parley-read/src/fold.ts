@@ -18,7 +18,9 @@
 //   them, and the head's `resolved` (flyingrobots/parley#90);
 // - **every result record** (flyingrobots/parley#133): the tool's own records, each `page`,
 //   each `sidecar`'s `bytes` and `sha256` and a read's own `lens`, in `seq` order, compared as canonical JSON without the
-//   envelope's `t`, `seq`, `run` and `session`. Until 0.2.0 no result entered the key, so two
+//   envelope's `t`, `seq` and `run`. `session` is not left out: it is an envelope field of the
+//   bootstrap line alone (§2.1), so on any other record it is that record's own field, and two
+//   results that differ only in it are two results (flyingrobots/parley#146). Until 0.2.0 no result entered the key, so two
 //   successful runs of one invocation that answered 1 and 2 were stated as one run twice;
 // - **the decision records, under a view that states them**: every `receipt.step` and
 //   `cache.hit`, compared the same way, when the view's surface holds them, which is
@@ -92,8 +94,13 @@ const CODED: ReadonlySet<string> = new Set(["error", "warning", "startup.failed"
 
 const nonEmpty = (value: unknown): value is string => typeof value === "string" && value.length > 0;
 
-/** The envelope fields (§1.3, §2.1) that differ between any two runs and are no part of what a record says. */
-const ENVELOPE_ONLY: ReadonlySet<string> = new Set(["t", "seq", "run", "session"]);
+/**
+ * The envelope fields (§1.3) that differ between any two runs and are no part of what a record
+ * says. `session` is not one of them: only the bootstrap line carries it as envelope (§2.1), the
+ * writers refuse none of a tool's payload under that name, and a record's own top-level `session`
+ * is therefore content the fold must compare (flyingrobots/parley#146).
+ */
+const ENVELOPE_ONLY: ReadonlySet<string> = new Set(["t", "seq", "run"]);
 
 /** The decision records: the ones `how-it-decided` is an answer about (`rank.ts`). */
 const DECISIONS = ["receipt.step", "cache.hit"] as const;

@@ -22,8 +22,16 @@ commit of that release, and carry the wording the pre-freeze review settled
   one invocation that answered 1 and 2 came back as one run with `folded: {others: 1}` under every
   view and every budget. Runs now fold only when every result record is equal too: the tool's own
   records, each `page`, each `sidecar`'s `bytes` and `sha256` and a read's own `lens`, in `seq`
-  order, as canonical JSON without the envelope's `t`, `seq`, `run` and `session` (RD-110a,
-  RD-110b).
+  order, as canonical JSON without the envelope's `t`, `seq` and `run` (RD-110a, RD-110b).
+- **A record's own `session` field is part of what the fold compares.** As first written for
+  this version the comparison left out a top-level `session` as well, as though it were an
+  envelope field of every record. Only the bootstrap line carries `session` as envelope (spec
+  §2.1), and the writers do not refuse it in a tool's payload, so two runs of one invocation
+  whose results were `{"session":"alice-login-1","value":1}` and
+  `{"session":"bob-login-2","value":1}` came back as one section with `folded.others: 1`. A
+  review of this release found it before anything was published; the sentence in `parley.lens`
+  1.1.0's `runs[].folded` description that said so is corrected with it (RD-110l,
+  flyingrobots/parley#146).
 - **Runs that decided differently no longer fold under a view that states decisions.** When the
   view's surface holds them, the decision records must be equal as well: `receipt.step` under
   `how-it-decided` and `everything`, `cache.hit` under those and `what-ran` (RD-110c). The fold

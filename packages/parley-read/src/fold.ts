@@ -18,7 +18,12 @@
 //   them, and the head's `resolved` (flyingrobots/parley#90);
 // - **every result record** (flyingrobots/parley#133): the tool's own records, each `page`,
 //   each `sidecar`'s `bytes` and `sha256` and a read's own `lens`, in `seq` order, compared as canonical JSON without the
-//   envelope's `t`, `seq`, `run` and `session`. Until 0.2.0 no result entered the key, so two
+//   envelope's `t`, `seq` and `run`, and a read's own `lens` also without its `session` and the
+//   `query` it names. `session` is identity on the protocol lines whose schemas define it (§2.1),
+//   and `parley.lens` is the only one of those the fold compares. On a record of the tool's own,
+//   a `page` or a decision record, no schema of the protocol defines a top-level `session`
+//   (a `sidecar` is compared by `bytes` and `sha256` alone), so one found there is that record's own content, and two results that differ
+//   only in it are two results (flyingrobots/parley#146). Until 0.2.0 no result entered the key, so two
 //   successful runs of one invocation that answered 1 and 2 were stated as one run twice;
 // - **the decision records, under a view that states them**: every `receipt.step` and
 //   `cache.hit`, compared the same way, when the view's surface holds them, which is
@@ -92,8 +97,22 @@ const CODED: ReadonlySet<string> = new Set(["error", "warning", "startup.failed"
 
 const nonEmpty = (value: unknown): value is string => typeof value === "string" && value.length > 0;
 
-/** The envelope fields (§1.3, §2.1) that differ between any two runs and are no part of what a record says. */
-const ENVELOPE_ONLY: ReadonlySet<string> = new Set(["t", "seq", "run", "session"]);
+/**
+ * The envelope fields (§1.3) that differ between any two runs and are no part of what a record
+ * says. `session` is not one of them: the writers refuse none of a tool's payload under that
+ * name, so on a tool's own record a top-level `session` is content the fold must compare
+ * (flyingrobots/parley#146).
+ */
+const ENVELOPE_ONLY: ReadonlySet<string> = new Set(["t", "seq", "run"]);
+
+/**
+ * What a read's own `lens` carries that is the read's identity and not its result: the `query`
+ * it names by that read's `(run, seq)`, and the `session` `parley.lens` defines (§2.1), so two
+ * reads made in different working periods can still fold. Of the protocol's messages that define
+ * a top-level `session` (`parley.run.bootstrap`, `parley.receipt.head`, `parley.query`,
+ * `parley.lens`), the lens is the only one the fold compares.
+ */
+const LENS_IDENTITY: ReadonlySet<string> = new Set(["query", "session"]);
 
 /** The decision records: the ones `how-it-decided` is an answer about (`rank.ts`). */
 const DECISIONS = ["receipt.step", "cache.hit"] as const;
@@ -114,8 +133,10 @@ function isResult(record: LoadedRecord): boolean {
 function payload(record: LoadedRecord): unknown {
   // A sidecar's stored bytes are the result; its `path` and `source` are where it was put.
   if (record.event === "sidecar") return canonical({ event: "sidecar", bytes: record.record.bytes, sha256: record.record.sha256 });
-  // A lens names the query it answers by that read's own `(run, seq)`, which is identity, not result.
-  const skip = (k: string) => ENVELOPE_ONLY.has(k) || (record.event === "lens" && k === "query");
+  // A read's own lens, not a record of the tool's that happens to carry that event name: the
+  // tool's record is compared whole.
+  const lens = record.event === "lens" && !toolOwned(record);
+  const skip = (k: string) => ENVELOPE_ONLY.has(k) || (lens && LENS_IDENTITY.has(k));
   return canonical(Object.fromEntries(Object.entries(record.record).filter(([k]) => !skip(k))));
 }
 

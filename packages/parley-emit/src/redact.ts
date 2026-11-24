@@ -68,19 +68,40 @@ export function redactArgv(argv: readonly string[], values: ReadonlySet<string>,
 }
 
 function escapePointer(key: string): string { return key.replace(/~/g, "~0").replace(/\//g, "~1"); }
+function unescapePointer(token: string): string { return token.replace(/~1/g, "/").replace(/~0/g, "~"); }
+
+/**
+ * A JSON Pointer (RFC 6901) with every secret replaced inside each reference token, read as the
+ * key it stands for: a pointer escapes `/` and `~`, so a key that is a secret holding either
+ * would otherwise pass a search of the pointer's text. A pointer a validator reports can name a
+ * key the record no longer has (the one a scrub renamed), and that key can be the secret.
+ */
+export function scrubPointer(pointer: string, values: ReadonlySet<string>): string {
+  if (values.size === 0 || !pointer.startsWith("/")) return replaceSecrets(pointer, values);
+  return pointer.split("/").map((t, i) => (i === 0 ? t : escapePointer(replaceSecrets(unescapePointer(t), values)))).join("/");
+}
 
 export interface ScrubOptions {
   /** Keys whose string values are never scrubbed: writer digests, which a secret cannot occur in except by coincidence of hex. */
   readonly skipKeys?: ReadonlySet<string>;
   /** Scrub numbers, booleans and bigints whose decimal form is a secret (default true). A writer-built record passes false: its scalars (`status`, `dry_run`, `network`, `in`) are the writer's own and never a secret. */
   readonly scalars?: boolean;
+  /**
+   * Rename an object key that carries a secret (default true). A writer-built record passes
+   * false: its field names (`paths`, `status`, `op`) are the protocol's, named by the released
+   * schema, and renaming one would publish a line that schema rejects. A tool's object that
+   * reaches a writer-built record (`resolved`) was scrubbed in full, keys included, before the
+   * record was built.
+   */
+  readonly keys?: boolean;
 }
 
 /**
  * A deep copy of `value` with every secret replaced, and the RFC 6901 pointer of each place that
  * changed. Strings are replaced within; a number, boolean or bigint whose decimal form is a
  * secret becomes the string `[redacted]` (a PIN parsed to a number is still the PIN); an object
- * key that carries a secret is renamed, and the pointer recorded is the renamed key's.
+ * key that carries a secret is renamed, and the pointer recorded is the renamed key's. `opts`
+ * narrows this for a writer-built record.
  */
 export function scrub(value: unknown, values: ReadonlySet<string>, pointer = "", found: string[] = [], opts: ScrubOptions = {}): unknown {
   if (values.size === 0) return value;
@@ -97,7 +118,7 @@ export function scrub(value: unknown, values: ReadonlySet<string>, pointer = "",
   if (value && typeof value === "object") {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      const key = replaceSecrets(k, values);
+      const key = opts.keys === false ? k : replaceSecrets(k, values);
       const p = `${pointer}/${escapePointer(key)}`;
       if (key !== k) found.push(p);
       out[key] = opts.skipKeys?.has(k) && typeof v === "string" ? v : scrub(v, values, p, found, opts);

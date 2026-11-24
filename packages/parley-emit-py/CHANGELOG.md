@@ -10,20 +10,19 @@ release's digest is recorded on its GitHub release (tag `parley-emit-py-vX.Y.Z`)
 
 ## [Unreleased]
 
-### Changed
-
-- The embedded copies of the draft `parley.query` 1.1.0 and `parley.lens` 1.1.0 carry the
-  descriptions the pre-freeze review reworded (flyingrobots/parley#146; the root `CHANGELOG.md`
-  lists each): descriptions, and `minLength: 1` on a `stands_for` entry of the lens. No emitted
-  line changes.
-
 ## [0.3.0] — 2026-11-24
 
 The writer no longer publishes a record that redaction made invalid under its declared schema
 (flyingrobots/parley#131, spec §5.3), by the same rule as `@flyingrobots/parley-emit` 0.4.0. **A
 run that used to end with status 0 and an invalid line now ends with status 4 and a structured
-error.** The file's digest moves with the file, so a tool that vendors it copies the new file and
-pins the new digest.
+error.** **BREAKING for a tool whose declared schema uses a keyword outside the
+writer's checker:** any redaction in a record of that type now withholds the record, with status
+4, even when the redacted record would still have been valid (flyingrobots/parley#144). The file's digest moves with the file, so a
+tool that vendors it copies the new file and pins the new digest.
+
+The schemas it ships are released: `parley.query` and `parley.lens` are the 1.1.0 that spec
+`0.2.1` released (the root `CHANGELOG.md`), in place of 1.0.0, pinned to the commit of that release.
+The writer stamps neither message, so no emitted line changes. `--vendor-info` reports spec `0.2.1`.
 
 ### Fixed
 
@@ -40,24 +39,134 @@ pins the new digest.
   no text from the checker and no part of the schema. The call raises
   `ParleyRedactionConflict`, which `main` does not report a second time, and the run ends with
   status 4 whatever the handler passes to `end`, as after a sink failure.
-- Scope, stated: only a failure the redaction caused is refused. A record already invalid in the
-  same way, a record of a type declared with no `schema` document, and a schema outside the
-  checker's subset are written as before. Writer-built records are never checked.
+- **BREAKING for a tool whose declared schema uses a keyword outside the writer's checker: any
+  redaction in a record of that type now withholds the record** (spec §5.3, decided on
+  flyingrobots/parley#144). By the same rule as the TypeScript writer. The trigger, exactly: the scrub replaced
+  something in a record the tool emitted, and the schema document declared for its pair uses any
+  keyword the checker does not evaluate (`format: "date-time"`, `multipleOf`, `uniqueItems`, a
+  `$ref`, even an empty `$defs`). The record is withheld even when the redacted record would
+  still have been valid, for example a token inside an unconstrained string. Before, the writer
+  skipped the check and published such a record with status 0, which is how
+  `"value":"[redacted]"` went out under a schema requiring an integer. Now nothing of it is
+  written, no `seq` is taken, one `error` with the code `redaction.schema_unchecked` and `detail`
+  `{schema: {id, version}, redacted}` is reported, the call raises `ParleyRedactionUnchecked` and
+  the run ends with status 4. The code means **not checked**: it does not say the record was
+  invalid, and no secret was exposed, since the value was replaced first. The construct the
+  checker could not evaluate is part of the schema, so it is on the exception (`construct`) and
+  never on the line.
+- The two remedies: keep the declared schema within the keywords the checker evaluates, which
+  [the README lists](README.md#a-record-redaction-made-invalid), or keep declared secrets out of emitted records. Deleting
+  the `schema` document from the declaration removes the refusal **and** the check together (the
+  spec's exemption for a program that holds no schema document), so it is not a fix.
+- Scope, stated: only a record the scrub changed is checked. A record already invalid in the
+  same way and a record of a type declared with no `schema` document, which spec §5.3 exempts,
+  are written as before. Writer-built records (the head, `end`,
+  `redaction`, `sidecar`, `receipt.inputs`, discovery lines, the writer's own warnings and its
+  redaction errors) are never checked. They stay valid because their scrub is narrower, and this
+  is exactly what it leaves alone: the envelope; field names; numbers and booleans; the strings
+  under `sha256`, `inv`, `tool`, `v`, `name`, `id`, `version`, `code`, `op` and `error`; the
+  head's `redacted` object, written as built; and a `schema` line's document. Every other string
+  in a writer-built record is scrubbed (the next entry).
 - `run.error` marks the run as having reported an error once the line is out, not before.
+- **A schema the checker cannot evaluate is `redaction.schema_unchecked`, whatever makes it
+  unevaluable** (spec §5.3). The rule above held for a keyword outside the subset. A `pattern`
+  Python's `re` could not compile, such as `^\p{Lu}`, or a keyword whose value had the wrong
+  shape (`enum: 5`), raised out of `check_record` instead: the run ended with
+  `uncaught.exception` and status 2, and the error line carried the engine's message, which
+  quotes the pattern. Now each is the checker's `unsupported` result, a redacted record under
+  such a schema is withheld with status 4, a record the scrub did not change is written as
+  before, and no engine message is reported anywhere. `check_record`, `schema_subset_gap` and
+  `validate_line` no longer raise for any schema document.
+- **A `pattern` is translated for `re`, not handed to it.** Patterns were copied across with two
+  adjustments, so a pattern both languages accept and read differently was answered with
+  Python's reading: `\s` (ECMAScript's set includes U+00A0 and U+FEFF and Python's ASCII set does
+  not), `(?i)…` (not ECMAScript at all, and accepted), `a{,3}`. The checker now translates each
+  construct on purpose and reports the rest as unsupported: `\p{…}`, named groups,
+  back-references, a lookbehind `re` rejects, inline flags, `\S` inside a class, `[]` and `[^]`,
+  a surrogate, and anything ECMAScript rejects with the `u` flag. The README lists both sets. An
+  integer-valued bound written as `3.0` is now applied; it used to be ignored.
+- The two writers can differ on which schemas they can evaluate, and each refuses what it cannot.
+  The TypeScript writer evaluates `\p{Lu}`, a named group, a back-reference and a lookbehind of
+  any width with its runtime's engine. Where both evaluate a schema they give the same verdict; a
+  test compares them over 96 patterns and 51 malformed or well-formed keywords.
+- **The protocol's own words in a writer-built record are never scrubbed** (spec §5.3). With
+  a declared secret whose value was `create` or `delete`, `--help` and `--schema` published a
+  `parley.command` line whose `effects.bookkeeping[].op` had become `[redacted]`, which the
+  released schema rejects, with exit status 0. The same coincidence reached further: a secret
+  equal to a field name (`paths`, `tool`, `status`, `op`, `inputs`) renamed that field in the
+  bootstrap line, the head, `end` or a discovery line; `input` or `unreadable` broke the `error`
+  token of `receipt.inputs`; and a secret equal to a recorded JSON Pointer broke the head's
+  `redacted.resolved`. Now a writer-built record keeps its field names, a bookkeeping `op`, an
+  input's `error` token and the head's `redacted` pointers whatever the secret is. They are
+  public words of the protocol, so nothing a tool supplied is exposed; a secret's value is
+  still replaced wherever it is the tool's data, in those same records. Every line of every run
+  under 46 such secrets, with `--help`, `--schema` and an ordinary command, validates against
+  its released snapshot.
+- `run.input_unreadable(path, code)` records `input.unreadable` in place of a `code` that carries a
+  declared secret value, since a code is never scrubbed. The `schema.unavailable` warning of
+  discovery is writer-built, as the writer's other warnings are.
+- Not changed, and stated: an input's `role` is the tool's declaration and is scrubbed, so the
+  secret `stdin` gives a `role` of `[redacted]`, which its schema accepts.
+- **A record the writer raises on its own account is writer-built, and `main` always ends the
+  run** (flyingrobots/parley#161, spec §3.3, §5.3). `uncaught.exception`, `uncaught.exit`,
+  `uncaught.writer_failure`, the retention steps and the captured-output step travelled as a
+  tool's records do, so a declared secret equal to one of their field names renamed the field
+  and the redaction check refused the record. With `--token decision` or `because` a run that
+  triggered retention or captured a line lost the step and ended with status 4; with `remedy`
+  or `detail` the error line was published with that key renamed to `[redacted]`. With
+  `--token code` or `problem` and a handler that raised, the report raised
+  `ParleyRedactionConflict`, the top-level handler's own report raised it again, and `main`
+  returned 4 having written two `redaction.schema_conflict` errors and no `end`: the last line
+  on stdout was the bootstrap line. Now those records are emitted through `writer_error` and
+  `writer_step`: their field names and the writer's own `code` stay, and every string in them
+  is still scrubbed, the exception's name and message, the traceback, a captured line and a
+  file name included. A step or error the tool emits is unchanged: it is the tool's record,
+  scrubbed in full and checked, so `run.step` under `--token decision` is still withheld with
+  status 4.
+- **`main` always writes `end` once the bootstrap line is out.** When the report of a failure
+  cannot itself be built or written (an exception whose `__str__` raises), the run ends with
+  status 4: the run failed and the error that says why could not be written, which spec §3.4
+  gives to 4, not to the 2 of a failure that was reported. Such an exception used to end the
+  run with `uncaught.writer_failure` and status 2. A failure of the writer's own that is
+  reported is still `uncaught.writer_failure` and status 2.
+- **The redaction exceptions carry what the published line carries, never the secret.** When a
+  declared secret was the name of a required property, the scrub renamed the key, the checker
+  reported the property it then missed by its JSON Pointer, and `ParleyRedactionConflict` carried
+  that pointer, which is the secret, in `pointers` and in its message, while the error line
+  showed `/[redacted]`. The READMEs called both safe to log. With a secret holding `/` or `~`
+  the line itself carried the pointer's escaped form of it (`a~1b` for `a/b`). Now each pointer
+  is scrubbed token by token, as the key it stands for, before it goes anywhere, and the
+  exception's message and `pointers` (and `ParleyRedactionUnchecked`'s `redacted`) are the
+  line's `problem` and `detail`, scrubbed as the line is. The receipt records the replacement in
+  the error line with `redaction` events, as before.
+- **A `.parley/.gitignore` negation the writer cannot evaluate exactly counts as one that
+  matches** (spec §5.2). The check for a negation that can re-include `receipts/` read a bracket
+  expression holding a POSIX class, such as `![[:alpha:]]eceipts`, as a different pattern, and compared a line holding a NUL byte whole where git
+  stops at the NUL. With `*` and `!*.jsonl` beside any of those, the receipt stayed under
+  `.parley/receipts/` and `git add` staged it. The rule now, the same in the TypeScript and the
+  Python writer: a line holding a NUL byte, and a negation holding an inner `/`, a backslash, any
+  character outside printable ASCII, or a bracket expression that is unterminated or holds `[:`,
+  `[=` or `[.`, is not evaluated and sends the receipt to the state directory with the
+  `receipt.relocated` warning. Everything else is matched as git's wildmatch reads one path
+  component, ignoring case. This relocates for a few lines git would not match (`!receipts`
+  followed by a tab, `!receiptſ`), which is the direction the spec asks for. The cases run real
+  git as the oracle.
 
 ### Added
 
 - `ParleyRedactionConflict` (with `schema` and `pointers`), `REDACTION_CONFLICT_CODE` and
   `run.redaction_refused`.
+- `ParleyRedactionUnchecked`, a `ParleyRedactionConflict` with empty `pointers`, `redacted` and
+  `construct`, and `REDACTION_UNCHECKED_CODE`.
 - `CheckResult.pointers`: the JSON Pointer of each error, in the same order as `errors`, and for a
   missing or disallowed property, that property. A key containing `/` or `~` is now escaped in
   the path an error names (RFC 6901).
 
 ### Changed
 
-- The embedded schemas were re-synced: `parley.query` and `parley.lens` are the draft 1.1.0
-  (flyingrobots/parley#133) in place of 1.0.0. The writer stamps neither message, so no emitted
-  line changes; the file's digest moves.
+- The embedded schemas hold `parley.query` 1.1.0 and `parley.lens` 1.1.0
+  (flyingrobots/parley#133), as released with spec `0.2.1`, in place of 1.0.0. The writer stamps
+  neither message, so no emitted line changes; the file's digest moves.
 
 ## [0.2.0] — 2026-11-24
 
@@ -66,6 +175,8 @@ A declared file input can be read through the run, so the receipt records the by
 (flyingrobots/parley#130). The schemas it embeds and the `--vendor-info` line's shape are
 unchanged. **The file's digest moves with the file, so a tool that vendors it copies the new file
 and re-pins the copy by the SHA-256 that `--vendor-info` prints.**
+
+Released: tagged `parley-emit-py-v0.2.0`, with a GitHub release that carries the file.
 
 ### Added
 

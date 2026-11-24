@@ -24,7 +24,11 @@ derivation, and the README's last section names every place it differs.
 3. Replace `sys.stdout` and `sys.stderr` with capturing objects (§1.2). Resolve the running
    command's declared credential sources; a resolver that raises means not present.
 4. Reserve the receipt (§3.1, §5, §5.2): `.parley/.gitignore` holding `*`, and no negation that
-   can re-include `receipts/` (flyingrobots/parley#109), created whole if absent and never
+   can re-include `receipts/` (flyingrobots/parley#109; a negation the writer cannot evaluate
+   exactly counts as one, by the rule `_negation_reaches_receipts` states and the TypeScript
+   writer shares: an inner `/`, a backslash, a character outside printable ASCII, a bracket
+   expression that is unterminated or holds `[:`, `[=` or `[.`, or a line holding a NUL byte),
+   created whole if absent and never
    overwritten, then `.parley/receipts/<run>.jsonl` opened exclusively; otherwise the
    state directory `$XDG_STATE_HOME/parley/<repo-hash>/receipts/`, keyed as `parley-read` looks for
    it. With neither, `startup.receipt_unwritable` or `startup.secret_in_path`, exit 3.
@@ -74,26 +78,28 @@ is not a declared input, for a `stdin` or `tree` input, and after the inputs are
 ## A record redaction made invalid
 
 Spec §5.3 forbids publishing a record that redaction made invalid under its declared schema
-(flyingrobots/parley#131). The writer holds every schema document it can check against, by exact
+(flyingrobots/parley#131), and does not exempt a program that holds the schema and cannot
+evaluate it (flyingrobots/parley#144). The writer holds every schema document it can check against, by exact
 pair: the ones it ships and the ones the tool declared on its emitted and error types.
 
 | Step | Behaviour |
 | --- | --- |
-| Trigger | The scrub replaced something in a record the tool emitted. A writer-built record never triggers it: the head, `end`, `redaction`, `sidecar`, `receipt.inputs`, discovery lines and the writer's own diagnostics are emitted with the writer flag, which also keeps their scalars and identity fields from being scrubbed |
+| Trigger | The scrub replaced something in a record the tool emitted. A writer-built record never triggers it: the head, `end`, `redaction`, `sidecar`, `receipt.inputs`, discovery lines, the writer's own warnings and its redaction errors are emitted with the writer flag. That flag narrows the scrub so the record stays valid under its released schema. Left alone: the envelope; field names; numbers and booleans; the strings under `sha256`, `inv`, `tool`, `v`, `name`, `id`, `version`, `code`, `op` and `error`; the head's `redacted` object, written as built (its lists of names are scrubbed when it is built; its indexes and JSON Pointers are locations); and a `schema` line's document. Scrubbed: every other string. So a declared secret equal to one of the protocol's words (`create`, `paths`, `input.unreadable`) changes nothing in such a record, while the same value in `intent`, a `scope`, an input's `path` or `role`, a `problem` or `argv` is replaced. The records the writer raises on its own account are writer-built too (flyingrobots/parley#161): `uncaught.exception`, `uncaught.exit` and `uncaught.writer_failure` from `main`, the retention steps and the captured-output step. Their field names (`code`, `problem`, `remedy`, `decision`, `because`, `detail`, and `traceback`, `stream`, `text`, `receipts` inside `detail`) and the writer's own `code` stay whatever a declared secret's value is; every string in them is scrubbed, the tool's text included: an exception's name and message, a traceback, a captured line, a file name. A step or an error the tool itself emits is the tool's record: scrubbed in full, keys included, and checked |
 | Check | Before any copy is written and before a `seq` is taken, the stream copy and, with `receipt_extra`, the receipt copy are each validated as scrubbed and as the tool handed them over. A failure the scrubbed copy has and the original did not is a conflict |
-| Not checked | A pair with no schema document, and a schema outside the checker's subset: nothing can be established, and the record is written as before. A record already invalid in the same way is written as before |
+| Schema not evaluable | The pair has a schema document the checker cannot evaluate: one that uses a keyword outside its subset, a keyword whose value has the wrong shape (`enum: 5`), or a `pattern` this writer will not answer for (one the translation for Python's `re` does not cover, such as `\\p{Lu}`, a named group, a back-reference or a lookbehind of any width, or one ECMAScript itself rejects). The two writers can differ on which schemas they can evaluate, and each refuses what it cannot; where both evaluate one, they agree. No such document makes the checker throw: `check_record` answers `unsupported`, in a redaction check, in `validate_line` and when called directly. The writer cannot show the redacted record is valid, so it withholds it exactly as it withholds a conflict: one writer-built `error`, code `redaction.schema_unchecked`, with `detail` `{schema: {id, version}, redacted}`, and the call raises `ParleyRedactionUnchecked`, a `ParleyRedactionConflict` with empty `pointers`, the `redacted` pointers and `construct` (what `schema_subset_gap` reports). The construct is part of the schema, so it is on the exception and never on the line; it is left off the exception too if it would carry a declared secret value. The code means not checked: it does not say the record was invalid, and no secret was exposed, since the value was replaced first. The trigger is any redaction in such a record, even when the secret sat in an unconstrained string and the redacted record would still have been valid: nothing is established about a schema the checker did not evaluate. The remedies are to keep the declared schema within the checker's keywords (the package README lists them) or to keep declared secrets out of emitted records. Removing the `schema` document removes the refusal and the check together, which is the spec's exemption and not a fix |
+| Not checked | A pair with no schema document, which spec §5.3 exempts: the record is written as before. A record the scrub did not change is never checked, whatever its schema. A record already invalid in the same way is written as before |
 | Report | One writer-built `error`, code `redaction.schema_conflict`, on stderr and in the receipt. `problem` and `detail` (`schema: {id, version}`, `at`, `redacted`) name the fields by JSON Pointer and the schema pair. The checker's text is deliberately not used: it can quote the schema, and the value is the secret or sits beside it. Being writer-built, the error is not checked again, so it cannot raise another |
 | Refusal | The call raises `ParleyRedactionConflict`. `main` does not turn it into `uncaught.exception`; a handler may catch it and continue |
-| Status | 4, forced at `end` exactly as a sink failure forces it, whatever status the handler passes. `run.redaction_refused` is true |
+| Status | 4, forced at `end` exactly as a sink failure forces it, whatever status the handler passes, for a conflict and for a schema that could not be evaluated alike. `run.redaction_refused` is true |
 
 ## Exit status
 
 | Status | When |
 | --- | --- |
 | 0 | The command completed and reported no error |
-| 2 | The command reported an error, or an exception escaped the handler (`uncaught.exception`), or the handler called `sys.exit` with a non-zero code (`uncaught.exit`) |
+| 2 | The command reported an error, or an exception escaped the handler (`uncaught.exception`), or the handler called `sys.exit` with a non-zero code (`uncaught.exit`), or the writer itself failed after the bootstrap line and said so (`uncaught.writer_failure`) |
 | 3 | The run could not bootstrap: one `startup.failed` line on stderr, no receipt |
-| 4 | stdout, stderr, the receipt or a sidecar could not be written, including a reader closing stdout early; or a record was withheld because redaction made it invalid under its declared schema (`redaction.schema_conflict`), whatever the tool passed to `run.end` |
+| 4 | stdout, stderr, the receipt or a sidecar could not be written, including a reader closing stdout early; or a record was withheld because redaction made it invalid under its declared schema (`redaction.schema_conflict`) or because the writer could not evaluate that schema (`redaction.schema_unchecked`), whatever the tool passed to `run.end`; or `main` could not build or write its report of a failure (flyingrobots/parley#161). `main` never raises, and a run that reached the bootstrap line always ends with `end` |
 | other | What the tool passed to `run.end(status)`: an integer 0 to 255 other than 3, never 0 after an error |
 
 ## Discovery

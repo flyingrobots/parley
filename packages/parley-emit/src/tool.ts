@@ -200,14 +200,17 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
   const resolved = scrub(resolvedRaw, secretValues, "", resolvedPointers);
   const { argv: argvRedacted, indexes: argvIndexes } = redactArgv(argv, secretValues, allNames.flags);
   const inputPointers: string[] = [];
-  const inputDescriptors = scrub(inputs.map((i) => ({ path: i.path, ...(i.role ? { role: i.role } : {}) })), secretValues, "", inputPointers) as { path: string; role?: string }[];
+  // `path` and `role` are the writer's field names here and are never renamed; their values are the tool's and are scrubbed.
+  const inputDescriptors = scrub(inputs.map((i) => ({ path: i.path, ...(i.role ? { role: i.role } : {}) })), secretValues, "", inputPointers, { keys: false }) as { path: string; role?: string }[];
   const inputIndexes = inputPointers.map((p) => Number(p.split("/")[1]));
   const redacted: Record<string, unknown> = {};
   if (argvIndexes.length) redacted.argv = argvIndexes;
   if (resolvedPointers.length) redacted.resolved = resolvedPointers;
   if (inputIndexes.length) redacted.inputs = [...new Set(inputIndexes)];
-  if (presentEnv.length) redacted.env = presentEnv;
-  if (presentSources.length) redacted.sources = presentSources;
+  // The head writes `redacted` as built here (Run.head), so the two lists of names are scrubbed
+  // here, as the head's scrub used to scrub them; the indexes and pointers above need none.
+  if (presentEnv.length) redacted.env = scrub(presentEnv, secretValues);
+  if (presentSources.length) redacted.sources = scrub(presentSources, secretValues);
   const headRedacted = Object.keys(redacted).length > 0;
   const inv = inputs.length === 0 && command ? computeInv({ tool: spec.name, v: spec.version, command: commandName!, resolved, inputs: [] }) : undefined;
 
@@ -224,47 +227,92 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
     secretValues, now, cwd, command: commandName ?? discovery!, resolved, inputs, headRedacted, human: human ? spec.human ?? (() => null) : undefined, history, projection, schemas,
   });
 
-  run.bootstrap(inv);
-  run.declareProjection();
-  const bookkeeping = [...bookkeepingFor(cwd, env, opts.home), ...(history ? historyBookkeeping(history) : [])];
-  run.head({
-    tool: spec.name, v: spec.version, ...(inv ? { inv } : {}), ...(session ? { session } : {}),
-    argv: argvRedacted, resolved, ...(headRedacted ? { redacted } : {}), inputs: inputDescriptors,
-    effects: command ? { ...command.effects, bookkeeping } : { reads: [], writes: [], network: false, idempotent: true, bookkeeping },
-    ...(dryRun ? { dry_run: true } : {}),
-  });
-  run.flushDeferredFailures();
-  capture.attach(run);
-  if (run.sinkFailed) { release(); return run.end(); }
-  if (location.warning) run.writerWarning(location.warning);
-  if (historyWarning) run.writerWarning(historyWarning);
-  run.noteProjection();
+  // From here the run has a receipt and, once the next call returns, a bootstrap line, so it
+  // closes with `end` whatever happens (spec §3.3): nothing below may escape `main`, and `main`
+  // returns a status instead of rejecting. `conduct` is everything the run does; what it throws
+  // is the writer's own failure, or the failure of its report of the tool's.
+  const progress = { reporting: false };
+  let writerFailed = false, unreported = false, threwAfterEnd = false;
 
-  retain(run, location.receiptDir, spec.retention.count, dryRun, now());
-  if (history) retainStream(run, history.dir, historyPlan?.days ?? historyDays(env), dryRun, now());
+  /**
+   * The tool's throw as the writer's own `uncaught.exception` (spec §6): writer-built, so no
+   * declared secret can rename its fields or have it withheld, while the exception's name, message
+   * and stack are scrubbed like any other text of the tool's (flyingrobots/parley#161).
+   */
+  const reportUncaught = (e: unknown, where: string, whose: string): void => {
+    progress.reporting = true;
+    const err = e instanceof Error ? e : new Error(String(e));
+    run.writerError({ code: "uncaught.exception", problem: `uncaught ${err.name}${where}: ${err.message || "(no message)"}`, remedy: `${whose}; report it with the receipt at ${run.receiptPath}` }, { detail: { stack: err.stack } });
+    progress.reporting = false;
+  };
 
-  if (discovery) {
-    try { discover(run, spec, discovery, commandName, bookkeeping); } catch (e) {
-      const err = e instanceof Error ? e : new Error(String(e));
-      if (!run.ended && !(e instanceof ParleyRedactionConflict)) run.error({ code: "uncaught.exception", problem: `uncaught ${err.name} during discovery: ${err.message || "(no message)"}`, remedy: `this is a defect in the tool's declaration; report it with the receipt at ${run.receiptPath}` }, { detail: { stack: err.stack } });
+  const conduct = async (): Promise<void> => {
+    run.bootstrap(inv);
+    run.declareProjection();
+    const bookkeeping = [...bookkeepingFor(cwd, env, opts.home), ...(history ? historyBookkeeping(history) : [])];
+    run.head({
+      tool: spec.name, v: spec.version, ...(inv ? { inv } : {}), ...(session ? { session } : {}),
+      argv: argvRedacted, resolved, ...(headRedacted ? { redacted } : {}), inputs: inputDescriptors,
+      effects: command ? { ...command.effects, bookkeeping } : { reads: [], writes: [], network: false, idempotent: true, bookkeeping },
+      ...(dryRun ? { dry_run: true } : {}),
+    });
+    run.flushDeferredFailures();
+    capture.attach(run);
+    if (run.sinkFailed) return;
+    if (location.warning) run.writerWarning(location.warning);
+    if (historyWarning) run.writerWarning(historyWarning);
+    run.noteProjection();
+
+    retain(run, location.receiptDir, spec.retention.count, dryRun, now());
+    if (history) retainStream(run, history.dir, historyPlan?.days ?? historyDays(env), dryRun, now());
+
+    if (discovery) {
+      try { discover(run, spec, discovery, commandName, bookkeeping); } catch (e) {
+        if (!run.ended && !(e instanceof ParleyRedactionConflict)) reportUncaught(e, " during discovery", "this is a defect in the tool's declaration");
+      }
+      return;
     }
-    release();
-    return run.ended ? run.status ?? 4 : run.end();
-  }
+
+    try {
+      await handler(run, [...rest]);
+    } catch (e) {
+      if (run.ended) { threwAfterEnd = true; return; }
+      // A record redaction made invalid was already reported by the writer, under its own code and
+      // without the value (§5.3, flyingrobots/parley#131); an uncaught.exception beside it would
+      // say the same thing twice. The run closes with 4.
+      if (!(e instanceof ParleyRedactionConflict)) reportUncaught(e, "", "this is a defect in the tool");
+    }
+  };
 
   try {
-    await handler(run, [...rest]);
+    await conduct();
   } catch (e) {
-    if (run.ended) { release(); return 4; }
-    const err = e instanceof Error ? e : new Error(String(e));
-    // A record redaction made invalid was already reported by the writer, under its own code and
-    // without the value (§5.3, flyingrobots/parley#131); an uncaught.exception beside it would
-    // say the same thing twice. The run closes with 4.
-    if (!(e instanceof ParleyRedactionConflict)) run.error({ code: "uncaught.exception", problem: `uncaught ${err.name}: ${err.message || "(no message)"}`, remedy: `this is a defect in the tool; report it with the receipt at ${run.receiptPath}` }, { detail: { stack: err.stack } });
+    writerFailed = true;
+    // The tool failed and the line that says so could not be built or written.
+    unreported = progress.reporting;
+    try {
+      if (!run.ended) run.writerError({ code: "uncaught.writer_failure", problem: `the writer itself failed: ${describeThrown(e)}`, remedy: `this is a defect in parley-emit; report it with the receipt at ${run.receiptPath}` }, { detail: { stack: stackOf(e) } });
+    } catch { unreported = true; /* nothing more can be said; the status says it */ }
   } finally {
     release();
   }
-  return run.ended ? run.status ?? 4 : run.end();
+  // A handler that threw after ending the run failed after the last line that could say so.
+  if (run.ended) return threwAfterEnd ? 4 : run.status ?? 4;
+  // A failure that could not be reported is protocol output that could not be written: 4, not
+  // the 2 of a failure that was reported (spec §3.4).
+  try { return run.end(writerFailed && unreported ? 4 : undefined); } catch { return 4; }
+}
+
+/** A thrown value in a few words, for the writer's own failure line. Never throws: a value that cannot be described is said to be that. */
+function describeThrown(e: unknown): string {
+  try {
+    if (e instanceof Error) return `${e.name}: ${e.message || "(no message)"}`;
+    return String(e);
+  } catch { return "a thrown value that could not be described"; }
+}
+
+function stackOf(e: unknown): string | undefined {
+  try { return e instanceof Error && typeof e.stack === "string" ? e.stack : undefined; } catch { return undefined; }
 }
 
 /**
@@ -297,7 +345,8 @@ function discover(run: Run, spec: ToolSpec, discovery: "schema" | "help", comman
     if (discovery === "schema") WRITER_SCHEMAS.forEach(add);
     for (const t of types.values()) {
       const doc = t.schema ?? SCHEMAS.find((s) => s.id === t.id && s.version === t.version)?.schema;
-      if (!doc) { run.warning({ code: "schema.unavailable", problem: `no schema document for ${t.id}@${t.version}`, remedy: "declare the schema on the emitted type" }); continue; }
+      // The writer's own warning, so writer-built: its code and field names are not scrubbed.
+      if (!doc) { run.writerWarning({ code: "schema.unavailable", problem: `no schema document for ${t.id}@${t.version}`, remedy: "declare the schema on the emitted type" }); continue; }
       run.describe({ event: "schema", id: t.id, version: t.version, schema: doc }, SCHEMA_IDS.schema, "schema");
     }
     run.end(0);
@@ -387,8 +436,8 @@ export function retain(run: Run, receiptDir: string, count: number, dryRun: bool
     if (hasEnded(p) || at - seen.mtime > INCOMPLETE_GRACE_MS) chosen.push({ name: f.name, seen: seen.key });
   }
   const victims = chosen.map((c) => c.name);
-  if (!victims.length) { run.step("retention: nothing to delete", `${files.length} of this tool's receipts exceed the retention count of ${count}, but every excess receipt is still in flight (no end line yet); only completed bundles, or incomplete ones older than a day, are deleted (§5.1)`); return; }
-  if (dryRun) { run.step(`retention: would delete ${victims.length} receipt bundle(s)`, `${files.length} of this tool's receipts exceed the retention count of ${count}; a dry run performs no retention deletion (§4.3)`, { receipts: victims }); return; }
+  if (!victims.length) { run.writerStep("retention: nothing to delete", `${files.length} of this tool's receipts exceed the retention count of ${count}, but every excess receipt is still in flight (no end line yet); only completed bundles, or incomplete ones older than a day, are deleted (§5.1)`); return; }
+  if (dryRun) { run.writerStep(`retention: would delete ${victims.length} receipt bundle(s)`, `${files.length} of this tool's receipts exceed the retention count of ${count}; a dry run performs no retention deletion (§4.3)`, { receipts: victims }); return; }
   const deleted: string[] = [];
   for (const { name, seen } of chosen) {
     const p = join(receiptDir, name);
@@ -398,7 +447,7 @@ export function retain(run: Run, receiptDir: string, count: number, dryRun: bool
     // unlinked throws here and keeps its sidecars.
     try { rmSync(p, { force: true }); rmSync(join(receiptDir, base), { recursive: true, force: true }); deleted.push(name); } catch { /* a bundle another run is deleting */ }
   }
-  run.step(`retention: deleted ${deleted.length} receipt bundle(s)`, `${files.length} of this tool's receipts exceeded the retention count of ${count}; the oldest completed bundles are deleted with their sidecars (§5.1)`, { receipts: deleted });
+  run.writerStep(`retention: deleted ${deleted.length} receipt bundle(s)`, `${files.length} of this tool's receipts exceeded the retention count of ${count}; the oldest completed bundles are deleted with their sidecars (§5.1)`, { receipts: deleted });
 }
 
 /**
@@ -410,8 +459,8 @@ export function retain(run: Run, receiptDir: string, count: number, dryRun: bool
 function retainStream(run: Run, dir: string, days: number, dryRun: boolean, at: number): void {
   const segments = retainHistory(dir, days, at, dryRun);
   if (!segments.length) return;
-  if (dryRun) { run.step(`history retention: would delete ${segments.length} segment(s)`, `the shared history stream keeps ${days} daily segment(s), today's included; a dry run performs no retention deletion (§4.3)`, { segments }); return; }
-  run.step(`history retention: deleted ${segments.length} segment(s)`, `the shared history stream keeps ${days} daily segment(s), today's included; older segments are deleted whole, since an append-only file with concurrent writers cannot be rewritten safely (§5.1, §8)`, { segments });
+  if (dryRun) { run.writerStep(`history retention: would delete ${segments.length} segment(s)`, `the shared history stream keeps ${days} daily segment(s), today's included; a dry run performs no retention deletion (§4.3)`, { segments }); return; }
+  run.writerStep(`history retention: deleted ${segments.length} segment(s)`, `the shared history stream keeps ${days} daily segment(s), today's included; older segments are deleted whole, since an append-only file with concurrent writers cannot be rewritten safely (§5.1, §8)`, { segments });
 }
 
 // ---- console capture (§1.2) --------------------------------------------------------------
@@ -429,7 +478,7 @@ let saved: Map<string, ConsoleFn> | null = null;
 function record(c: Capture, method: string, text: string): void {
   if (c.run === null) { c.pending.push({ method, text }); return; }
   if (c.run.ended) return;
-  try { c.run.step("captured console output", `a library called console.${method}; stdout and stderr carry only protocol lines (§1.2), so the text is kept here`, { method, text }); } catch { /* the run ended between the check and the write */ }
+  try { c.run.writerStep("captured console output", `a library called console.${method}; stdout and stderr carry only protocol lines (§1.2), so the text is kept here`, { method, text }); } catch { /* the run ended between the check and the write */ }
 }
 
 function captureConsole(): { attach: (run: Run) => void; release: () => void } {

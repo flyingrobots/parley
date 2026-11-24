@@ -30,7 +30,7 @@ every package under `packages/` or the artifacts it is given:
 bun run release-check --phase development
 bun run release-check --phase candidate
 bun run release-check --phase publication
-bun run release-check --phase publication --artifact flyingrobots-parley-read-0.2.1.tgz
+bun run release-check --phase publication --artifact flyingrobots-parley-read-0.2.0.tgz
 bun run release-check --phase publication --artifact packages/parley-emit-py/parley_emit.py
 bun run release-check --phase development --base <an earlier ref you trust>
 bun run release-check --phase publication --frozen-since <the previous release tag>
@@ -231,7 +231,7 @@ commit, on the artifact that would be released, before anything public exists:
 bun run release-gate -- parley-emit
 bun run release-gate -- parley-read
 bun run release-gate -- parley-emit-py
-bun run release-gate -- parley-read --tag parley-read-v0.2.1 --out <dir> --consumer
+bun run release-gate -- parley-read --tag parley-read-v0.2.0 --out <dir> --consumer
 ```
 
 It has two callers. The person tagging runs it on `main` at the merge commit and **pushes the tag

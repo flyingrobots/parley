@@ -45,21 +45,51 @@ const gaps = new WeakMap<object, string | null>();
 const SUBSCHEMA = ["items", "not", "if", "then", "else", "additionalProperties"] as const;
 const SUBSCHEMA_LISTS = ["anyOf", "allOf", "oneOf"] as const;
 
+const TYPE_NAMES = new Set(["null", "boolean", "object", "array", "number", "string", "integer"]);
+/** Keywords whose value is a count: a non-negative integer. */
+const COUNTS = ["minLength", "maxLength", "minItems", "maxItems", "minProperties", "maxProperties"] as const;
+/** Keywords whose value is a bound: a finite number. */
+const BOUNDS = ["minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"] as const;
+/** What `schemaSubsetGap` reports for a `pattern` this writer will not answer for. It names no part of the pattern. */
+const PATTERN_GAP = "a pattern this writer cannot evaluate as ECMAScript reads it";
+
+/**
+ * A keyword whose value has the wrong shape is a schema this checker cannot evaluate, the same as
+ * a keyword it does not implement: `enum: 5` has no reading to check a record against. Each is
+ * reported here, before any value is walked, so nothing below has to trust a shape it did not
+ * check and no malformed document can make the walk throw. The Python writer reports the same
+ * constructs in the same words.
+ */
 function walkSchema(node: unknown): string | null {
   if (node === true || node === false || node === undefined) return null;
   if (typeof node !== "object" || node === null || Array.isArray(node)) return "a schema that is not an object or a boolean";
   const s = node as Record<string, unknown>;
-  for (const k of Object.keys(s)) {
-    if (!SUPPORTED.has(k)) return k;
-    if (k === "format" && !Object.hasOwn(FORMATS, String(s[k]))) return `format ${String(s[k])}`;
+  for (const k of Object.keys(s)) if (!SUPPORTED.has(k)) return k;
+  if (s.type !== undefined) {
+    const names = Array.isArray(s.type) ? s.type : [s.type];
+    if (!names.every((t) => typeof t === "string" && TYPE_NAMES.has(t))) return "type that is not a type name or a list of type names";
+  }
+  if (s.enum !== undefined && !Array.isArray(s.enum)) return "enum that is not a list";
+  if (s.required !== undefined && !(Array.isArray(s.required) && s.required.every((k) => typeof k === "string"))) return "required that is not a list of strings";
+  for (const k of COUNTS) if (s[k] !== undefined && !(typeof s[k] === "number" && Number.isInteger(s[k]) && (s[k] as number) >= 0)) return `${k} that is not a non-negative integer`;
+  for (const k of BOUNDS) if (s[k] !== undefined && !(typeof s[k] === "number" && Number.isFinite(s[k]))) return `${k} that is not a number`;
+  if (s.pattern !== undefined) {
+    if (typeof s.pattern !== "string") return "pattern that is not a string";
+    if (regex(s.pattern) === null) return PATTERN_GAP;
+  }
+  if (s.format !== undefined) {
+    if (typeof s.format !== "string") return "format that is not a string";
+    if (!Object.hasOwn(FORMATS, s.format)) return `format ${s.format}`;
   }
   if (Array.isArray(s.items)) return "items as a tuple";
   for (const k of SUBSCHEMA) { const gap = walkSchema(s[k]); if (gap !== null) return gap; }
   for (const k of SUBSCHEMA_LISTS) {
-    if (!Array.isArray(s[k])) continue;
+    if (s[k] === undefined) continue;
+    if (!Array.isArray(s[k])) return `${k} that is not a list`;
     for (const sub of s[k] as unknown[]) { const gap = walkSchema(sub); if (gap !== null) return gap; }
   }
-  if (s.properties !== null && typeof s.properties === "object" && !Array.isArray(s.properties)) {
+  if (s.properties !== undefined) {
+    if (s.properties === null || typeof s.properties !== "object" || Array.isArray(s.properties)) return "properties that is not an object";
     for (const sub of Object.values(s.properties as Record<string, unknown>)) { const gap = walkSchema(sub); if (gap !== null) return gap; }
   }
   return null;
@@ -99,7 +129,12 @@ export function checkRecord(value: unknown, schema: unknown): CheckResult {
   try { validate(schema, value, "", issues); }
   catch (e) {
     if (e instanceof Unsupported) return { ok: false, errors: [e.message], unsupported: e.keyword };
-    throw e;
+    // Nothing else is expected, since the walk above checked every shape the code below relies
+    // on. Whatever it is, it is this checker failing to evaluate the schema, and the answer to
+    // that is "nothing was established", never a throw and never the thrown text, which can
+    // quote the schema (spec §5.3).
+    const gap = "a construct this checker could not evaluate";
+    return { ok: false, errors: [`the schema uses ${gap}, which this checker does not implement`], unsupported: gap };
   }
   return issues.length === 0 ? { ok: true } : { ok: false, errors: issues.map((i) => i.message), pointers: issues.map((i) => i.at) };
 }
@@ -138,8 +173,36 @@ function satisfies(schema: unknown, value: unknown): boolean {
   return scratch.length === 0;
 }
 
-function regex(pattern: string): RegExp {
-  try { return new RegExp(pattern, "u"); } catch { return new RegExp(pattern); }
+const compiled = new Map<string, RegExp | null>();
+
+/**
+ * A schema's `pattern` as JSON Schema reads it: an ECMAScript regular expression with the `u`
+ * flag. `null` when this engine rejects it, and for an inline-flag group (`(?i)`, `(?i:…)`,
+ * `(?-i:…)`): ECMAScript had none until recently and engines differ on whether they read one, so
+ * the writer does not answer differently on different runtimes. A `null` here is "cannot
+ * evaluate", reported by `schemaSubsetGap`; the engine's message, which quotes the pattern, goes
+ * nowhere.
+ */
+function regex(pattern: string): RegExp | null {
+  const cached = compiled.get(pattern);
+  if (cached !== undefined) return cached;
+  let r: RegExp | null;
+  try { r = hasInlineFlags(pattern) ? null : new RegExp(pattern, "u"); } catch { r = null; }
+  compiled.set(pattern, r);
+  return r;
+}
+
+/** Whether a group outside a character class opens with `(?` and a flag letter or `-`. */
+function hasInlineFlags(pattern: string): boolean {
+  let inClass = false;
+  for (let i = 0; i < pattern.length; i++) {
+    const c = pattern[i]!;
+    if (c === "\\") { i += 1; continue; }
+    if (inClass) { if (c === "]") inClass = false; continue; }
+    if (c === "[") { inClass = true; continue; }
+    if (c === "(" && pattern[i + 1] === "?" && /[A-Za-z-]/.test(pattern[i + 2] ?? "")) return true;
+  }
+  return false;
 }
 
 function validate(schema: unknown, value: unknown, path: string, errors: Issue[]): void {
@@ -171,7 +234,11 @@ function validate(schema: unknown, value: unknown, path: string, errors: Issue[]
   if (typeof value === "string") {
     if (typeof s.minLength === "number" && [...value].length < s.minLength) fail(`is shorter than ${s.minLength}`);
     if (typeof s.maxLength === "number" && [...value].length > s.maxLength) fail(`is longer than ${s.maxLength}`);
-    if (typeof s.pattern === "string" && !regex(s.pattern).test(value)) fail(`does not match ${s.pattern}`);
+    if (typeof s.pattern === "string") {
+      const re = regex(s.pattern);
+      if (re === null) throw new Unsupported(PATTERN_GAP);
+      if (!re.test(value)) fail(`does not match ${s.pattern}`);
+    }
     if (typeof s.format === "string") {
       const f = FORMATS[s.format];
       if (f === undefined) throw new Unsupported(`format ${s.format}`);

@@ -110,6 +110,22 @@ function upstream(w: Workflow, name: string, seen = new Set<string>()): Set<stri
 const PUBLIC = /\bgh release (create|upload)\b|\bnpm@?\S* (stage )?publish\b(?![^\n]*--dry-run)/;
 const runs = (j: Job) => j.steps.map((s) => s.run ?? "");
 
+describe("REL-9 one spec version", () => {
+  // The spec's status line is the authority (spec §4.4); a package that names the spec version it
+  // implements must name that one. Found at the 0.2.1 release, when three READMEs and the Python
+  // writer's `--vendor-info` still said 0.2.0 (flyingrobots/parley#148).
+  test("every package that states the spec version states the spec's own", () => {
+    const spec = /^\*\*Spec version:\*\* `(\d+\.\d+\.\d+)`/m.exec(readFileSync("spec/parley-v0.2.md", "utf8"))?.[1];
+    expect(spec, "the spec has no status line").toBeDefined();
+    for (const d of PACKAGES) {
+      const stated = /^Spec version `(\d+\.\d+\.\d+)`/m.exec(readFileSync(join("packages", d, "README.md"), "utf8"))?.[1];
+      expect(stated, `packages/${d}/README.md states no spec version`).toBe(spec);
+    }
+    const py = /^SPEC_VERSION = "(\d+\.\d+\.\d+)"$/m.exec(readFileSync("packages/parley-emit-py/parley_emit.py", "utf8"))?.[1];
+    expect(py, "parley_emit.py's SPEC_VERSION").toBe(spec);
+  });
+});
+
 describe("REL-8 the release workflows", () => {
   test("each release workflow is triggered by its tag and runs the gate as a job before any job that makes something public", () => {
     for (const { file, pkg } of RELEASES) {

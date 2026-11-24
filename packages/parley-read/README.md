@@ -19,18 +19,17 @@ quarantine, §5.4's unterminated tail, §1.3's `(run, seq)`, §4.5 and §4.6 on 
 and §5 on sidecars — because the cases §6 calls unconstrainable will happen, and a reader that
 aborts on the first stray byte is broken by exactly the case the spec admits.
 
-Spec version `0.2.0`. The package version moves with this code; each message schema moves on its
+Spec version `0.2.1`. The package version moves with this code; each message schema moves on its
 own (spec §4.4). The schemas it ships are the repository's top-level files and every released
 snapshot of another version, copied from `schemas/` at the commit recorded in `src/schemas.ts`,
 byte-identical by test (spec §4.5). Fifteen are the versions released with spec `0.2.0`;
-`parley.query` and `parley.lens` are at draft 1.1.0, with their released 1.0.0 shipped beside them
+`parley.query` and `parley.lens` are at 1.1.0, released with spec `0.2.1`, with their released 1.0.0 shipped beside them
 so lines an earlier reader wrote still validate (flyingrobots/parley#133).
 
-This is a library with no command, for Bun 1.2 or later. This tree is version 0.2.0, which is not
-tagged yet; 0.1.1 is the latest release (tag `parley-read-v0.1.1`), on npm once the owner approves
-it ([docs/workflows/release-parley-read](../../docs/workflows/release-parley-read/README.md)).
-`bun add @flyingrobots/parley-read` installs the released version with `@flyingrobots/parley-emit`
-`^0.2.4`.
+This is a library with no command, for Bun 1.2 or later. This is version 0.2.0 (tag
+`parley-read-v0.2.0`), on npm once the owner approves it
+([docs/workflows/release-parley-read](../../docs/workflows/release-parley-read/README.md)).
+`bun add @flyingrobots/parley-read` installs it with `@flyingrobots/parley-emit` `^0.4.0`.
 Inside this repository it is the workspace package `@flyingrobots/parley-read`.
 
 ## Loading a directory's receipts
@@ -454,9 +453,12 @@ That line is 1,380 bytes. Eight things in it are the whole feature:
   second section stands for both: `folded: {"others": 1, "records": 4, …}`, this run and one other
   like it whose 4 records are not named (flyingrobots/parley#100), and `loss.folded` says 4 of
   the 7 excluded were left out by that fold rather than by the budget (flyingrobots/parley#79). The
-  failed run shares the `inv` and not the result, so it is never folded into them. Nor would two
+  failed run shares the `inv` and not the result, so it is not folded into them. Nor would two
   runs that both succeeded with different `count.result` records be: every result record is part
-  of what must be equal (flyingrobots/parley#133). See
+  of what must be equal (flyingrobots/parley#133). All of this is judged on the records the
+  window holds. A run only partly inside the window is compared by that part, so two runs can
+  fold under one window and differ under a wider one; `fold: false`, or a window that holds the
+  runs whole, shows them apart. See
   [runs of one invocation](../../docs/topics/parley-read/README.md#runs-of-one-invocation-are-named-once).
 - **A fold names what it stands for.** `stands_for` holds the first run's id,
   `01M86XC5FZQZY4F1EW9HNJKD7M`, so its records open by `(run, seq)` like any the digest names.
@@ -531,7 +533,7 @@ the ids are opened; a drill-down past it declines as a read does and opens nothi
 | `receiptLocations(opts)`, `repoReceiptDir`, `stateReceiptDir` | Where receipts are, present or absent; creates nothing |
 | `LineBuffer`, `splitLines`, `readFileLines` | Newline buffering: bytes in, complete lines out, the unterminated tail kept apart (§1.4, §5.4) |
 | `validator(schemas?)`, `schemaRef`, `envelopeGaps` | Exact-pair validation and the version-independent core (§4.5, §4.6) |
-| `SCHEMAS`, `SCHEMA_SOURCE` | The seventeen schemas this reader ships, the released versions of spec `0.2.0`'s release, with the commit and digest of each |
+| `SCHEMAS`, `SCHEMA_SOURCE` | The nineteen schemas this reader ships: each of the seventeen messages at its current released version, and the released 1.0.0 of `parley.query` and `parley.lens` beside their 1.1.0, with the commit and digest of each |
 | `QUARANTINE_CODES` | Which defect codes are a kept line rather than a judgement about a record |
 
 ## What a load says, rule by rule
@@ -568,6 +570,9 @@ secret, whether its `inv` matches — is the caller's to decide, and this reader
   digest the receipt declared, and nothing else.
 - Judge conformance. The doctor under `scripts/` names violated rules; this is a loader, and a
   defect it reports is what it could not read or could not validate.
+- Return an integer beyond 2^53 exactly. A record is parsed as JSON into doubles, so
+  `9007199254740993` comes back as `9007199254740992`, and two results that differ only in such an
+  integer compare equal and fold (flyingrobots/parley#159).
 - Write, create or repair anything. Locating a location does not create it.
 - Windows paths. v0.2 of the spec is POSIX-only.
 

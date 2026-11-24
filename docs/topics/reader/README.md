@@ -131,7 +131,7 @@ the view, and results computed under different budgets are not comparable. It al
   ([flyingrobots/parley#79](https://github.com/flyingrobots/parley/issues/79),
   [flyingrobots/parley#100](https://github.com/flyingrobots/parley/issues/100),
   [flyingrobots/parley#133](https://github.com/flyingrobots/parley/issues/133)). Two runs whose
-  results differ are never one, and a read that states `fold: false` folds nothing; the lens then
+  results in the window differ are not one, and a read that states `fold: false` folds nothing; the lens then
   echoes `fold`. A fold is named only in the section of the run that stands for it, so when the
   budget names no record of that run the lens reports the fold as a count in `loss.folded` and by
   no id. The exact criterion is
@@ -153,8 +153,12 @@ Which budget field bounds what, and how the count is arrived at, is
 
 ## The two messages
 
-Both were released at 1.0.0 with spec `0.2.0`, so a change to either needs a new version. Both
-are now at **draft 1.1.0**, which adds optional fields and removes nothing
+Both were released at 1.0.0 with spec `0.2.0`, and both are at **1.1.0**, released with spec
+`0.2.1`, which adds optional fields, removes none and narrows no constraint. Spec §4.5 also asks a
+minor to preserve the meaning of every field, and `parley.lens` 1.1.0 is a decided exception to
+that for one sentence, `loss.folded` depending on the window alone, and for what a fold is: the
+owner chose 1.1.0 over 2.0.0 on 2026-11-24 with that sentence in view (flyingrobots/parley#146,
+flyingrobots/parley#160)
 ([flyingrobots/parley#133](https://github.com/flyingrobots/parley/issues/133)): `fold` on the
 query, and on the lens `fold` and a folded section's `stands_for`. The released 1.0.0 of each is
 unchanged under `schemas/released/`, and the reader validates a line against the version it
@@ -164,8 +168,8 @@ govern a release and a draft.
 
 | Schema | Version | Message |
 | --- | --- | --- |
-| `parley.query` | 1.1.0 (draft) | A read, recorded as an event; with `records`, a drill-down naming the records it opens |
-| `parley.lens` | 1.1.0 (draft) | The lens a result carries |
+| `parley.query` | 1.1.0 | A read, recorded as an event; with `records`, a drill-down naming the records it opens |
+| `parley.lens` | 1.1.0 | The lens a result carries |
 
 A read is a run, so both lines carry the §1.3 envelope. `run` on these lines is the read's own run,
 not the run being read: the read writes its own receipt like any other parley program, and `asker`

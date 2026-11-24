@@ -14,7 +14,8 @@ it. This page is the reference for what the package does on `main`; the package
 | `main(spec, argv, handler, options)` | Parses the writer-owned flags (`--human`, `--humanize`, `--dry-run`, `--schema`, `--help`, `-h`) before the first `--`, which ends them (flyingrobots/parley#103), chooses the receipt location, opens the shared history stream when one is configured, resolves declared sources, redacts, bootstraps, writes the head, enforces retention, runs the handler under the top-level handler, closes with `end`, returns the exit status |
 | `Run` | `result`, `page`, `step`, `warning`, `error`, `readInput`, `input`, `inputUnreadable`, `finaliseInputs`, `end`; `receiptPath`, `cwd`, `dryRun`, `ended`, `status`, `sinkFailed`, `redactionRefused` |
 | `ParleyRedactionConflict`, `REDACTION_CONFLICT_CODE` | The error an emission throws when redaction made its record invalid under its declared schema, and the code of the `error` line the writer emits for it |
-| `SCHEMAS`, `SCHEMA_SOURCE` | The seventeen schemas the package ships, the released versions of spec `0.2.0`'s release, with the commit and digest of each |
+| `ParleyRedactionUnchecked`, `REDACTION_UNCHECKED_CODE` | The error an emission throws when redaction changed its record and the writer holds a schema document for the pair that it cannot evaluate, and the code of that `error` line. It is a `ParleyRedactionConflict` |
+| `SCHEMAS`, `SCHEMA_SOURCE` | The seventeen schemas the package ships, each at its current released version (the root `CHANGELOG.md`'s release headings), with the commit and digest of each |
 | `computeInv`, `canonical`, `digestTree`, `sha256` | The documented `inv` derivation and its parts |
 | `chooseLocation`, `repoRoot`, `stateBase`, `bookkeepingFor` | Receipt placement and the bookkeeping a run declares |
 | `resolveHistory`, `openHistory`, `isHistoryFailure`, `writeWholeLine`, `retainHistory`, `historyBookkeeping`, `segmentName`, `historyDays` | The shared history stream of spec §8: where it is, opening a segment, the whole-line append, segment retention, and the bookkeeping a run with a stream declares |
@@ -36,7 +37,10 @@ it. This page is the reference for what the package does on `main`; the package
 2. Reserve the receipt: `.parley/.gitignore` with a line `*`, created whole and linked into
    place if absent; then `.parley/receipts/<run>.jsonl` opened exclusively. On a user's ignore
    file (one without `*`, or with a negation that can re-include `receipts/`,
-   flyingrobots/parley#109), a working-directory path carrying a secret value, an unwritable directory or
+   flyingrobots/parley#109; a negation the writer cannot evaluate exactly counts as one, as
+   `negationReachesReceipts` in `src/location.ts` states: an inner `/`, a backslash, a character
+   outside printable ASCII, a bracket expression that is unterminated or holds `[:`, `[=` or
+   `[.`, or a line holding a NUL byte), a working-directory path carrying a secret value, an unwritable directory or
    a failed reservation, the state directory keyed by a digest of the repository root. With
    neither, one `startup.failed` line on stderr (`startup.receipt_unwritable`, or
    `startup.secret_in_path` when the state path would carry the secret too) and exit 3 (§3.2, §5,
@@ -67,7 +71,11 @@ it. This page is the reference for what the package does on `main`; the package
    `console` function is captured into the receipt from the start of `main`, buffered until the
    head exists; direct descriptor writes and timers after `end` are the named exceptions.
 7. An uncaught throw becomes `error` with code `uncaught.exception`, its stack in the receipt copy
-   only (§6). `end` digests the
+   only (§6). The line is writer-built, so no declared secret can have it withheld. `main` never
+   rejects once the receipt is reserved: a failure of the writer's own after that is
+   `uncaught.writer_failure` and status 2, and if the report of a failure cannot itself be built
+   or written, the run still ends, with status 4, because an error that could not be written is
+   protocol output that could not be written (§3.3, §3.4, flyingrobots/parley#161). `end` digests the
    declared inputs, with redacted descriptors in the preimage, and emits `receipt.inputs` with
    `inv` if not already done, then writes `end` to stdout and the receipt as one event and closes
    the file. Status: the one given (`0` refused after a reported error), else 2 if an error was
@@ -250,17 +258,19 @@ five decisions behind the built-in that the owner can overrule.
 ## A record redaction made invalid
 
 Spec §5.3 forbids publishing a record that redaction made invalid under its declared schema
-(flyingrobots/parley#131). The writer holds every schema document it can check against, by exact
+(flyingrobots/parley#131), and does not exempt a program that holds the schema and cannot
+evaluate it (flyingrobots/parley#144). The writer holds every schema document it can check against, by exact
 pair: the ones it ships and the ones the tool declared on its emitted and error types.
 
 | Step | Behaviour |
 | --- | --- |
-| Trigger | The scrub replaced something in a record the tool emitted. A writer-built record never triggers it: the head, `end`, `redaction`, `sidecar`, `receipt.inputs`, discovery lines and the writer's own diagnostics are emitted with the writer flag, which also keeps their scalars and identity fields from being scrubbed |
+| Trigger | The scrub replaced something in a record the tool emitted. A writer-built record never triggers it: the head, `end`, `redaction`, `sidecar`, `receipt.inputs`, discovery lines, the writer's own warnings and its redaction errors are emitted with the writer flag. That flag narrows the scrub so the record stays valid under its released schema. Left alone: the envelope; field names; numbers and booleans; the strings under `sha256`, `inv`, `tool`, `v`, `name`, `id`, `version`, `code`, `op` and `error`; the head's `redacted` object, written as built (its lists of names are scrubbed when it is built; its indexes and JSON Pointers are locations); and a `schema` line's document. Scrubbed: every other string. So a declared secret equal to one of the protocol's words (`create`, `paths`, `input.unreadable`) changes nothing in such a record, while the same value in `intent`, a `scope`, an input's `path` or `role`, a `problem` or `argv` is replaced. The records the writer raises on its own account are writer-built too (flyingrobots/parley#161): `uncaught.exception` and `uncaught.writer_failure` from `main`, the retention and history-retention steps, the projection step and the captured-console step. Their field names (`code`, `problem`, `remedy`, `decision`, `because`, `detail`, and `stack`, `method`, `text`, `receipts`, `segments` inside `detail`) and the writer's own `code` stay whatever a declared secret's value is; every string in them is scrubbed, the tool's text included: an exception's name, message and stack, a captured line, a file name. A step or an error the tool itself emits is the tool's record: scrubbed in full, keys included, and checked |
 | Check | Before any copy is written and before a `seq` is taken, the stream copy and, with `receiptExtra`, the receipt copy are each validated as scrubbed and as the tool handed them over. A failure the scrubbed copy has and the original did not is a conflict |
-| Not checked | A pair with no schema document, and a schema outside the checker's subset: nothing can be established, and the record is written as before. A record already invalid in the same way is written as before |
+| Schema not evaluable | The pair has a schema document the checker cannot evaluate: one that uses a keyword outside its subset, a keyword whose value has the wrong shape (`enum: 5`), or a `pattern` this writer will not answer for (one the engine rejects as ECMAScript with the `u` flag, or an inline-flag group). The two writers can differ on which schemas they can evaluate, and each refuses what it cannot; where both evaluate one, they agree. No such document makes the checker throw: `checkRecord` answers `unsupported`, in a redaction check, in a history projection (`history.transform_uncheckable`) and when called directly. The writer cannot show the redacted record is valid, so it withholds it exactly as it withholds a conflict: one writer-built `error`, code `redaction.schema_unchecked`, with `detail` `{schema: {id, version}, redacted}`, and the call throws `ParleyRedactionUnchecked`, a `ParleyRedactionConflict` with empty `pointers`, the `redacted` pointers and `construct` (what `schemaSubsetGap` reports). The construct is part of the schema, so it is on the exception and never on the line; it is left off the exception too if it would carry a declared secret value. The code means not checked: it does not say the record was invalid, and no secret was exposed, since the value was replaced first. The trigger is any redaction in such a record, even when the secret sat in an unconstrained string and the redacted record would still have been valid: nothing is established about a schema the checker did not evaluate. The remedies are to keep the declared schema within the checker's keywords (the package README lists them) or to keep declared secrets out of emitted records. Removing the `schema` document removes the refusal and the check together, which is the spec's exemption and not a fix |
+| Not checked | A pair with no schema document, which spec §5.3 exempts: the record is written as before. A record the scrub did not change is never checked, whatever its schema. A record already invalid in the same way is written as before |
 | Report | One writer-built `error`, code `redaction.schema_conflict`, on stderr and in the receipt. `problem` and `detail` (`schema: {id, version}`, `at`, `redacted`) name the fields by JSON Pointer and the schema pair. The checker's text is deliberately not used: it can quote the schema, and the value is the secret or sits beside it. Being writer-built, the error is not checked again, so it cannot raise another |
 | Refusal | The call throws `ParleyRedactionConflict`. `main` does not turn it into `uncaught.exception`; a handler may catch it and continue |
-| Status | 4, forced at `end` exactly as a sink failure forces it, whatever status the handler passes. `run.redactionRefused` is true |
+| Status | 4, forced at `end` exactly as a sink failure forces it, whatever status the handler passes, for a conflict and for a schema that could not be evaluated alike. `run.redactionRefused` is true |
 
 ## What it does not do
 

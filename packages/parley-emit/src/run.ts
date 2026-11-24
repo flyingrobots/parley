@@ -7,7 +7,7 @@ import { join, resolve } from "node:path";
 import { checkRecord } from "./check.ts";
 import type { HistoryProjection, HistorySink } from "./history.ts";
 import { canonical, computeInv, digestInput, sha256, type InputDecl, type InputDescriptor } from "./inv.ts";
-import { carriesSecret, scrub } from "./redact.ts";
+import { carriesSecret, replaceSecrets, scrub, scrubPointer } from "./redact.ts";
 import { isHistoryRefusal, type HistoryRefusal } from "./refusal.ts";
 
 export interface Sink { write(line: string): void }
@@ -25,8 +25,25 @@ const ENVELOPE_KEYS = ["t", "seq", "run", "_schema"] as const;
  * not writer-built and its `code` is scrubbed like anything else. Tool-supplied values that
  * reach a writer-built record (`resolved`, input descriptors) are scrubbed in full before it is
  * built.
+ *
+ * `op` is the same kind of thing: a bookkeeping entry's operation is one of the protocol's own
+ * tokens (`create`, `append`, `delete`), which `parley.command` enumerates. A declared secret
+ * whose value is `create` is a coincidence with a public word, and replacing the word would
+ * publish a line the released schema rejects.
+ *
+ * `error` is an input descriptor's diagnostic code, whose pattern `parley.receipt.inputs` states:
+ * the writer's own `input.unreadable` or `input.unread`, or a code the tool gave
+ * `inputUnreadable`, which is replaced by the writer's token there if it carries a declared
+ * secret value. No other writer-built record has a field of that name.
+ *
+ * What a writer-built record's scrub leaves alone, in full: the string under each key here; its
+ * numbers and booleans; its field names (`ScrubOptions.keys`); the head's `redacted` object and
+ * a `schema` line's document (`verbatim`); and the envelope. Every other string in it is
+ * scrubbed.
  */
-export const DIGEST_KEYS = new Set(["sha256", "inv", "tool", "v", "name", "id", "version", "code"]);
+export const DIGEST_KEYS = new Set(["sha256", "inv", "tool", "v", "name", "id", "version", "code", "op", "error"]);
+/** The code recorded for a declared input the program could not read, when it gives none. */
+const INPUT_UNREADABLE = "input.unreadable";
 
 export const SCHEMA_IDS = {
   bootstrap: { id: "parley.run.bootstrap", version: "1.1.1" },
@@ -70,7 +87,9 @@ export const REDACTION_CONFLICT_CODE = "redaction.schema_conflict";
  * status stays 4.
  *
  * The message names the fields by JSON Pointer and the schema pair. It never carries a value, a
- * validator's message or any part of the schema, so it is safe to log.
+ * validator's message or any part of the schema, and its message and `pointers` are scrubbed
+ * exactly as the published error line's `problem` and `detail.at` are, so it is safe to log: a
+ * pointer can name a property the scrub renamed, and that name can be the secret.
  */
 export class ParleyRedactionConflict extends Error {
   /** The schema the record was declared under. */
@@ -82,6 +101,38 @@ export class ParleyRedactionConflict extends Error {
     this.name = "ParleyRedactionConflict";
     this.schema = { id: schema.id, version: schema.version };
     this.pointers = [...pointers];
+  }
+}
+
+/** The code of the error a writer reports in place of a record redaction changed whose schema document it holds and cannot evaluate (spec §5.3, flyingrobots/parley#144). */
+export const REDACTION_UNCHECKED_CODE = "redaction.schema_unchecked";
+
+/**
+ * Thrown by an emission whose record redaction changed, under a schema document the writer holds
+ * and cannot evaluate: one that uses a construct outside the bounded checker (check.ts). The
+ * writer cannot show the redacted record is valid under its declared schema, so it withholds it
+ * exactly as it withholds a conflict (spec §5.3, flyingrobots/parley#144): the structured error
+ * `redaction.schema_unchecked` is already reported, nothing of the record was written, no `seq`
+ * was taken and the run will end with status 4.
+ *
+ * It is a `ParleyRedactionConflict`, so a handler or a `main` that already treats the conflict
+ * needs no second branch; `pointers` is empty, because no field was shown to be invalid.
+ * `redacted` is the JSON Pointer of each value the scrub replaced. `construct` names the first
+ * thing in the schema the checker does not implement, as `schemaSubsetGap` reports it; it is in
+ * this exception and its message only, never on the error line, which carries no part of the
+ * schema. It is left out (`null`, and absent from the message) if it would carry a declared
+ * secret value. The message never carries a value.
+ */
+export class ParleyRedactionUnchecked extends ParleyRedactionConflict {
+  /** The JSON Pointer of each value the scrub replaced. */
+  readonly redacted: readonly string[];
+  /** The first construct in the schema the writer's checker does not implement, or `null` when naming it would disclose a declared secret. */
+  readonly construct: string | null;
+  constructor(schema: SchemaRef, redacted: readonly string[], construct: string | null, message: string) {
+    super(schema, [], message);
+    this.name = "ParleyRedactionUnchecked";
+    this.redacted = [...redacted];
+    this.construct = construct;
   }
 }
 
@@ -99,13 +150,18 @@ export interface RunInit {
    * Every schema document the writer holds, by `id@version`: the ones the package ships and the
    * ones the tool declared (§4.2). A record redaction changed is validated against its own pair's
    * document before it is written (§5.3, flyingrobots/parley#131); a pair outside this map
-   * cannot be checked and is written as before.
+   * cannot be checked and is written as before. A pair inside it whose document the checker
+   * cannot evaluate is withheld (flyingrobots/parley#144).
    */
   schemas?: ReadonlyMap<string, Record<string, unknown>>;
 }
 
 type SinkName = "stdout" | "stderr" | "receipt";
-interface Emit { to: { stdout?: boolean; stderr?: boolean; receipt?: boolean }; writer?: boolean; noSidecar?: boolean; deferFailures?: boolean; verbatim?: string }
+interface Emit {
+  to: { stdout?: boolean; stderr?: boolean; receipt?: boolean }; writer?: boolean; noSidecar?: boolean; deferFailures?: boolean; verbatim?: string;
+  /** Pointers into this record where the caller replaced a secret before handing it over; each gets its `redaction` event as though the record's own scrub had found it. */
+  replaced?: readonly string[];
+}
 
 export class Run {
   readonly id: string; readonly tool: string; readonly v: string; readonly session?: string;
@@ -117,7 +173,7 @@ export class Run {
   private redactedAny: boolean;
   private failedSinks = new Set<SinkName>();
   private sidecarFailed = false;
-  /** A record was withheld because redaction made it invalid: like a sink failure, the run closes with 4 (§3.4, §5.3). */
+  /** A record was withheld because redaction made it invalid, or because the writer could not show it valid: like a sink failure, the run closes with 4 (§3.4, §5.3). */
   private outputRefused = false;
   private historyFailed = false;
   private projectionSeq: number | null = null;
@@ -148,7 +204,7 @@ export class Run {
   get status(): number | null { return this.finalStatus; }
   /** True when any stream, the receipt or a sidecar could not be written: the run closes with 4. */
   get sinkFailed(): boolean { return this.failedSinks.size > 0 || this.sidecarFailed; }
-  /** True when a record was withheld because redaction made it invalid under its declared schema (§5.3): the run closes with 4. */
+  /** True when a record redaction changed was withheld, because it was left invalid under its declared schema or because the writer could not evaluate that schema (§5.3): the run closes with 4. */
   get redactionRefused(): boolean { return this.outputRefused; }
 
   // ---- emission -------------------------------------------------------------------------
@@ -395,14 +451,16 @@ export class Run {
    * Scrub a payload's values. `event` is envelope, named by the writer or the tool's schema, and is
    * never a secret. For a writer-built record, the one field named by `verbatim` is left as it is:
    * the schema document of a `schema` line, a static declaration a secret cannot reach (§5.3,
-   * flyingrobots/parley#111).
+   * flyingrobots/parley#111), or the head's `redacted`, which holds indexes, JSON Pointers and
+   * names the caller has already scrubbed. A writer-built record's field names are never renamed.
    */
   private scrubPayload(payload: Record_, found: string[], writer: boolean, verbatim?: string): Record_ {
     const { event, ...all } = payload;
     const rest: Record_ = { ...all };
     if (verbatim !== undefined) delete rest[verbatim];
-    let scrubbed = scrub(rest, this.init.secretValues, "", found, writer ? { skipKeys: DIGEST_KEYS, scalars: false } : {}) as Record_;
-    if (verbatim !== undefined && verbatim in all) scrubbed = { ...scrubbed, [verbatim]: all[verbatim] };
+    let scrubbed = scrub(rest, this.init.secretValues, "", found, writer ? { skipKeys: DIGEST_KEYS, scalars: false, keys: false } : {}) as Record_;
+    // Put back in its own place, so the record's key order is the one it was built with.
+    if (verbatim !== undefined && verbatim in all) scrubbed = Object.fromEntries(Object.keys(all).map((k) => [k, k === verbatim ? all[k] : scrubbed[k]]));
     return event === undefined ? scrubbed : { event, ...scrubbed };
   }
 
@@ -424,8 +482,8 @@ export class Run {
     }
     // A tool's record the scrub changed is validated as each sink would receive it, before any
     // copy is written and before a seq is taken (§5.3, flyingrobots/parley#131). A writer-built
-    // record is never checked: its scalars are not scrubbed and its identity fields are skipped,
-    // and the error this raises is itself writer-built, so it cannot raise another.
+    // record is never checked; what its scrub leaves alone so that it stays valid is listed at
+    // DIGEST_KEYS. The error this raises is itself writer-built, so it cannot raise another.
     let t: number | undefined;
     if (how.writer !== true && (found.length > 0 || extraFound.length > 0)) {
       t = this.init.now();
@@ -443,7 +501,7 @@ export class Run {
       if (!how.noSidecar && Buffer.byteLength(text, "utf8") > SIDECAR_THRESHOLD) this.sidecar(at.seq, text);
       else this.write("receipt", text + "\n");
     }
-    for (const at_ of [...found, ...extraFound]) this.redaction(at.seq, at_);
+    for (const at_ of new Set([...found, ...extraFound, ...(how.replaced ?? [])])) this.redaction(at.seq, at_);
     return at.seq;
   }
 
@@ -456,45 +514,84 @@ export class Run {
   }
 
   /**
-   * Refuse a record that redaction made invalid under its declared schema (§5.3,
-   * flyingrobots/parley#131). Called before a seq is taken, with the seq and time the record
-   * would get. Each copy is checked as scrubbed and as the tool handed it over; a failure the
-   * scrubbed copy has and the original did not is one redaction caused. A record that was already
-   * invalid in the same way is not this rule's business and is written as before, as is one whose
-   * pair has no schema document here or whose schema is outside the checker's subset: nothing
-   * can be established about it (check.ts).
+   * Refuse a record that redaction made invalid under its declared schema, or that the writer
+   * cannot show is valid (§5.3, flyingrobots/parley#131, flyingrobots/parley#144). Called before
+   * a seq is taken, with the seq and time the record would get, and only for a tool's record the
+   * scrub changed.
    *
-   * On a conflict nothing of the record is written. One writer-built error names each field by
-   * JSON Pointer and the schema pair, and deliberately nothing the checker said: a validator's
+   * A pair with no schema document here is exempt, as §5.3 says: the rule asks nothing of it. A
+   * pair whose document uses a construct outside the checker's subset (check.ts) is not: the
+   * writer holds the schema and cannot evaluate it, so it cannot show the redacted record is
+   * valid, and it withholds the record as `redaction.schema_unchecked`. Publishing it would be
+   * the silent invalid line the rule exists to prevent.
+   *
+   * Otherwise each copy is checked as scrubbed and as the tool handed it over; a failure the
+   * scrubbed copy has and the original did not is one redaction caused, and is
+   * `redaction.schema_conflict`. A record that was already invalid in the same way is not this
+   * rule's business and is written as before.
+   *
+   * Either way nothing of the record is written. One writer-built error names the schema pair
+   * and the fields by JSON Pointer, and deliberately nothing the checker said: a validator's
    * message can quote the schema or the value, and the value is the secret or sits beside it.
-   * The run is marked to close with 4, since a record the writer would not write is an output it
-   * could not write (§3.4), and the refusal is thrown to the caller.
+   * The construct the checker could not evaluate is part of the schema, so it is not on the line
+   * either; it is on the exception. The run is marked to close with 4, since a record the writer
+   * would not write is an output it could not write (§3.4), and the refusal is thrown to the
+   * caller.
    */
   private refuseRedactionConflict(how: Emit, payload: Record_, receiptExtra: Record_ | undefined, scrubbed: Record_, extra: Record_ | undefined, schema: SchemaRef, at: { seq: number; t: number }, redacted: string[]): void {
     const doc = this.init.schemas?.get(`${schema.id}@${schema.version}`);
     if (doc === undefined) return;
+    const pair = `${schema.id}@${schema.version}`;
     const after = this.copies(how, scrubbed, extra, schema, at), before = this.copies(how, payload, receiptExtra, schema, at);
-    const pointers: string[] = [];
+    const raw: string[] = [];
     for (let i = 0; i < after.length; i++) {
       const verdict = checkRecord(after[i], doc);
-      if (verdict.ok || "unsupported" in verdict) continue;
+      if (verdict.ok) continue;
+      if ("unsupported" in verdict) this.refuseUnchecked(payload, schema, pair, redacted, verdict.unsupported);
       const was = checkRecord(before[i], doc);
       const already = new Set(was.ok || "unsupported" in was ? [] : was.errors.map((e, j) => `${was.pointers[j]}\u0000${e}`));
       verdict.errors.forEach((e, j) => {
         const p = verdict.pointers[j]!;
-        if (!already.has(`${p}\u0000${e}`) && !pointers.includes(p)) pointers.push(p);
+        if (!already.has(`${p}\u0000${e}`) && !raw.includes(p)) raw.push(p);
       });
     }
-    if (pointers.length === 0) return;
-    const pair = `${schema.id}@${schema.version}`;
+    if (raw.length === 0) return;
+    // A pointer the checker reports can name a property the record no longer has, because the
+    // scrub renamed it, and that name is then the secret. Each is scrubbed token by token before
+    // it goes anywhere; the line's own scrub then sees the same strings the exception is given.
+    const secrets = this.init.secretValues;
+    const pointers = raw.map((p) => scrubPointer(p, secrets));
+    // The receipt still records that a secret was replaced in the error line, and where (§5.3).
+    const replaced = pointers.some((p, i) => p !== raw[i]) ? ["/problem", ...pointers.flatMap((p, i) => (p === raw[i] ? [] : [`/detail/at/${i}`]))] : [];
     const problem = `the ${String(payload.event)} record was not published: replacing a declared secret at ${redacted.join(", ")} left it invalid under ${pair} at ${pointers.join(", ")}`;
     this.outputRefused = true;
-    this.emit({ to: { stderr: true, receipt: true }, writer: true }, {
+    this.emit({ to: { stderr: true, receipt: true }, writer: true, replaced }, {
       event: "error", code: REDACTION_CONFLICT_CODE, problem,
       remedy: "keep a declared secret out of any field whose schema the literal [redacted] cannot satisfy: leave the field out, or declare it as an unconstrained string; the run will close with status 4",
       detail: { schema: { id: schema.id, version: schema.version }, at: pointers, redacted },
     }, SCHEMA_IDS.error);
-    throw new ParleyRedactionConflict(schema, pointers, `${problem}; reported as ${REDACTION_CONFLICT_CODE}`);
+    throw new ParleyRedactionConflict(schema, pointers.map((p) => replaceSecrets(p, secrets)), `${replaceSecrets(problem, secrets)}; reported as ${REDACTION_CONFLICT_CODE}`);
+  }
+
+  /**
+   * Withhold a record the scrub changed whose schema document the writer holds and cannot
+   * evaluate (§5.3, flyingrobots/parley#144). The error line names the pair and the pointers the
+   * scrub replaced and nothing of the schema; `construct` goes to the exception only, and not
+   * even there when it would carry a declared secret value, since an exception's message is not
+   * scrubbed.
+   */
+  private refuseUnchecked(payload: Record_, schema: SchemaRef, pair: string, redacted: string[], construct: string): never {
+    const problem = `the ${String(payload.event)} record was not published because it could not be checked: a declared secret was replaced at ${redacted.join(", ")}, and this writer cannot evaluate the schema document it holds for ${pair}, so the redacted record was not validated against it`;
+    this.outputRefused = true;
+    this.emit({ to: { stderr: true, receipt: true }, writer: true }, {
+      event: "error", code: REDACTION_UNCHECKED_CODE, problem,
+      remedy: "keep the type's declared schema within the keywords this writer's checker evaluates (its README lists them), or keep declared secrets out of records of this type; the record was not shown to be invalid, and the value was replaced, not exposed; the run will close with status 4",
+      detail: { schema: { id: schema.id, version: schema.version }, redacted },
+    }, SCHEMA_IDS.error);
+    // The exception's text is the published line's, scrubbed as the line is.
+    const secrets = this.init.secretValues;
+    const named = carriesSecret(construct, secrets) ? null : construct;
+    throw new ParleyRedactionUnchecked(schema, redacted.map((p) => replaceSecrets(p, secrets)), named, `${replaceSecrets(problem, secrets)}${named === null ? "" : `: the schema uses ${named}`}; reported as ${REDACTION_UNCHECKED_CODE}`);
   }
 
   private sidecar(source: number, text: string) {
@@ -562,11 +659,16 @@ export class Run {
     if (p === undefined) return;
     if (this.projectionWarning !== null) { const d = this.projectionWarning; this.projectionWarning = null; this.writerWarning(d); }
     if (this.projectionSeq === null) return;
-    this.step(`the shared stream's copy of this run is a projection by ${p.name}`, `a history transform is configured, so the stream copy is narrowed and says so: seq ${this.projectionSeq} is its parley.history.transform line, which reaches the stream alone and is why this receipt has no line at that seq. The transform's source digests to ${p.sha256}. The receipt is never projected (§8, informative)`);
+    this.writerStep(`the shared stream's copy of this run is a projection by ${p.name}`, `a history transform is configured, so the stream copy is narrowed and says so: seq ${this.projectionSeq} is its parley.history.transform line, which reaches the stream alone and is why this receipt has no line at that seq. The transform's source digests to ${p.sha256}. The receipt is never projected (§8, informative)`);
   }
 
-  /** Internal: the receipt head, receipt only, never a sidecar (§5). */
-  head(fields: Record_): void { this.emit({ to: { receipt: true }, writer: true, noSidecar: true }, { event: "receipt.head", ...fields }, SCHEMA_IDS.head); }
+  /**
+   * Internal: the receipt head, receipt only, never a sidecar (§5). `redacted` is written as the
+   * caller built it: its JSON Pointers are locations in the already-scrubbed `resolved`, and a
+   * second scrub of a pointer as a string could only damage it (a secret equal to `/token` would
+   * turn the pointer `/token` into something that is not a pointer).
+   */
+  head(fields: Record_): void { this.emit({ to: { receipt: true }, writer: true, noSidecar: true, verbatim: "redacted" }, { event: "receipt.head", ...fields }, SCHEMA_IDS.head); }
 
   /** Internal: a discovery line (§4.1), a writer-built record describing public identity. */
   describe(record: Record_, schema: SchemaRef, verbatim?: string): number { return this.emit({ to: { stdout: true, receipt: true }, writer: true, ...(verbatim !== undefined ? { verbatim } : {}) }, record, schema); }
@@ -588,6 +690,19 @@ export class Run {
     return this.emit({ to: { receipt: true } }, { event: "receipt.step", decision, because, ...(detail === undefined ? {} : { detail }) }, SCHEMA_IDS.step);
   }
 
+  /**
+   * Internal: a decision the writer itself records, such as retention, the projection of the
+   * stream copy or captured console output (flyingrobots/parley#161). It is writer-built: its
+   * field names are the protocol's and are never renamed, and it is never withheld by the
+   * redaction check, so a declared secret whose value is `decision` cannot cost a run a record
+   * the tool had no part in. Every string in it is still scrubbed: captured text, a file name and
+   * the writer's own prose alike, except under a key in `DIGEST_KEYS`, so a `detail` built here
+   * never puts the tool's text under one. Tools call `step`.
+   */
+  writerStep(decision: string, because: string, detail?: unknown): number {
+    return this.emit({ to: { receipt: true }, writer: true }, { event: "receipt.step", decision, because, ...(detail === undefined ? {} : { detail }) }, SCHEMA_IDS.step);
+  }
+
   warning(d: Diagnostic): number { return this.emit({ to: { stderr: true, receipt: true } }, { event: "warning", ...this.diagnostic(d) }, SCHEMA_IDS.warning); }
 
   /**
@@ -601,6 +716,21 @@ export class Run {
   error(d: Diagnostic, receiptExtra?: Record_): number {
     // Marked once the line is out: an error the writer refused to emit was not reported.
     const seq = this.emit({ to: { stderr: true, receipt: true } }, { event: "error", ...this.diagnostic(d) }, SCHEMA_IDS.error, receiptExtra);
+    this.errorReported = true;
+    return seq;
+  }
+
+  /**
+   * Internal: an error the writer itself reports, such as `uncaught.exception` for a throw that
+   * escaped the handler (flyingrobots/parley#161). It is writer-built, like `writerWarning`: the
+   * `code` is the writer's own and is not scrubbed, the field names are never renamed and the
+   * record is never withheld by the redaction check, so `main` can always report the failure. The
+   * `problem`, the `remedy` and everything in `receiptExtra` carry the tool's text (an exception's
+   * name, message and stack, a path) and are scrubbed. The run then closes with status 2, as after
+   * `error`. Tools call `error`.
+   */
+  writerError(d: Diagnostic, receiptExtra?: Record_): number {
+    const seq = this.emit({ to: { stderr: true, receipt: true }, writer: true }, { event: "error", ...this.diagnostic(d) }, SCHEMA_IDS.error, receiptExtra);
     this.errorReported = true;
     return seq;
   }
@@ -658,14 +788,16 @@ export class Run {
    * digesting bytes the program never saw (§2.2, flyingrobots/parley#110). Refused for a path
    * that is not a declared input, and once the inputs are settled.
    */
-  inputUnreadable(path: string, code = "input.unreadable"): void {
+  inputUnreadable(path: string, code = INPUT_UNREADABLE): void {
     if (this.closed) throw new ParleyClosed();
     if (this.inputsSettled) throw new TypeError("the inputs are already settled; call inputUnreadable before finaliseInputs or end (spec §2.2)");
     if (!this.init.inputs.some((i) => i.path === path)) throw new TypeError(`${JSON.stringify(path)} is not a declared input of this run`);
     if (!CODE.test(code)) throw new TypeError(`code ${JSON.stringify(code)} is not two or more dot-separated lowercase segments (spec §6)`);
     this.supplied.delete(path);
     this.read.delete(path);
-    this.unread.set(path, code);
+    // A code is never scrubbed, so one that carries a declared secret value is not recorded: the
+    // writer's own token stands in for it (§5.3).
+    this.unread.set(path, carriesSecret(code, this.init.secretValues) ? INPUT_UNREADABLE : code);
   }
 
   /** Digest the declared inputs and emit `receipt.inputs` with `inv` once settled (§2.2). Idempotent; `end` calls it. */
@@ -679,7 +811,7 @@ export class Run {
       return digestInput(this.cwd, i, this.supplied.get(i.path));
     });
     // The preimage and the record both take the redacted descriptors (§2.2: no secret value in inv).
-    const inputs = scrub(raw, this.init.secretValues, "", [], { skipKeys: DIGEST_KEYS, scalars: false }) as InputDescriptor[];
+    const inputs = scrub(raw, this.init.secretValues, "", [], { skipKeys: DIGEST_KEYS, scalars: false, keys: false }) as InputDescriptor[];
     const inv = computeInv({ tool: this.tool, v: this.v, command: this.init.command, resolved: this.init.resolved, inputs });
     this.emit({ to: { receipt: true }, writer: true }, { event: "receipt.inputs", inputs, ...(inv ? { inv } : {}) }, SCHEMA_IDS.inputs);
     return inputs;

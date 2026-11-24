@@ -143,4 +143,5 @@ otherwise ([releasing parley-read](../release-parley-read/README.md)).
 existed, with the GitHub release created the same way. `0.2.0`, `0.2.1` and `0.2.2` were tagged and
 released on GitHub but never reached npm: their workflow ran `npm publish`, which the trusted
 publisher refuses. `0.2.3` was tagged and stopped at `sanity`, which lacked the pinned Wesley. `0.2.4` is the first
-version staged.
+version staged. `0.3.0` was tagged (`parley-emit-v0.3.0`) and released on GitHub, and its npm
+version was staged by the workflow; npm does not list it, and `0.4.0` supersedes it.

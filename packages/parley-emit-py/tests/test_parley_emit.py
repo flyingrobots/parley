@@ -810,6 +810,685 @@ class TestRedactionConflict(unittest.TestCase):
         self.assertEqual(lines[-1]["status"], 4)
 
 
+UNCHECKED_SECRET = "8675309"
+CONTROL = {"type": "object", "required": ["value"], "properties": {"value": {"type": "integer"}}}
+# The reviewers' variants: `value` is an integer in every one, and each adds one construct outside
+# the checker's subset. The second item is wording the error line must not carry.
+UNEVALUABLE = {
+    "format_date_time": ({"type": "object", "required": ["value"], "properties": {"value": {"type": "integer"}, "when": {"type": "string", "format": "date-time"}}}, ["date-time", "format"]),
+    "multiple_of": ({"type": "object", "required": ["value"], "properties": {"value": {"type": "integer"}, "step": {"type": "number", "multipleOf": 0.5}}}, ["multipleOf"]),
+    "unique_items": ({"type": "object", "required": ["value"], "properties": {"value": {"type": "integer"}, "tags": {"type": "array", "uniqueItems": True}}}, ["uniqueItems"]),
+    "ref_into_defs": ({"type": "object", "required": ["value"], "properties": {"value": {"$ref": "#/$defs/n"}}, "$defs": {"n": {"type": "integer"}}}, ["$ref", "$defs"]),
+    "empty_defs": ({"type": "object", "required": ["value"], "properties": {"value": {"type": "integer"}}, "$defs": {}}, ["$defs"]),
+}
+
+
+def unchecked_tool(schema, *more):
+    return {"commands": {"count": {
+        "intent": "count", "effects": {"reads": [], "writes": [], "network": False, "idempotent": True},
+        "secrets": ["--token"],
+        "emits": [{"id": "t.count", "version": "1.0.0", "schema": schema}, *more],
+    }}}
+
+
+class TestRedactionUnchecked(unittest.TestCase):
+    """A record redaction changed, under a schema document the writer holds and cannot evaluate,
+    is withheld like a conflict (spec section 5.3, flyingrobots/parley#131, decided on
+    flyingrobots/parley#144): the writer cannot show the redacted record is valid. Every case is
+    a real run through `main`."""
+
+    every_line = staticmethod(TestRedactionConflict.every_line)
+    assert_gapless = TestRedactionConflict.assert_gapless
+    said = staticmethod(TestRedactionConflict.said)
+
+    def assert_withheld(self, o, redacted):
+        self.assertEqual(o.status, 4)
+        self.assertEqual([x for x in self.every_line(o) if x["event"] == "result"], [])
+        self.assertFalse(any("value" in x for x in self.every_line(o)))
+        self.assertNotIn(UNCHECKED_SECRET, o.everything)
+        self.assertEqual([(x["event"], x["code"]) for x in o.stderr.objs], [("error", "redaction.schema_unchecked")])
+        e = o.stderr.objs[0]
+        self.assertEqual(e["detail"], {"schema": {"id": "t.count", "version": "1.0.0"}, "redacted": redacted})
+        self.assertIn("t.count@1.0.0", e["problem"])
+        for p in redacted:
+            self.assertIn(p, e["problem"])
+        # The code means "not checked": the line says so, and never calls it a conflict.
+        self.assertIn("could not be checked", e["problem"])
+        self.assertNotIn("conflict", self.said(e))
+        self.assertIn("not shown to be invalid", e["remedy"])
+        self.assertEqual([(x["seq"], x["code"]) for x in o.receipt_lines if x["event"] == "error"], [(e["seq"], "redaction.schema_unchecked")])
+        self.assertEqual((o.receipt_lines[-1]["event"], o.receipt_lines[-1]["status"]), ("end", 4))
+        self.assert_gapless(o)
+        assert_valid(self, o)
+        return e
+
+    def test_the_control_inside_the_subset_is_a_conflict_as_before(self):
+        d, _, env = scratch_free(UNCHECKED_SECRET)
+        o = run_count(d, env, ["count", "--token", UNCHECKED_SECRET], lambda run: run.result({"event": "result", "value": 8675309}, T_COUNT), unchecked_tool(CONTROL))
+        self.assertEqual(o.status, 4)
+        self.assertEqual([x["code"] for x in o.stderr.objs], ["redaction.schema_conflict"])
+
+    def test_each_unevaluable_schema_withholds_the_result_with_status_4_and_one_unchecked_error(self):
+        for name, (schema, words) in UNEVALUABLE.items():
+            with self.subTest(name):
+                d, _, env = scratch_free(UNCHECKED_SECRET)
+                raised = []
+
+                def body(run):
+                    try:
+                        run.result({"event": "result", "value": 8675309}, T_COUNT)
+                    except Exception as e:
+                        raised.append(e)
+                        raise
+
+                o = run_count(d, env, ["count", "--token", UNCHECKED_SECRET], body, unchecked_tool(schema))
+                e = self.assert_withheld(o, ["/value"])
+                # No value, no validator message and no part of the schema on the line: not even
+                # the name of the construct, which is in the exception alone.
+                for leak in words + ["integer", "does not implement"]:
+                    self.assertNotIn(leak, self.said(e))
+                u = raised[0]
+                self.assertIsInstance(u, pe.ParleyRedactionUnchecked)
+                self.assertIsInstance(u, pe.ParleyRedactionConflict)
+                self.assertEqual(u.schema, {"id": "t.count", "version": "1.0.0"})
+                self.assertEqual(u.redacted, ["/value"])
+                self.assertEqual(u.pointers, [])
+                self.assertNotIn(UNCHECKED_SECRET, str(u))
+                self.assertEqual(u.construct, pe.schema_subset_gap(schema))
+                self.assertIn(u.construct, str(u))
+
+    def test_an_unchanged_record_and_a_type_with_no_schema_document_are_written(self):
+        d, _, env = scratch_free(UNCHECKED_SECRET)
+
+        def body(run):
+            run.result({"event": "result", "value": 7}, T_COUNT)
+            run.result({"event": "result", "n": 8675309, "note": "saw " + UNCHECKED_SECRET}, ("t.loose", "1.0.0"))
+
+        o = run_count(d, env, ["count", "--token", UNCHECKED_SECRET], body, unchecked_tool(UNEVALUABLE["ref_into_defs"][0], {"id": "t.loose", "version": "1.0.0"}))
+        self.assertEqual(o.status, 0)
+        self.assertEqual(o.stderr.objs, [])
+        self.assertEqual([(x.get("value"), x.get("n"), x.get("note")) for x in o.stdout.objs if x["event"] == "result"], [(7, None, None), (None, "[redacted]", "saw [redacted]")])
+        self.assertNotIn(UNCHECKED_SECRET, o.everything)
+        self.assert_gapless(o)
+
+    FREE = {"type": "object", "properties": {"note": {"type": "string"}, "when": {"type": "string", "format": "date-time"}}}
+
+    def test_the_surprising_case_a_secret_in_an_unconstrained_string_is_withheld_under_an_unevaluable_schema(self):
+        d, _, env = scratch_free(UNCHECKED_SECRET)
+        # Without the unevaluable property the redacted record is valid: the refusal is "not
+        # checked", not "invalid".
+        evaluable = {"type": "object", "properties": {"note": {"type": "string"}}}
+        self.assertTrue(pe.check_record({"event": "result", "note": "saw [redacted]"}, evaluable).ok)
+        self.assertEqual(pe.schema_subset_gap(self.FREE), "format date-time")
+        o = run_count(d, env, ["count", "--token", UNCHECKED_SECRET], lambda run: run.result({"event": "result", "note": "saw " + UNCHECKED_SECRET}, T_COUNT), unchecked_tool(self.FREE))
+        self.assert_withheld(o, ["/note"])
+
+    def test_an_unevaluable_schema_where_the_scrub_replaced_nothing_is_written_with_status_0(self):
+        d, _, env = scratch_free(UNCHECKED_SECRET)
+        o = run_count(d, env, ["count", "--token", UNCHECKED_SECRET], lambda run: run.result({"event": "result", "note": "saw nothing", "when": "2026-11-24T00:00:00Z"}, T_COUNT), unchecked_tool(self.FREE))
+        self.assertEqual(o.status, 0)
+        self.assertEqual(o.stderr.objs, [])
+        self.assertEqual([x["note"] for x in o.stdout.objs if x["event"] == "result"], ["saw nothing"])
+        self.assertEqual(len([x for x in o.receipt_lines if x["event"] == "result"]), 1)
+        self.assertEqual((o.receipt_lines[-1]["event"], o.receipt_lines[-1]["status"]), ("end", 0))
+        self.assert_gapless(o)
+
+    def test_with_receipt_extra_neither_copy_is_written_whichever_copy_the_secret_is_in(self):
+        schema = UNEVALUABLE["multiple_of"][0]
+        d, _, env = scratch_free(UNCHECKED_SECRET)
+        o = run_count(d, env, ["count", "--token", UNCHECKED_SECRET], lambda run: run.result({"event": "result", "step": 1}, T_COUNT, receipt_extra={"value": 8675309}), unchecked_tool(schema))
+        self.assert_withheld(o, ["/value"])
+        d, _, env = scratch_free(UNCHECKED_SECRET)
+        o = run_count(d, env, ["count", "--token", UNCHECKED_SECRET], lambda run: run.result({"event": "result", "value": 8675309}, T_COUNT, receipt_extra={"step": 1}), unchecked_tool(schema))
+        self.assert_withheld(o, ["/value"])
+
+    def test_a_handler_that_catches_the_refusal_carries_on_and_end_0_cannot_undo_status_4(self):
+        d, _, env = scratch_free(UNCHECKED_SECRET)
+        ended = []
+
+        def body(run):
+            try:
+                run.result({"event": "result", "value": 8675309}, T_COUNT)
+            except pe.ParleyRedactionUnchecked:
+                pass
+            run.result({"event": "result", "value": 7}, T_COUNT)
+            self.assertTrue(run.redaction_refused)
+            ended.append(run.end(0))
+
+        o = run_count(d, env, ["count", "--token", UNCHECKED_SECRET], body, unchecked_tool(UNEVALUABLE["empty_defs"][0]))
+        self.assertEqual(ended, [4])
+        self.assertEqual(o.status, 4)
+        self.assertEqual([x["value"] for x in o.stdout.objs if x["event"] == "result"], [7])
+        self.assertEqual([x["code"] for x in o.stderr.objs], ["redaction.schema_unchecked"])
+        self.assertNotIn(UNCHECKED_SECRET, o.everything)
+        self.assert_gapless(o)
+
+    def test_human_renders_the_refusal_as_prose_and_the_receipt_holds_the_error(self):
+        d, _, env = scratch_free(UNCHECKED_SECRET)
+        o = run_count(d, env, ["count", "--human", "--token", UNCHECKED_SECRET], lambda run: run.result({"event": "result", "value": 8675309}, T_COUNT), unchecked_tool(UNEVALUABLE["ref_into_defs"][0]))
+        self.assertEqual(o.status, 4)
+        self.assertTrue(o.stderr.text.startswith("error redaction.schema_unchecked: "))
+        receipts = os.path.join(d, ".parley", "receipts")
+        with open(os.path.join(receipts, next(f for f in os.listdir(receipts) if f.endswith(".jsonl"))), encoding="utf-8") as f:
+            text = f.read()
+        self.assertNotIn(UNCHECKED_SECRET, o.stdout.text + o.stderr.text + text)
+        lines = [json.loads(line) for line in text.splitlines()]
+        self.assertEqual([x for x in lines if x["event"] == "result"], [])
+        self.assertEqual([x["code"] for x in lines if x["event"] == "error"], ["redaction.schema_unchecked"])
+        self.assertEqual(lines[-1]["status"], 4)
+
+
+NEVER_SECRET = "zq7kx9secret"
+
+
+def _named(name, **more):
+    return {"type": "object", "properties": {"name": name}, **more}
+
+
+# The reviewed table, then keywords whose value has the wrong shape: the TypeScript writer's PE-31
+# table. The second item is what this writer does with a record whose `name` is `Zed <secret>`;
+# the third is wording the error line must not carry.
+NEVER_ESCAPES = {
+    "pattern_unicode_property": (_named({"type": "string", "pattern": "^\\p{Lu}"}), "unchecked", ["\\p", "Lu", "bad escape", "position"]),
+    "pattern_lookbehind_of_any_width": (_named({"type": "string", "pattern": "(?<=Z.*)d"}), "unchecked", ["(?<=", "look-behind", "fixed-width"]),
+    "pattern_inline_flag": (_named({"type": "string", "pattern": "(?i)^zed"}), "unchecked", ["(?i)", "zed"]),
+    "pattern_modifier_group": (_named({"type": "string", "pattern": "^(?i:zed)"}), "unchecked", ["(?i", "zed"]),
+    "pattern_no_engine_compiles": (_named({"type": "string", "pattern": "^Z("}), "unchecked", ["^Z(", "parenthesis", "position"]),
+    "pattern_not_a_string": (_named({"type": "string", "pattern": 5}), "unchecked", []),
+    "pattern_plain_control": (_named({"type": "string", "pattern": "^Zed( .+)?$"}), "published", []),
+    "enum_5": (_named({"enum": 5}), "unchecked", ["enum", "iterable"]),
+    "required_a_string": (_named({"type": "string"}, required="name"), "unchecked", ["required"]),
+    "required_a_list_holding_a_number": (_named({"type": "string"}, required=["name", 5]), "unchecked", ["required"]),
+    "properties_a_list": ({"type": "object", "properties": [{"type": "string"}]}, "unchecked", ["properties"]),
+    "type_a_number": (_named({"type": 5}), "unchecked", []),
+    "type_an_unknown_name": (_named({"type": "text"}), "unchecked", ["text"]),
+    "type_a_list_holding_a_number": (_named({"type": ["string", 5]}), "unchecked", []),
+    "min_length_a_string": (_named({"type": "string", "minLength": "3"}), "unchecked", ["minLength"]),
+    "max_length_negative": (_named({"type": "string", "maxLength": -1}), "unchecked", ["maxLength"]),
+    "minimum_a_string": ({"type": "object", "properties": {"name": {"type": "string"}, "n": {"minimum": "0"}}}, "unchecked", ["minimum"]),
+    "any_of_an_object": (_named({"anyOf": {"type": "string"}}), "unchecked", ["anyOf"]),
+    "all_of_a_number": (_named({"allOf": 5}), "unchecked", ["allOf"]),
+    "items_a_number": ({"type": "object", "properties": {"name": {"type": "string"}, "rows": {"items": 5}}}, "unchecked", ["items"]),
+    "not_null": (_named({"not": None}), "unchecked", []),
+    "format_a_list": (_named({"type": "string", "format": ["json-pointer"]}), "unchecked", ["json-pointer", "unhashable"]),
+    "additional_properties_a_string": (_named({"type": "string"}, additionalProperties="no"), "unchecked", ["additionalProperties"]),
+}
+
+
+class TestSchemaNeverEscapes(unittest.TestCase):
+    """PY-25: a schema document the writer holds and cannot evaluate, whether for a `pattern` its
+    engine does not read as ECMAScript would, a pattern nothing compiles or a keyword whose value
+    has the wrong shape, leads to `redaction.schema_unchecked` and status 4 for a redacted record
+    and never to an escaped exception (spec section 5.3). Every case is a real run through
+    `main`."""
+
+    every_line = staticmethod(TestRedactionConflict.every_line)
+    assert_gapless = TestRedactionConflict.assert_gapless
+
+    def test_a_redacted_record_is_withheld_as_unchecked_or_checked_and_published_never_an_uncaught_exception(self):
+        for name, (schema, verdict, leaks) in NEVER_ESCAPES.items():
+            with self.subTest(name):
+                d, _, env = scratch_free(NEVER_SECRET)
+                raised = []
+
+                def body(run):
+                    try:
+                        run.result({"event": "result", "name": "Zed " + NEVER_SECRET}, T_COUNT)
+                    except Exception as e:
+                        raised.append(e)
+                        raise
+
+                with warnings.catch_warnings():
+                    warnings.simplefilter("error")
+                    o = run_count(d, env, ["count", "--token", NEVER_SECRET], body, unchecked_tool(schema))
+                self.assertNotIn(NEVER_SECRET, o.everything)
+                self.assertEqual([x for x in self.every_line(o) if x.get("code") == "uncaught.exception"], [])
+                self.assert_gapless(o)
+                if verdict == "published":
+                    self.assertEqual(raised, [])
+                    self.assertEqual(o.status, 0)
+                    self.assertEqual(o.stderr.objs, [])
+                    self.assertEqual([x["name"] for x in o.stdout.objs if x["event"] == "result"], ["Zed [redacted]"])
+                    continue
+                self.assertEqual(o.status, 4)
+                self.assertEqual([x for x in self.every_line(o) if x["event"] == "result"], [])
+                self.assertEqual([(x["event"], x["code"]) for x in o.stderr.objs], [("error", "redaction.schema_unchecked")])
+                e = o.stderr.objs[0]
+                self.assertEqual(e["detail"], {"schema": {"id": "t.count", "version": "1.0.0"}, "redacted": ["/name"]})
+                # No engine message and no fragment of the schema on the line, and no traceback
+                # in the receipt.
+                said = "\n".join([e["problem"], e["remedy"], json.dumps(e["detail"])])
+                for leak in leaks:
+                    self.assertNotIn(leak, said)
+                self.assertNotIn("Traceback", o.receipt)
+                self.assertNotIn("stack", o.receipt)
+                self.assertEqual((o.receipt_lines[-1]["event"], o.receipt_lines[-1]["status"]), ("end", 4))
+                self.assertIsInstance(raised[0], pe.ParleyRedactionUnchecked)
+                self.assertNotIn(NEVER_SECRET, str(raised[0]))
+
+    def test_a_record_the_scrub_did_not_change_is_written_as_before(self):
+        for name, (schema, _, _) in NEVER_ESCAPES.items():
+            with self.subTest(name):
+                d, _, env = scratch_free(NEVER_SECRET)
+                o = run_count(d, env, ["count", "--token", NEVER_SECRET], lambda run: run.result({"event": "result", "name": "Zed"}, T_COUNT), unchecked_tool(schema))
+                self.assertEqual(o.status, 0)
+                self.assertEqual(o.stderr.objs, [])
+                self.assertEqual([x["name"] for x in o.stdout.objs if x["event"] == "result"], ["Zed"])
+                self.assertEqual((o.receipt_lines[-1]["event"], o.receipt_lines[-1]["status"]), ("end", 0))
+                self.assert_gapless(o)
+
+    def test_the_checker_answers_and_does_not_raise(self):
+        for name, (schema, verdict, _) in NEVER_ESCAPES.items():
+            with self.subTest(name):
+                gap = pe.schema_subset_gap(schema)
+                v = pe.check_record({"event": "result", "name": "Zed"}, schema)
+                if verdict == "published":
+                    self.assertIsNone(gap)
+                    self.assertTrue(v.ok)
+                else:
+                    self.assertIsInstance(gap, str)
+                    self.assertFalse(v.ok)
+                    self.assertEqual(v.unsupported, gap)
+                # A line under such a schema, through the tool-facing helper.
+                line = {"event": "result", "name": "Zed", "_schema": {"id": "t.count", "version": "1.0.0"}}
+                self.assertEqual(pe.validate_line(line, {T_COUNT: schema}).unsupported, gap)
+
+    def test_patterns_python_does_not_read_as_ecmascript_would_are_unsupported_not_guessed(self):
+        # Each is valid ECMAScript (with the `u` flag) or is read differently by `re`; the writer
+        # says it cannot evaluate the schema rather than answer with another language's reading.
+        refused = ["\\p{L}+", "\\P{Lu}", "(?<=a+)b", "(?<year>[0-9]{4})", "(a)\\1", "\\k<n>", "[^]", "[]", "[\\S]", "a{,3}", "a**", "a*+", "a{2}{3}",
+                   "(?=a)+", "\\-", "\\a", "\\Z", "\\A", "\\z", "(?#c)", "(?P<n>a)", "(?i)a", "(?s:a)", "(?-i:a)", "a{2", "a}", "a]", "\\07", "\\x4", "\\u12",
+                   "\\ud83d\\ude00", "\\u{110000}", "[z-a]", "[a--b]", "[\\d-x]", "(", "a)", "*a", "a|*", "^*", "\\c1", "(?<!a*)b", "\\"]
+        for p in refused:
+            with self.subTest(p):
+                with warnings.catch_warnings():
+                    warnings.simplefilter("error")
+                    v = pe.check_record("a", {"type": "string", "pattern": p})
+                self.assertFalse(v.ok)
+                self.assertIsNotNone(v.unsupported)
+                self.assertNotIn(p, v.unsupported)
+
+    def test_patterns_python_evaluates_are_read_as_ecmascript_reads_them(self):
+        nbsp, ls = " ", " "
+        cases = [
+            ("^a.c$", "abc", True), ("^a.c$", "a\nc", False), ("^a.c$", "a" + ls + "c", False), ("^a$", "a\n", False),
+            ("^\\s$", nbsp, True), ("^\\s$", "﻿", True), ("^\\s$", "\x1c", False), ("^\\s$", "\x85", False), ("^\\S$", nbsp, False), ("^\\S$", "x", True),
+            ("^[\\s]$", nbsp, True), ("^[^\\s]$", nbsp, False), ("^\\d$", "٣", False), ("^\\w$", "é", False), ("^\\w+$", "a_9", True),
+            ("^[a-c]+$", "abc", True), ("^[^a-c]$", "d", True), ("^[\\]\\-\\\\]+$", "]-\\", True), ("^[[]$", "[", True), ("^a\\/b$", "a/b", True),
+            ("^\\u0041\\x42\\u{43}$", "ABC", True), ("^\\u{1F600}$", "\U0001F600", True), ("^.$", "\U0001F600", True), ("^\\cJ$", "\n", True),
+            ("^[\\b]$", "\x08", True), ("\\bfoo\\b", "a foo b", True), ("^\\0$", "\x00", True), ("^a{2,3}?$", "aaa", True), ("^a{2,}$", "a", False),
+            ("^(?:a|b)+?c$", "abac", True), ("^(?!/)(?!.*(^|/)\\.\\.(/|$)).+$", "a/../b", False), ("^(?!/)(?!.*(^|/)\\.\\.(/|$)).+$", "a/b", True),
+            ("(?<=a)b", "ab", True), ("(?<!a)b", "ab", False), ("^[a-z]{3}-[0-9]+$", "abc-12", True), ("^#$", "#", True), ("^ $", " ", True),
+            ("^[-a]$", "-", True), ("^[a-]$", "-", True), ("^[&&]$", "&", True), ("^[a~~b]$", "~", True), ("^[a||b]$", "|", True), ("^[+--]$", ",", True),
+        ]
+        for p, value, expected in cases:
+            with self.subTest(p=p, value=value):
+                with warnings.catch_warnings():
+                    warnings.simplefilter("error")
+                    v = pe.check_record(value, {"type": "string", "pattern": p})
+                self.assertIsNone(v.unsupported, v)
+                self.assertEqual(v.ok, expected)
+
+    def test_integer_valued_bounds_are_applied_whichever_way_json_wrote_them(self):
+        self.assertFalse(pe.check_record("ab", {"type": "string", "minLength": 3.0}).ok)
+        self.assertIsNone(pe.check_record("ab", {"type": "string", "minLength": 3.0}).unsupported)
+        self.assertEqual(pe.schema_subset_gap({"minLength": True}), pe.schema_subset_gap({"minLength": "3"}))
+        self.assertIsNotNone(pe.schema_subset_gap({"minItems": 1.5}))
+
+
+COINCIDE_VALUES = ["create", "delete", "append", "stdin", "tree", "true", "false", "unreadable", "input", "unread", "run", "end", "command", "schema", "help", "count"]
+COINCIDE_NAMES = ["op", "scope", "paths", "tool", "code", "problem", "remedy", "status", "effects", "bookkeeping", "inputs", "argv", "resolved", "redacted",
+                  "emits", "secrets", "intent", "network", "idempotent", "reads", "writes", "path", "role", "sha256", "inv", "error", "version", "name", "id"]
+T_LOOSE = ("t.loose", "1.0.0")
+LOOSE_TOOL = {"commands": {"count": {
+    "intent": "count", "effects": {"reads": [], "writes": [], "network": False, "idempotent": True},
+    "secrets": ["--token"], "emits": [{"id": "t.loose", "version": "1.0.0"}],
+}}}
+
+
+class TestWriterTokens(unittest.TestCase):
+    """PY-26: the protocol's own tokens and field names in a writer-built record are never
+    scrubbed (spec section 5.3). A declared secret can coincide with a word the writer itself
+    emits; those words are the protocol's public identity, not the tool's data. The Bun oracle
+    validates the same runs against the released snapshots with ajv."""
+
+    def coincide(self, secret, mode):
+        d, _, env = scratch_free(secret)
+        with open(os.path.join(d, "a.txt"), "w") as f:
+            f.write("a")
+
+        def body(run):
+            run.input("-", "x")
+            try:
+                run.read_input("missing.txt")
+            except OSError:
+                pass
+            run.result({"event": "result", "value": 1}, T_COUNT)
+
+        return run_count(d, env, ["count", *mode, "--token", secret], body,
+                         inputs=[{"path": "a.txt"}, {"path": "-", "role": "stdin"}, {"path": ".", "role": "tree"}, {"path": "missing.txt"}],
+                         resolved=lambda args, c: {"command": c, "zq": args[-1]})
+
+    def test_every_line_validates_whatever_word_of_the_writers_the_secret_is(self):
+        # `/zq` is the JSON Pointer the head records for the secret's own place in `resolved`.
+        for secret in COINCIDE_VALUES + COINCIDE_NAMES + ["/zq", "zq7kx9control"]:
+            for mode in (["--help"], ["--schema"], []):
+                with self.subTest(secret=secret, mode=mode):
+                    o = self.coincide(secret, mode)
+                    self.assertEqual(o.status, 0)
+                    assert_valid(self, o)
+                    assert_lifecycle(self, o)
+
+    def test_the_bookkeeping_op_keeps_its_token(self):
+        for secret in ("create", "delete", "append", "reat"):
+            with self.subTest(secret):
+                o = self.coincide(secret, ["--help"])
+                expected = ["create", "create", "delete", "create", "delete"]
+                command = next(x for x in o.stdout.objs if x["event"] == "command")
+                self.assertEqual([b["op"] for b in command["effects"]["bookkeeping"]], expected)
+                self.assertEqual([b["op"] for b in o.receipt_lines[0]["effects"]["bookkeeping"]], expected)
+
+    def test_a_secrets_value_is_still_replaced_where_it_is_the_tools_data(self):
+        secret = "zq7kx9control"
+        d, _, env = scratch_free(secret)
+        over = {"commands": {"count": {
+            "intent": "Count " + secret, "effects": {"reads": ["/data/" + secret], "writes": [], "network": False, "idempotent": True},
+            "secrets": ["--token"], "emits": [{"id": "t.count", "version": "1.0.0", "schema": RESULT}],
+        }}}
+        o = run_count(d, env, ["count", "--help", "--token", secret], lambda run: None, over)
+        self.assertEqual(o.status, 0)
+        self.assertNotIn(secret, o.everything)
+        command = next(x for x in o.stdout.objs if x["event"] == "command")
+        self.assertEqual(command["intent"], "Count [redacted]")
+        self.assertEqual(command["effects"]["reads"], ["/data/[redacted]"])
+        assert_valid(self, o)
+
+    def test_an_unreadable_input_keeps_the_writers_token_and_a_tools_code_carrying_a_secret_is_recorded_as_it(self):
+        for secret, code, recorded in (("unreadable", None, "input.unreadable"), ("input", None, "input.unreadable"),
+                                       ("zq7kx9control", "input.zq7kx9control", "input.unreadable"), ("zq7kx9control", "input.gone", "input.gone")):
+            with self.subTest(secret=secret, code=code):
+                d, _, env = scratch_free(secret)
+                body = (lambda run: run.input_unreadable("missing.txt")) if code is None else (lambda run: run.input_unreadable("missing.txt", code))
+                o = run_count(d, env, ["count", "--token", secret], body, inputs=[{"path": "missing.txt"}], resolved=lambda args, c: {"command": c})
+                self.assertEqual(o.status, 0)
+                inputs = next(x for x in o.receipt_lines if x["event"] == "receipt.inputs")
+                self.assertEqual(inputs["inputs"], [{"path": "missing.txt", "error": recorded}])
+                if secret == "zq7kx9control":
+                    self.assertNotIn(secret, o.everything)
+                assert_valid(self, o)
+
+    def test_a_tools_own_record_is_still_scrubbed_in_full(self):
+        secret = "status"
+        d, _, env = scratch_free(secret)
+        o = run_count(d, env, ["count", "--token", secret], lambda run: run.result({"event": "result", "status": "fine", "note": "the status is fine"}, T_LOOSE), LOOSE_TOOL)
+        self.assertEqual(o.status, 0)
+        result = next(x for x in o.stdout.objs if x["event"] == "result")
+        self.assertEqual(result["[redacted]"], "fine")
+        self.assertEqual(result["note"], "the [redacted] is fine")
+        self.assertNotIn("status", result)
+        self.assertEqual(o.stdout.objs[-1]["status"], 0)
+
+
+class TestRedactionExceptionsCarryNoSecret(unittest.TestCase):
+    """PY-27: the redaction exceptions carry what the published line carries, never the secret
+    (spec section 5.3). The secret is the NAME of a property: the scrub renames the key, and the
+    checker reports the property it now misses by its pointer, which is the secret itself."""
+
+    SECRETS = (("zq7kx9secret", "zq7kx9secret"), ("zq7/kx9~secret", "zq7~1kx9~0secret"))
+
+    def refused(self, secret, schema, record):
+        d, _, env = scratch_free(secret)
+        raised = []
+
+        def body(run):
+            try:
+                run.result({"event": "result", **record}, T_COUNT)
+            except Exception as e:
+                raised.append(e)
+                raise
+
+        o = run_count(d, env, ["count", "--token", secret], body, unchecked_tool(schema))
+        self.assertEqual(o.status, 4)
+        self.assertNotIn(secret, o.everything)
+        return o.stderr.objs[0], raised[0]
+
+    def test_a_conflict_at_a_property_named_by_the_secret(self):
+        for secret, escaped in self.SECRETS:
+            with self.subTest(secret):
+                line, e = self.refused(secret, {"type": "object", "required": [secret]}, {secret: 1})
+                self.assertEqual(line["code"], "redaction.schema_conflict")
+                self.assertEqual(line["detail"]["at"], ["/[redacted]"])
+                self.assertNotIn(escaped, json.dumps(line))
+                self.assertIsInstance(e, pe.ParleyRedactionConflict)
+                self.assertEqual(e.pointers, line["detail"]["at"])
+                self.assertEqual(str(e), line["problem"] + "; reported as redaction.schema_conflict")
+                for text in (str(e), repr(e), json.dumps(e.pointers), json.dumps(e.schema), json.dumps(list(e.args), default=str)):
+                    self.assertNotIn(secret, text)
+                    self.assertNotIn(escaped, text)
+
+    def test_an_unchecked_refusal_at_a_property_named_by_the_secret(self):
+        for secret, escaped in self.SECRETS:
+            with self.subTest(secret):
+                # The construct the checker cannot evaluate is a keyword that is the secret itself.
+                line, e = self.refused(secret, {"type": "object", secret: True}, {secret: 1})
+                self.assertEqual(line["code"], "redaction.schema_unchecked")
+                self.assertEqual(line["detail"]["redacted"], ["/[redacted]"])
+                self.assertNotIn(escaped, json.dumps(line))
+                self.assertIsInstance(e, pe.ParleyRedactionUnchecked)
+                self.assertEqual(e.redacted, line["detail"]["redacted"])
+                self.assertIsNone(e.construct)
+                self.assertEqual(e.pointers, [])
+                self.assertEqual(str(e), line["problem"] + "; reported as redaction.schema_unchecked")
+                for text in (str(e), repr(e), json.dumps(e.redacted)):
+                    self.assertNotIn(secret, text)
+                    self.assertNotIn(escaped, text)
+
+    def test_an_ordinary_conflict_is_unchanged(self):
+        line, e = self.refused("8675309", {"type": "object", "properties": {"value": {"type": "integer"}}}, {"value": 8675309})
+        self.assertEqual(e.pointers, ["/value"])
+        self.assertEqual(line["detail"]["at"], ["/value"])
+        self.assertEqual(str(e), line["problem"] + "; reported as redaction.schema_conflict")
+
+
+OWN_CONTROL = "zq7kx9control"
+OWN_SECRETS = ["code", "problem", "remedy", "decision", "because", "detail", "event", "status", "uncaught.exception", "boom", "traceback", "stream", "text", OWN_CONTROL]
+# `run.step("d", "b")` is the TOOL's record, scrubbed in full: under these two secrets its own
+# field is renamed, the schema rejects it and the redaction check withholds it (spec section 5.3,
+# flyingrobots/parley#131). The step raises the conflict, so the handler never reaches its own
+# raise: status 4, one redaction.schema_conflict, no uncaught.exception.
+OWN_TOOL_STEP_WITHHELD = ("decision", "because")
+
+
+class TestWriterRaisedRecords(unittest.TestCase):
+    """PY-28: a record the writer raises on its own account is writer-built, and `main` always
+    ends the run (spec sections 3.3 and 5.3, flyingrobots/parley#161). `uncaught.exception`,
+    `uncaught.exit`, `uncaught.writer_failure`, the retention steps and the captured-output step
+    are the writer's records, not the tool's: a declared secret that equals one of their field
+    names must not rename the field, withhold the record or stop `main` from writing `end`. The
+    Bun oracle validates the same runs, as real processes, against the released snapshots."""
+
+    def carrying(self, o, secret):
+        """Every string VALUE that carries the secret, outside the places that hold the protocol's
+        own words: `event`, a diagnostic's `code`, the `_schema` stamp, the run id and a
+        `redaction` line's `at`, which is a pointer made of the record's field names. A field
+        NAME is never collected: in a writer-built record it is the protocol's word and stays."""
+        hits = []
+
+        def walk(v, where):
+            if isinstance(v, str):
+                if secret in v:
+                    hits.append(f"{where}: {v}")
+            elif isinstance(v, list):
+                for i, x in enumerate(v):
+                    walk(x, f"{where}/{i}")
+            elif isinstance(v, dict):
+                for k, x in v.items():
+                    walk(x, f"{where}/{k}")
+
+        for x in o.stdout.objs + o.stderr.objs + o.receipt_lines:
+            for k, v in x.items():
+                if k in ("event", "code", "_schema", "run") or (x["event"] == "redaction" and k == "at"):
+                    continue
+                walk(v, f"{x['event']}@{x['seq']}/{k}")
+        return hits
+
+    def settled(self, o, secret, status):
+        """What every run here must show, whatever the secret."""
+        self.assertIs(type(o.status), int)
+        self.assertEqual(o.status, status)
+        self.assertTrue(o.stdout.text.endswith("\n"))
+        self.assertEqual((o.stdout.objs[-1]["event"], o.stdout.objs[-1]["status"]), ("end", status))
+        self.assertEqual((o.receipt_lines[-1]["event"], o.receipt_lines[-1]["status"]), ("end", status))
+        assert_valid(self, o)
+        assert_lifecycle(self, o)
+        self.assertEqual(self.carrying(o, secret), [])
+
+    def run_secret(self, secret, body, over=None, d=None, env=None):
+        if d is None:
+            d, _, env = scratch_free(secret)
+        return run_count(d, env, ["count", "--token", secret], body, over=over)
+
+    def test_a_handler_that_only_raises_ends_with_uncaught_exception_and_status_2(self):
+        def body(run):
+            raise RuntimeError("boom")
+
+        for secret in OWN_SECRETS:
+            with self.subTest(secret):
+                o = self.run_secret(secret, body)
+                self.settled(o, secret, 2)
+                self.assertEqual([x["code"] for x in o.stderr.objs], ["uncaught.exception"])
+                line = o.stderr.objs[0]
+                self.assertEqual(line["problem"], "uncaught RuntimeError: [redacted]" if secret == "boom" else "uncaught RuntimeError: boom")
+                self.assertIsInstance(line["remedy"], str)
+                kept = next(x for x in o.receipt_lines if x["event"] == "error")
+                self.assertEqual(kept["code"], "uncaught.exception")
+                self.assertIsInstance(kept["detail"]["traceback"], str)
+                if secret in ("boom", OWN_CONTROL):
+                    self.assertNotIn(secret, o.everything)
+
+    def test_a_handler_that_records_a_step_and_raises(self):
+        def body(run):
+            run.step("d", "b")
+            raise RuntimeError("boom")
+
+        for secret in OWN_SECRETS:
+            with self.subTest(secret):
+                o = self.run_secret(secret, body)
+                steps = [x for x in o.receipt_lines if x["event"] == "receipt.step"]
+                if secret in OWN_TOOL_STEP_WITHHELD:
+                    self.settled(o, secret, 4)
+                    self.assertEqual([x["code"] for x in o.stderr.objs], ["redaction.schema_conflict"])
+                    self.assertEqual(steps, [])
+                else:
+                    self.settled(o, secret, 2)
+                    self.assertEqual([x["code"] for x in o.stderr.objs], ["uncaught.exception"])
+                    self.assertEqual([(x["decision"], x["because"]) for x in steps], [("d", "b")])
+
+    def test_the_writers_retention_step_is_written_and_the_run_ends_with_status_0(self):
+        over = {"retention": {"count": 1}}
+        for secret in OWN_SECRETS:
+            with self.subTest(secret):
+                d, _, env = scratch_free(secret)
+                run_count(d, env, ["count"], lambda run: None, over=over)
+                o = self.run_secret(secret, lambda run: None, over=over, d=d, env=env)
+                self.settled(o, secret, 0)
+                self.assertEqual(o.stderr.objs, [])
+                steps = [x for x in o.receipt_lines if x["event"] == "receipt.step"]
+                self.assertEqual([x["decision"] for x in steps], ["retention: deleted 1 receipt bundle(s)"])
+                self.assertIsInstance(steps[0]["because"], str)
+                self.assertEqual(len(steps[0]["detail"]["receipts"]), 1)
+
+    def test_captured_output_is_kept_in_a_writer_built_step_with_the_text_scrubbed(self):
+        for secret in OWN_SECRETS:
+            with self.subTest(secret):
+                o = self.run_secret(secret, lambda run, secret=secret: print("a library says " + secret))
+                self.settled(o, secret, 0)
+                self.assertEqual(o.stderr.objs, [])
+                steps = [x for x in o.receipt_lines if x["event"] == "receipt.step"]
+                self.assertEqual([x["decision"] for x in steps], ["captured stray output"])
+                self.assertEqual(steps[0]["detail"], {"stream": "stdout", "text": "a library says [redacted]\n"})
+                # The receipt records where the text was replaced; the pointer is made of the writer's field names.
+                self.assertIn("/detail/text", [x["at"] for x in o.receipt_lines if x["event"] == "redaction"])
+
+    def test_a_tools_value_equal_to_the_secret_is_replaced_beside_the_field_name_that_stays(self):
+        class code(Exception):  # noqa: N801 - the class name is the secret
+            pass
+
+        def body(run):
+            raise code("the code is code")
+
+        o = self.run_secret("code", body)
+        self.settled(o, "code", 2)
+        self.assertEqual(o.stderr.objs[0]["code"], "uncaught.exception")
+        self.assertEqual(o.stderr.objs[0]["problem"], "uncaught [redacted]: the [redacted] is [redacted]")
+
+    def test_sys_exit_in_the_handler_is_reported_whatever_the_secret(self):
+        for secret in ("code", "problem", "remedy", OWN_CONTROL):
+            with self.subTest(secret):
+                o = self.run_secret(secret, lambda run: sys.exit(5))
+                self.settled(o, secret, 2)
+                self.assertEqual([x["code"] for x in o.stderr.objs], ["uncaught.exit"])
+
+    def test_a_failure_inside_the_writer_is_reported_whatever_the_secret(self):
+        saved = pe._retain
+
+        def broken(*a, **k):
+            raise RuntimeError("the writer broke")
+
+        for secret in ("code", "problem", "remedy", "detail", "traceback", OWN_CONTROL):
+            with self.subTest(secret):
+                try:
+                    pe._retain = broken
+                    o = self.run_secret(secret, lambda run: None)
+                finally:
+                    pe._retain = saved
+                self.settled(o, secret, 2)
+                self.assertEqual([x["code"] for x in o.stderr.objs], ["uncaught.writer_failure"])
+
+    def test_main_never_raises_when_its_own_report_of_the_tools_failure_fails_and_the_status_is_4(self):
+        # Nothing can be said about an exception that raises when it is described, so building
+        # the uncaught.exception line fails inside main's own handling. The run failed and the
+        # error that says why could not be written: protocol output that could not be written is
+        # status 4 (spec section 3.4), not the 2 of a failure that was reported.
+        class Undescribable(Exception):
+            def __str__(self):
+                raise RuntimeError("no description")
+
+        def body(run):
+            raise Undescribable()
+
+        d, _, env = scratch()
+        o = run_count(d, env, ["count"], body)
+        self.assertEqual(o.status, 4)
+        self.assertEqual((o.stdout.objs[-1]["event"], o.stdout.objs[-1]["status"]), ("end", 4))
+        self.assertEqual([x["code"] for x in o.stderr.objs], ["uncaught.writer_failure"])
+        assert_valid(self, o)
+        assert_lifecycle(self, o)
+
+    def test_main_still_ends_the_run_when_no_error_line_can_be_written_at_all(self):
+        # The writer's own error path is made to fail, so neither report can be written; `end`
+        # still is, with status 4.
+        saved = pe.Run.writer_error
+
+        def broken(self, *a, **k):
+            raise RuntimeError("no error line can be built")
+
+        def body(run):
+            raise RuntimeError("boom")
+
+        d, _, env = scratch()
+        try:
+            pe.Run.writer_error = broken
+            o = run_count(d, env, ["count"], body)
+        finally:
+            pe.Run.writer_error = saved
+        self.assertEqual(o.status, 4)
+        self.assertEqual(o.stderr.objs, [])
+        self.assertEqual((o.stdout.objs[-1]["event"], o.stdout.objs[-1]["status"]), ("end", 4))
+        assert_valid(self, o)
+        assert_lifecycle(self, o)
+
+
 class TestStartupFailure(unittest.TestCase):
     def test_no_writable_location(self):
         d, state, env = scratch()
@@ -1393,6 +2072,104 @@ class TestHygiene(unittest.TestCase):
                     f.write(text)
                 o = run_count(d, env, ["count"], lambda r: None)
                 self.assertTrue(o.path.startswith(os.path.join(d, ".parley")), o.path)
+
+    # PY-12e (spec section 5.2, "a program that cannot tell whether a negation matches MUST treat
+    # it as one that does"): the oracle is real git. Each content is written to
+    # `.parley/.gitignore` in a fresh repository, the writer runs, and `git add -A -n` must not
+    # list the receipt the writer wrote. The two tables are the TypeScript writer's (PE-6f).
+    F = "!*.jsonl\n"
+    RELOCATED = {
+        "a POSIX class at the start": "*\n![[:alpha:]]eceipts\n" + F,
+        "a POSIX class in the middle": "*\n!r[[:lower:]]ceipts\n" + F,
+        "a POSIX class beside a literal": "*\n!r[[:alnum:]_]ceipts\n" + F,
+        "a negated POSIX class": "*\n!r[^[:digit:]]ceipts\n" + F,
+        "a NUL byte after the pattern": "*\n!receipts\x00\n" + F,
+        "an equivalence class": "*\n!r[[=e=]]ceipts\n" + F,
+        "a collating symbol": "*\n!r[[.e.]]ceipts\n" + F,
+        "an unterminated bracket": "*\n![receipts\n" + F,
+        "a negated class whose first member is ]": "*\n![^]]eceipts\n" + F,
+        "the same with !": "*\n![!]]eceipts\n" + F,
+        "a class whose first member is ]": "*\n![]r]eceipts\n" + F,
+        "a range": "*\n!r[a-f]ceipts\n" + F,
+        "a range then a literal dash": "*\n!r[a-e-g]ceipts\n" + F,
+        "a negated class": "*\n!r[!x]ceipts\n" + F,
+        "upper case": "*\n!RECEIPTS\n" + F,
+        "a long s": "*\n!receiptſ\n" + F,
+        "a Kelvin sign": "*\n!receiKts\n" + F,
+        "a tab after the pattern": "*\n!receipts\t\n" + F,
+        "CRLF line endings": "*\r\n!receipts\r\n!*.jsonl\r\n",
+        "no final newline": "*\n!receipts\n!*.jsonl",
+    }
+    KEPT = {
+        "* alone": "*\n",
+        "the files re-included, the directory not": "*\n" + F,
+        "another name": "*\n!keep\n" + F,
+        "a reversed range": "*\n!r[f-a]ceipts\n" + F,
+        "a class without the letter": "*\n!r[abc]ceipts\n" + F,
+        "a negated class holding the letter": "*\n!r[!e]ceipts\n" + F,
+        "braces, which git reads literally": "*\n!{receipts}\n" + F,
+        "a comment": "*\n#!receipts\n" + F,
+        "an escaped bang": "*\n\\!receipts\n" + F,
+    }
+    GIT_ENV = {"PATH": os.environ.get("PATH", ""), "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull, "HOME": tempfile.gettempdir()}
+    HAS_GIT = shutil.which("git") is not None
+
+    def git(self, cwd, *args):
+        p = subprocess.run(["git", "-C", cwd, *args], env=self.GIT_ENV, capture_output=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        return p.stdout.decode("utf-8", "replace")
+
+    def git_would_stage(self, text):
+        """Whether real git would stage a file at `.parley/receipts/` under this ignore file."""
+        o = tempfile.mkdtemp(prefix="parley-py-oracle-")
+        self.git(o, "init", "-q")
+        os.makedirs(os.path.join(o, ".parley", "receipts"))
+        with open(os.path.join(o, ".parley", ".gitignore"), "w", encoding="utf-8", newline="") as f:
+            f.write(text)
+        with open(os.path.join(o, ".parley", "receipts", "01PROBE.jsonl"), "w") as f:
+            f.write("{}\n")
+        return "receipts/01PROBE.jsonl" in self.git(o, "add", "-A", "-n", ".")
+
+    def run_with(self, text):
+        d, state, env = scratch()
+        if self.HAS_GIT:
+            self.git(d, "init", "-q")
+        os.mkdir(os.path.join(d, ".parley"))
+        with open(os.path.join(d, ".parley", ".gitignore"), "w", encoding="utf-8", newline="") as f:
+            f.write(text)
+        o = run_count(d, env, ["count"], lambda r: None)
+        with open(os.path.join(d, ".parley", ".gitignore"), encoding="utf-8", newline="") as f:
+            self.assertEqual(f.read(), text)
+        self.assertEqual(o.status, 0)
+        # The property itself: whatever the writer decided, git does not stage what it wrote.
+        if self.HAS_GIT:
+            self.assertNotIn(".parley/receipts/", self.git(d, "add", "-A", "-n", "."))
+        return o, d, state
+
+    def test_a_negation_the_writer_cannot_evaluate_exactly_counts_as_one_that_matches(self):
+        for name, text in self.RELOCATED.items():
+            with self.subTest(name):
+                o, _, state = self.run_with(text)
+                self.assertTrue(o.path.startswith(os.path.join(state, "parley")), o.path)
+                warn = next(x for x in o.stderr.objs if x.get("code") == "receipt.relocated")
+                self.assertIn("negation", warn["problem"])
+                assert_valid(self, o)
+
+    def test_a_negation_that_cannot_match_receipts_leaves_the_receipt_where_git_does_not_stage_it(self):
+        for name, text in self.KEPT.items():
+            with self.subTest(name):
+                if self.HAS_GIT:
+                    self.assertFalse(self.git_would_stage(text))
+                o, d, _ = self.run_with(text)
+                self.assertTrue(o.path.startswith(os.path.join(d, ".parley")), o.path)
+                self.assertEqual(o.stderr.objs, [])
+
+    @unittest.skipUnless(HAS_GIT, "git is not installed")
+    def test_real_git_stages_a_receipt_under_each_of_the_reviewed_contents(self):
+        for name in ("a POSIX class at the start", "a POSIX class in the middle", "a POSIX class beside a literal", "a negated POSIX class",
+                     "a NUL byte after the pattern", "a negated class whose first member is ]", "the same with !"):
+            with self.subTest(name):
+                self.assertTrue(self.git_would_stage(self.RELOCATED[name]))
 
 
 class TestRetention(unittest.TestCase):

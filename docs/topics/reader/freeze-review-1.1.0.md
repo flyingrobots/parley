@@ -509,3 +509,88 @@ same line stamped 1.1.0, which isolates the field from the version `const`:
 {"probe":"P7.validate","line":"lens folded without stands_for","1.0.0 line under 1.0.0":"valid","the same 1.0.0 line under 1.1.0":["/_schema/version must be equal to constant"],"restamped 1.1.0 under 1.1.0":"valid"}
 {"probe":"P7.reader_with_both","lens_1_0_0_line":"validated","lens_1_0_0_line_with_string_fold":"validated","query_1_0_0_line_with_string_fold":"validated","query_1_1_0_line_with_string_fold":"invalid"}
 ```
+
+## Addendum, 2026-11-24: one sentence this review passed was wrong
+
+This is an addition to a dated record. Nothing above it was changed.
+
+Row L12 above rated the reworded `runs[].folded` sentence freezable. That sentence ended
+"compared without the envelope's t, seq, run and session". A later review, of the release pull
+request for spec `0.2.1` (flyingrobots/parley#158), found the case this review did not try: a
+record of the tool's own with a top-level `session` field. `session` is identity only on the
+protocol lines whose schemas define it (`parley.run.bootstrap`, `parley.receipt.head`,
+`parley.query` and `parley.lens`), and the writers do not refuse it in a tool's payload. Two runs
+of one invocation whose results were `{"session":"alice-login-1","value":1}` and
+`{"session":"bob-login-2","value":1}` were folded into one section with `folded.others: 1`.
+
+What was changed, before anything was merged, tagged or published:
+
+- The reader compares a tool's own record, a `page` and a decision record without `t`, `seq` and
+  `run` only. It compares a read's own `lens` also without its `session` and the `query` it
+  names, so two reads made in different sessions still fold (RD-110l).
+- The sentence in `schemas/parley.lens.schema.json`, its snapshot
+  `schemas/released/parley.lens/1.1.0.schema.json` and `schemas/parley.graphql` now reads: "and a
+  read's own lens without its session and the query it names, compared without the envelope's t,
+  seq and run (flyingrobots/parley#133). A top-level session on a record of the tool's own or on
+  a page is that record's own field and is compared (flyingrobots/parley#146)."
+
+The owner decided on 2026-11-24 that `parley.lens` is 1.1.0 and not 2.0.0, recorded on
+flyingrobots/parley#146. This correction does not reopen that: the version had not been released
+when the sentence was corrected.
+
+## Addendum, 2026-11-24 (second): a window edge makes "never" false
+
+This is a second addition to a dated record. Nothing above it was changed.
+
+Row L14 above rated this sentence of `runs[].folded` freezable: "Two runs whose results differ
+are a divergence (spec §2.3) and never stand for one another." A later blind pass over the
+release pull request (flyingrobots/parley#158) found the case this review did not try: a window
+bound that falls inside two runs. The reader compares the records the window holds and nothing
+else, which the living reference has always said ("the fold depends on the window"). So when run
+A answers X at t=100 and Y at t=5000, and run B of the same `inv` answers X at t=200, a read over
+[0, 1000] folds A into B, and a read over [0, 10000] does not. The behaviour is the documented
+one. The sentence was absolute, and it was about to become immutable.
+
+The behaviour was not changed. The sentence was. In `schemas/parley.lens.schema.json`, its
+snapshot `schemas/released/parley.lens/1.1.0.schema.json` and `schemas/parley.graphql` it now
+reads:
+
+> Every comparison here is of the records the window holds: two runs whose results in the window
+> differ are a divergence (spec §2.3) and do not stand for one another, and a run only partly
+> inside the window is compared by the part the window holds, so runs that stand for one another
+> under one window can differ under a wider one. A section marks a run the window did not hold
+> whole in two cases: head not_in_window when the window does not hold the run's head, and outcome
+> undetermined with reason no_end_in_window when it holds no end for the run and no failure
+> either; a run the window shows to have failed is failed with or without its end, so its section
+> does not say whether the window holds the end.
+
+Four cases pin the behaviour, and they passed before the rewording as after it (RD-112a to
+RD-112d). The first three are what the section carries:
+
+- The window closes inside both runs: the section of the run that stands for the other carries
+  `outcome: "undetermined"` and `reason: "no_end_in_window"`.
+- The window opens after one run's first result: the section carries `head: "not_in_window"`. A
+  run whose head the window holds does not fold with one whose head it does not, because the
+  head's `resolved` is part of what must be equal.
+- Both runs emitted an `error` inside the window and ended outside it: the section says
+  `outcome: "failed"` and carries neither marker. That is why the new sentence does not claim
+  that a section always shows a run the window did not hold whole.
+
+The same pass over the description found a second absolute the window makes false, in the
+sentence section 4 above reworded. "A redacted run ... never stand for another" is true only of
+a run the window shows to be redacted: one whose `redaction` and whose `end` with `redacted:
+true` lie outside the window, and whose head carries no `redacted`, folds (RD-112d). The sentence
+now reads:
+
+> A run with no inv in the window, a run the window shows to be redacted (its head carries
+> redacted, an end in the window states redacted true, or the window holds a redaction event of
+> the run), and a run the window does not show to be unredacted, because it holds neither the
+> run's receipt head nor an end that states redacted false, do not stand for another (spec §1.2a,
+> §2.3).
+
+`stands_for`, `loss.folded` and `parley.query`'s `fold` were read again for the same fault and
+were left as they are: each either speaks of the window already or defers to the fold's
+judgement ("runs it judges to be repeats").
+
+This correction, like the first, was made before `parley.lens` 1.1.0 was merged, tagged or
+published, so it does not reopen the owner's decision that the version is 1.1.0.

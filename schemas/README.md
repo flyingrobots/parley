@@ -5,11 +5,11 @@ the spec and from any package (spec §4.4). The `$id` of each file ends in `/<id
 the same exact id and version are pinned inside the schema's `_schema` constraint, because full
 validation is against the schema for the exact advertised pair (spec §4.5).
 
-Every version in the table but the two marked **draft** is **released** (the `0.2.0` entry in
-[`CHANGELOG.md`](../CHANGELOG.md)) and immutable: its snapshot is at
+Every version in the table is **released** and immutable: its snapshot is at
 `released/<id>/<version>.schema.json` (spec §4.6), and the top-level file here holds a released version only with the snapshot's exact bytes.
-`parley.query` and `parley.lens` are at draft 1.1.0, named under `Unreleased` in the changelog
-(flyingrobots/parley#133); their released 1.0.0 is unchanged under `released/`.
+The `0.2.0` entry in [`CHANGELOG.md`](../CHANGELOG.md) released the first version of each; the
+`0.2.1` entry released `parley.query` 1.1.0 and `parley.lens` 1.1.0
+(flyingrobots/parley#133), whose 1.0.0 stays released beside them under `released/`.
 The first change after a release, a description included, moves it to a new version; that version is a draft,
 which may change in place, while its changelog entry is under `Unreleased` (spec §4.5).
 `scripts/schemas.test.ts` fails if a top-level file changes a released pair's bytes, or carries a
@@ -31,8 +31,8 @@ version that is neither released nor named under `Unreleased`.
 | `parley.page` | 1.0.0 | One page of unbounded output | §7.2 |
 | `parley.command` | 1.0.0 | A command's description, effects, secrets and emitted types | §4.1 to §4.3 |
 | `parley.schema` | 1.0.0 | One message schema, carried by discovery | §4.1, §4.2 |
-| `parley.query` | 1.1.0 (draft) | A read against the history, recorded as an event: asker, view, budget, window, and whether it may fold | §9 |
-| `parley.lens` | 1.1.0 (draft) | The lens a result carries: view, asker, budget, window, loss bound, the runs it names and the runs each stands for, records | §9 |
+| `parley.query` | 1.1.0 | A read against the history, recorded as an event: asker, view, budget, window, and whether it may fold | §9 |
+| `parley.lens` | 1.1.0 | The lens a result carries: view, asker, budget, window, loss bound, the runs it names and the runs each stands for, records | §9 |
 | `parley.history.transform` | 1.0.0 | The opening line of a projected copy of a run on the shared stream: the projection's name and the digest of its source | §8 |
 
 Every message type the spec requires has a schema here and a validated example in the spec.

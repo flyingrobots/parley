@@ -213,6 +213,30 @@ describe("parley-emit-py: secrets, the counter and stray output, checked by the 
     expect(violations(c)).toEqual([]);
   }, SLOW);
 
+  test("PY-24h a result redaction changed under a schema the writer cannot evaluate: the process exits 4 with one redaction.schema_unchecked error, and the doctor passes", () => {
+    // The reviewers' variants: `value` is an integer in each, beside one construct outside the checker's subset.
+    const variants: Record<string, unknown> = {
+      "format date-time": { type: "object", required: ["value"], properties: { value: { type: "integer" }, when: { type: "string", format: "date-time" } } },
+      multipleOf: { type: "object", required: ["value"], properties: { value: { type: "integer" }, step: { type: "number", multipleOf: 0.5 } } },
+      uniqueItems: { type: "object", required: ["value"], properties: { value: { type: "integer" }, tags: { type: "array", uniqueItems: true } } },
+      "$ref into $defs": { type: "object", required: ["value"], properties: { value: { $ref: "#/$defs/n" } }, $defs: { n: { type: "integer" } } },
+      "an empty $defs": { type: "object", required: ["value"], properties: { value: { type: "integer" } }, $defs: {} },
+    };
+    for (const [name, schema] of Object.entries(variants)) {
+      const c = py(join(PKG, "tests", "fixtures", "typed_secret_tool.py"), ["count", "--token", "8675309"], scratch(), { TYPED_SECRET_SCHEMA: JSON.stringify(schema) });
+      expect([name, c.status]).toEqual([name, 4]);
+      const { text } = receiptOf(c);
+      expect(c.stdout + c.stderr + text).not.toContain("8675309");
+      expect(objs(c.stdout).map((o) => o.event)).toEqual(["run", "end"]);
+      expect(objs(c.stdout).at(-1)).toMatchObject({ event: "end", status: 4 });
+      expect(objs(c.stderr)).toEqual([expect.objectContaining({ event: "error", code: "redaction.schema_unchecked", detail: { schema: { id: "typed-secret-tool.count", version: "1.0.0" }, redacted: ["/value"] } })]);
+      expect(objs(text).filter((o) => o.event === "result")).toEqual([]);
+      const seqs = [...new Set([...objs(c.stdout), ...objs(c.stderr), ...objs(text)].map((o) => o.seq as number))].sort((a, b) => a - b);
+      expect(seqs).toEqual(seqs.map((_, i) => i));
+      expect(violations(c)).toEqual([]);
+    }
+  }, SLOW);
+
   test("PY-7a ten thousand results keep one gapless seq counter, and the doctor passes", () => {
     const at = scratch([]);
     const c = py(join(PKG, "tests", "fixtures", "many.py"), ["emit", "10000"], at);
@@ -401,5 +425,229 @@ describe("parley-emit-py: identity and vendoring", () => {
     expect(cap.status).toBe(0);
     expect(violations(cap)).toEqual([]);
     expectLoadsClean(cap, 1);
+  }, SLOW);
+});
+
+describe("parley-emit-py: the two writers read a .gitignore negation alike, and neither stays where git stages", () => {
+  // PY-12f / PE-6g (spec §5.2). For each generated negation line: the TypeScript writer's verdict
+  // and the Python writer's are the same, and wherever real git would stage a file under
+  // `.parley/receipts/` (with `*` in force and the files re-included), the verdict is "matches".
+  const TARGET = "receipts";
+  const classes = (c: string): string[] => {
+    const up = c.toUpperCase(), before = String.fromCharCode(c.charCodeAt(0) - 2), after = String.fromCharCode(c.charCodeAt(0) + 2);
+    return [
+      `[${c}]`, `[${up}]`, `[^x]`, `[!x]`, `[^${c}]`, `[!${c}]`, `[]${c}]`, `[^]]`, `[!]]`, `[]]`, `[${before}-${after}]`, `[${after}-${before}]`,
+      `[${c}-]`, `[-${c}]`, `[a-${before}-${c}]`, `[!-${c}]`, `[^-]`, `[]-a]`, `[--${after}]`, `[%-${after}]`, `[[:alpha:]]`, `[^[:digit:]]`, `[[:lower:]_]`,
+      `[_[:lower:]]`, `[[=${c}=]]`, `[[.${c}.]]`, `[[]`, `[[${c}]`, `[${c}[]`, `[]`, `[^]`, `[!]`, `[`, `]`, `[${c}`, `[^${c}`, `[\\${c}]`, `[${c}\u0000]`, `?`, `*`, `**`, `{${c}}`, `ſ`, `K`, `\t`, " ",
+    ];
+  };
+  const lines: string[] = [];
+  for (const at of [0, 3, TARGET.length - 1]) for (const k of classes(TARGET[at]!)) lines.push(`!${TARGET.slice(0, at)}${k}${TARGET.slice(at + 1)}`);
+  lines.push("!receipts", "!receipts/", "!/receipts", "!**/receipts", "!**/receipts/**", "!a/receipts", "!receipts ", "! receipts", "!Receipts", "!RECEIPTS", "!r*", "!*s", "!r*s", "!r**s", "!????????", "!?????????", "!???????", "!", "!!receipts", "receipts", "#!receipts", "\\!receipts", "!receipts\u0000", "!receipts\u0000x", "!rece\u0000ipts", "\u0000!receipts", "!keep", "!*.jsonl", "!receipts\r", "!receipt", "!receiptss");
+
+  const tsVerdicts = async (): Promise<boolean[]> => {
+    const { negationReachesReceipts } = await import("../../parley-emit/src/location.ts") as { negationReachesReceipts?: (line: string) => boolean };
+    expect(typeof negationReachesReceipts).toBe("function");
+    return lines.map((l) => negationReachesReceipts!(l));
+  };
+  const pyVerdicts = (): boolean[] => {
+    const prog = `import json, sys\nsys.path.insert(0, ${JSON.stringify(PKG)})\nimport parley_emit as pe\nprint(json.dumps([pe._negation_reaches_receipts(l) for l in json.load(sys.stdin)]))`;
+    const p = spawnSync(PY, ["-c", prog], { input: JSON.stringify(lines), encoding: "utf8" });
+    expect(p.status, p.stderr).toBe(0);
+    expect(p.stderr).toBe("");
+    return JSON.parse(p.stdout) as boolean[];
+  };
+
+  test("PY-12f the verdicts agree on every generated line", async () => {
+    const ts = await tsVerdicts(), py = pyVerdicts();
+    expect(lines.map((l, i) => [l, py[i]])).toEqual(lines.map((l, i) => [l, ts[i]]));
+    // The table is not vacuous: both verdicts occur.
+    expect(new Set(ts).size).toBe(2);
+  });
+
+  const GIT_ENV = { PATH: process.env.PATH ?? "", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", HOME: tmpdir() };
+  const hasGit = spawnSync("git", ["--version"], { env: GIT_ENV }).status === 0;
+  test.skipIf(!hasGit)("PY-12g wherever real git would stage a receipt, both verdicts are 'matches'", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "parley-gitignore-oracle-"));
+    expect(spawnSync("git", ["-C", repo, "init", "-q"], { env: GIT_ENV }).status).toBe(0);
+    mkdirSync(join(repo, ".parley", "receipts"), { recursive: true });
+    writeFileSync(join(repo, ".parley", "receipts", "01PROBE.jsonl"), "{}\n");
+    const ts = await tsVerdicts(), py = pyVerdicts();
+    let staged = 0;
+    lines.forEach((line, i) => {
+      // A line break inside the generated line would be a different file; none is generated.
+      writeFileSync(join(repo, ".parley", ".gitignore"), `*\n${line}\n!*.jsonl\n`);
+      const p = spawnSync("git", ["-C", repo, "add", "-A", "-n", "."], { env: GIT_ENV, encoding: "utf8" });
+      expect(p.status, p.stderr).toBe(0);
+      if (!p.stdout.includes("receipts/01PROBE.jsonl")) return;
+      staged += 1;
+      expect([line, "ts", ts[i]]).toEqual([line, "ts", true]);
+      expect([line, "py", py[i]]).toEqual([line, "py", true]);
+    });
+    expect(staged).toBeGreaterThan(20);
+  }, SLOW);
+});
+
+describe("parley-emit-py: the two checkers on patterns and malformed keywords", () => {
+  // PY-25e / PE-31e (spec §5.3). The writers may differ on which schemas they can evaluate; they
+  // may not differ on a verdict, and neither may answer for a pattern its engine reads otherwise.
+  const PATTERNS = [
+    "^a.c$", "^a$", "^\\s+$", "^\\S+$", "^[\\s]$", "^[^\\s]$", "^\\d+$", "^\\D$", "^\\w+$", "^\\W$", "\\bfoo\\b", "\\Bfoo", "^[a-c]+$", "^[^a-c]$", "^[\\]\\-\\\\]+$", "^[[]$",
+    "^a\\/b$", "^\\u0041\\x42\\u{43}$", "^\\u{1F600}$", "^.$", "^\\cJ$", "^[\\b]$", "^\\0$", "^a{2,3}?$", "^a{2,}$", "^(?:a|b)+?c$", "^(?!/)(?!.*(^|/)\\.\\.(/|$)).+$",
+    "(?<=a)b", "(?<!a)b", "^[a-z]{3}-[0-9]+$", "^#$", "^ $", "^[-a]$", "^[a-]$", "^[&&]$", "^[a~~b]$", "^[a||b]$", "^[a--b]$", "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$", "^[0-9a-f]{4}$",
+    "a|b|", "^$", "", "^\\t\\n\\r\\f\\v$", "^[\\t\\n]$", "^\\.\\*\\+\\?\\^\\$\\{\\}\\(\\)\\|\\[\\]$", "^[.*+?^${}()|/]$", "^x*?y+?z??$", "(a(b(c)))", "^(a|)$", "^\\x41$",
+    // Read differently by Python's `re`, or valid only in ECMAScript: Python must say unsupported.
+    "^\\p{Lu}", "\\P{L}", "(?<=Z.*)d", "(?<year>[0-9]{4})", "(a)\\1", "[^]", "[]", "[\\S]", "[\\D\\d]x{2}(?<n>a)\\k<n>", "\\ud83d\\ude00",
+    // Not ECMAScript with the `u` flag, or an inline flag: both must say unsupported.
+    "(?i)^zed", "^(?i:zed)", "(?-i:a)", "(?s:a)", "^Z(", "a{,3}", "a**", "a*+", "a{2}{3}", "(?=a)+", "\\-", "\\a", "\\Z", "\\A", "(?#c)", "(?P<n>a)", "a{2", "a}", "a]", "\\07", "\\x4",
+    "\\u12", "\\u{110000}", "[z-a]", "[\\d-x]", "a)", "*a", "a|*", "^*", "\\c1", "\\", "{", "a{1,2,3}", "a{3,1}", "(?<!a*)b",
+  ];
+  const VALUES = ["", "a", "abc", "a\nc", "a c", "a\n", " ", "﻿", "\u001c", "\u0085", " ", "\t", "x", "٣", "é", "a_9", "d", "]-\\", "[", "a/b", "ABC", "\u{1F600}", "\n", "\b", "a foo b", "foo", "\u0000", "aa", "aaa", "abac", "a/../b", "ab", "b", "abc-12", "#", "-", "&", "~", "|", "1.0", "01.0", "beef", "Zed", "zed", "Zd", "\t\n\r\f\v", ".*+?^${}()|[]", "A", "xyz", "é", "aé"];
+  const SHAPES: Record<string, unknown>[] = [
+    { enum: 5 }, { enum: {} }, { enum: [] }, { required: "a" }, { required: [5] }, { required: [] }, { properties: [] }, { properties: 5 }, { properties: { a: 5 } }, { type: 5 }, { type: "text" }, { type: [] }, { type: ["string", 5] },
+    { type: ["string", "null"] }, { minLength: "3" }, { minLength: -1 }, { minLength: 1.5 }, { minLength: 2.0 }, { maxLength: true }, { minItems: null }, { maxItems: [] }, { minProperties: {} }, { maxProperties: 1e400 }, { minimum: "0" }, { maximum: true },
+    { exclusiveMinimum: null }, { exclusiveMaximum: [] }, { minimum: 1.5 }, { pattern: 5 }, { pattern: null }, { format: 5 }, { format: ["json-pointer"] }, { format: "json-pointer" }, { anyOf: {} }, { anyOf: [] }, { allOf: 5 }, { oneOf: "x" }, { oneOf: [5] },
+    { items: 5 }, { items: [] }, { items: null }, { not: null }, { not: 5 }, { if: "x" }, { then: 5 }, { else: [] }, { additionalProperties: "no" }, { additionalProperties: null }, { const: null }, { const: { a: [1] } }, { description: 5, title: [], default: null, examples: 7 },
+  ];
+  const SHAPE_VALUES: unknown[] = ["abc", 1, 1.5, null, true, [], ["a"], {}, { a: 1 }];
+
+  const { checkRecord } = require("../../parley-emit/src/index.ts") as typeof import("../../parley-emit/src/index.ts");
+  type Verdict = "ok" | "no" | "unsupported";
+  const tsVerdict = (value: unknown, schema: unknown): Verdict => { const v = checkRecord(value, schema); return v.ok ? "ok" : "unsupported" in v ? "unsupported" : "no"; };
+  const pyVerdicts = (cases: { value: unknown; schema: unknown }[]): Verdict[] => {
+    const prog = `import json, sys, warnings\nwarnings.simplefilter("error")\nsys.path.insert(0, ${JSON.stringify(PKG)})\nimport parley_emit as pe\ndef v(c):\n    r = pe.check_record(c["value"], c["schema"])\n    return "ok" if r.ok else ("unsupported" if r.unsupported is not None else "no")\nprint(json.dumps([v(c) for c in json.load(sys.stdin)]))`;
+    const p = spawnSync(PY, ["-c", prog], { input: JSON.stringify(cases), encoding: "utf8", maxBuffer: 1 << 26 });
+    expect(p.status, p.stderr).toBe(0);
+    expect(p.stderr).toBe("");
+    return JSON.parse(p.stdout) as Verdict[];
+  };
+
+  test("PY-25e on every pattern and value: Python evaluates only what TypeScript evaluates, the verdicts then agree, and TypeScript's is the engine's own", () => {
+    const cases = PATTERNS.flatMap((pattern) => VALUES.map((value) => ({ value, schema: { type: "string", pattern } })));
+    const py = pyVerdicts(cases);
+    let both = 0, pyOnlyRefuses = 0, bothRefuse = 0;
+    cases.forEach((c, i) => {
+      const ts = tsVerdict(c.value, c.schema), pattern = c.schema.pattern;
+      let engine: Verdict;
+      try { engine = /\(\?[A-Za-z-]/.test(pattern) ? "unsupported" : new RegExp(pattern, "u").test(c.value) ? "ok" : "no"; } catch { engine = "unsupported"; }
+      expect([pattern, c.value, "ts", ts]).toEqual([pattern, c.value, "ts", engine]);
+      if (py[i] === "unsupported") { if (ts === "unsupported") bothRefuse += 1; else pyOnlyRefuses += 1; return; }
+      both += 1;
+      expect([pattern, c.value, "py", py[i]]).toEqual([pattern, c.value, "py", ts]);
+    });
+    expect(both).toBeGreaterThan(1000);
+    expect(pyOnlyRefuses).toBeGreaterThan(100);
+    expect(bothRefuse).toBeGreaterThan(500);
+  });
+
+  test("PY-25f on keywords whose value has the wrong shape, and their well-formed neighbours, the two checkers give one verdict", () => {
+    const cases = SHAPES.flatMap((schema) => SHAPE_VALUES.map((value) => ({ value, schema })));
+    // JSON cannot carry 1e400; the TypeScript side sees Infinity and the Python side null, both of which are refused.
+    const py = pyVerdicts(cases);
+    const ts = cases.map((c) => tsVerdict(c.value, c.schema));
+    expect(cases.map((c, i) => [JSON.stringify(c.schema), JSON.stringify(c.value), py[i]])).toEqual(cases.map((c, i) => [JSON.stringify(c.schema), JSON.stringify(c.value), ts[i]]));
+    expect(new Set(ts)).toEqual(new Set<Verdict>(["ok", "no", "unsupported"]));
+  });
+});
+
+describe("parley-emit-py: a secret that coincides with one of the writer's own words", () => {
+  // PY-26 (spec §5.3): `--token create` beside the bookkeeping `op` `create`. Every line of every
+  // run is validated against the RELEASED snapshot of its exact pair with ajv.
+  const RELEASED = join(SCHEMAS_DIR, "released");
+  const ajv = new Ajv2020({ strict: false, allErrors: true }); addFormats(ajv);
+  const validators = new Map<string, ReturnType<typeof ajv.compile>>();
+  const invalid = (o: Record<string, unknown>): string | null => {
+    const stamp = o._schema as { id: string; version: string };
+    const file = join(RELEASED, stamp.id, `${stamp.version}.schema.json`);
+    if (!existsSync(file)) { expect(stamp.id.startsWith("parley.")).toBe(false); return null; }
+    const key = `${stamp.id}@${stamp.version}`;
+    if (!validators.has(key)) validators.set(key, ajv.compile(JSON.parse(readFileSync(file, "utf8")) as object));
+    const v = validators.get(key)!;
+    return v(o) ? null : `${key} ${ajv.errorsText(v.errors)}: ${JSON.stringify(o)}`;
+  };
+  const neutral = (secret: string) => {
+    for (let i = 0; i < 64; i++) { const at = scratch(["a.txt"]); if (!at.dir.includes(secret) && !at.env.XDG_STATE_HOME!.includes(secret)) return at; }
+    throw new Error(`no temporary directory free of ${secret} could be made`);
+  };
+
+  test("PY-26a under --help, --schema and an ordinary command, every line validates against its released snapshot", () => {
+    for (const secret of ["create", "delete", "append", "stdin", "tree", "true", "unreadable", "input", "op", "scope", "paths", "tool", "code", "status", "effects", "inputs", "argv", "/zq", "zq7kx9control"]) {
+      for (const mode of [["--help"], ["--schema"], []]) {
+        const c = py(join(PKG, "tests", "fixtures", "coincide_tool.py"), ["count", ...mode, "--token", secret], neutral(secret));
+        expect([secret, mode, c.status]).toEqual([secret, mode, 0]);
+        const lines = [...objs(c.stdout), ...objs(c.stderr), ...objs(receiptOf(c).text)];
+        expect(lines.length).toBeGreaterThan(4);
+        expect([secret, mode, lines.map(invalid).filter((x) => x !== null)]).toEqual([secret, mode, []]);
+        expect(violations(c)).toEqual([]);
+      }
+    }
+  }, SLOW);
+});
+
+describe("parley-emit-py: a record the writer raises on its own account, and a main that always ends the run", () => {
+  // PY-28 (spec §3.3, §5.3, flyingrobots/parley#161): tests/fixtures/own_records_tool.py as a
+  // real process, with a declared secret equal to each field name of the writer's own records.
+  // Every line of every run is validated against the RELEASED snapshot of its exact pair with ajv.
+  const RELEASED = join(SCHEMAS_DIR, "released");
+  const ajv = new Ajv2020({ strict: false, allErrors: true }); addFormats(ajv);
+  const validators = new Map<string, ReturnType<typeof ajv.compile>>();
+  const invalid = (o: Record<string, unknown>): string | null => {
+    const stamp = o._schema as { id: string; version: string };
+    const file = join(RELEASED, stamp.id, `${stamp.version}.schema.json`);
+    if (!existsSync(file)) { expect(stamp.id.startsWith("parley.")).toBe(false); return null; }
+    const key = `${stamp.id}@${stamp.version}`;
+    if (!validators.has(key)) validators.set(key, ajv.compile(JSON.parse(readFileSync(file, "utf8")) as object));
+    const v = validators.get(key)!;
+    return v(o) ? null : `${key} ${ajv.errorsText(v.errors)}: ${JSON.stringify(o)}`;
+  };
+  const neutral = (secret: string) => {
+    for (let i = 0; i < 64; i++) { const at = scratch([]); if (!at.dir.includes(secret) && !at.env.XDG_STATE_HOME!.includes(secret)) return at; }
+    throw new Error(`no temporary directory free of ${secret} could be made`);
+  };
+  const FIXTURE = join(PKG, "tests", "fixtures", "own_records_tool.py");
+  const CONTROL = "zq7kx9control";
+  const SECRETS = ["code", "problem", "remedy", "decision", "because", "detail", "event", "status", "uncaught.exception", "boom", "traceback", "stream", "text", CONTROL];
+  // The tool's own step is scrubbed in full: under these two its field is renamed and it is withheld (§5.3).
+  const TOOL_STEP_WITHHELD = new Set(["decision", "because"]);
+  /** A real process: the exit status is an integer, stdout ends with a newline-terminated `end` carrying it, stderr is JSON Lines only, and every line validates. */
+  const settled = (c: Captured, secret: string, mode: string, status: number) => {
+    expect([secret, mode, c.status]).toEqual([secret, mode, status]);
+    expect(c.stdout.endsWith("\n")).toBe(true);
+    expect(objs(c.stdout).at(-1)).toMatchObject({ event: "end", status });
+    const lines = [...objs(c.stdout), ...objs(c.stderr), ...objs(receiptOf(c).text)];
+    expect([secret, mode, lines.map(invalid).filter((x) => x !== null)]).toEqual([secret, mode, []]);
+    expect(violations(c)).toEqual([]);
+    return objs(receiptOf(c).text);
+  };
+
+  test("PY-28a a handler that raises, alone and after a step of its own, under each secret", () => {
+    for (const secret of SECRETS) {
+      const alone = py(FIXTURE, ["count", "throw", "--token", secret], neutral(secret));
+      settled(alone, secret, "throw", 2);
+      expect([secret, objs(alone.stderr).map((o) => [o.code, o.problem])]).toEqual([secret, [["uncaught.exception", secret === "boom" ? "uncaught RuntimeError: [redacted]" : "uncaught RuntimeError: boom"]]]);
+      if (secret === "boom" || secret === CONTROL) expect(alone.stdout + alone.stderr + receiptOf(alone).text).not.toContain(secret);
+
+      const after = py(FIXTURE, ["count", "step-throw", "--token", secret], neutral(secret));
+      const withheld = TOOL_STEP_WITHHELD.has(secret);
+      const receipt = settled(after, secret, "step-throw", withheld ? 4 : 2);
+      expect([secret, objs(after.stderr).map((o) => o.code)]).toEqual([secret, [withheld ? "redaction.schema_conflict" : "uncaught.exception"]]);
+      expect([secret, receipt.filter((o) => o.event === "receipt.step").map((o) => [o.decision, o.because])]).toEqual([secret, withheld ? [] : [["d", "b"]]]);
+    }
+  }, SLOW);
+
+  test("PY-28b the writer's retention step and its captured-output step under each secret: status 0", () => {
+    for (const secret of SECRETS) {
+      const at = neutral(secret);
+      expect(py(FIXTURE, ["count", "quiet"], at).status).toBe(0);
+      const kept = py(FIXTURE, ["count", "quiet", "--token", secret], at);
+      const retained = settled(kept, secret, "quiet", 0);
+      expect(kept.stderr).toBe("");
+      expect([secret, retained.filter((o) => o.event === "receipt.step").map((o) => o.decision)]).toEqual([secret, ["retention: deleted 1 receipt bundle(s)"]]);
+
+      const printed = py(FIXTURE, ["count", "print", "--token", secret], neutral(secret));
+      const receipt = settled(printed, secret, "print", 0);
+      expect(printed.stderr).toBe("");
+      expect([secret, receipt.filter((o) => o.event === "receipt.step").map((o) => [o.decision, o.detail])]).toEqual([secret, [["captured stray output", { stream: "stdout", text: "a library says [redacted]\n" }]]]);
+    }
   }, SLOW);
 });

@@ -5,32 +5,50 @@ on its own; the spec and each message schema move separately (spec §4.4).
 
 ## [Unreleased]
 
-### Changed
-
-- The shipped copies of the draft `parley.query` 1.1.0 and `parley.lens` 1.1.0 carry the
-  descriptions the pre-freeze review reworded (flyingrobots/parley#146; the root `CHANGELOG.md`
-  lists each): descriptions, and `minLength: 1` on a `stands_for` entry, so a 1.1.0 lens whose
-  `stands_for` holds an empty string now loads `invalid` (RD-110h). The reader never wrote one;
-  no emitted line and no other behaviour changes. Three
-  tests now hold sentences those descriptions state: the order of `stands_for` (RD-110i), that a
-  byte budget never shortens it (RD-110j), and that it names runs and not `seq`s (RD-110k).
-
 ## [0.2.0] — 2026-11-24
 
 A fold could hide a run whose result differed, and said only how many runs it stood for
 (flyingrobots/parley#133). This version changes what folds, lets a read turn the fold off, and
-names the folded runs. It emits `parley.query` and `parley.lens` at **1.1.0**, which are drafts in
-this repository until the root `CHANGELOG.md` releases them; it still reads 1.0.0 lines.
+names the folded runs. It emits `parley.query` and `parley.lens` at **1.1.0**, released with spec
+`0.2.1` (the root `CHANGELOG.md`); it still reads 1.0.0 lines. The copies it ships are pinned to the
+commit of that release, and carry the wording the pre-freeze review settled
+(flyingrobots/parley#146): a 1.1.0 lens whose `stands_for` holds an empty string loads `invalid`
+(RD-110h), and three tests hold sentences the descriptions state (RD-110i to RD-110k).
 
 ### Fixed
 
-- **Two runs whose results differ no longer fold.** The fold compared `inv`, the outcome, the
+- **Two runs whose results differ no longer fold**, with one known exception: results that differ
+  only in an integer beyond 2^53 still compare equal, because a record is parsed into doubles, and
+  such an integer is not returned exactly (flyingrobots/parley#159; stated under "What it does not
+  do" in the README). The fold compared `inv`, the outcome, the
   `end` statuses, the diagnostic codes and `resolved`, and no result, so two successful runs of
   one invocation that answered 1 and 2 came back as one run with `folded: {others: 1}` under every
   view and every budget. Runs now fold only when every result record is equal too: the tool's own
   records, each `page`, each `sidecar`'s `bytes` and `sha256` and a read's own `lens`, in `seq`
-  order, as canonical JSON without the envelope's `t`, `seq`, `run` and `session` (RD-110a,
-  RD-110b).
+  order, as canonical JSON without the envelope's `t`, `seq` and `run`, and a read's own `lens`
+  also without its `session` and the `query` it names (RD-110a, RD-110b). The comparison is of
+  the records the window holds, as every part of the fold is: a run only partly inside the window
+  is compared by that part, so two runs whose records in the window agree fold even when their
+  receipts differ outside it, and a wider window or `fold: false` shows them apart. That is
+  unchanged behaviour, now pinned at both edges of a window, for two failed runs and for a run redacted after the
+  window closes (RD-112),
+  and `parley.lens` 1.1.0's `runs[].folded` description says it: as first written for this
+  release it said two runs whose results differ "never stand for one another", which a window
+  edge makes false. A section marks a run the window did not hold whole with `head:
+  "not_in_window"` or `outcome: "undetermined"` and `reason: "no_end_in_window"`; a run the
+  window shows to have failed carries neither when only its `end` is outside.
+- **A tool's own `session` field is part of what the fold compares.** As first written for
+  this version the comparison left out a top-level `session` from every record. `session` is
+  identity only on the protocol lines whose schemas define it (spec §2.1), of which the fold
+  compares one, a read's own `lens`; the writers do not refuse it in a tool's payload, so two runs of one invocation
+  whose results were `{"session":"alice-login-1","value":1}` and
+  `{"session":"bob-login-2","value":1}` came back as one section with `folded.others: 1`. A
+  top-level `session` is now left out of a read's own `lens` alone, so two reads made in
+  different sessions still fold, and it is compared on a tool's own record, a `page` and a
+  decision record. A tool's own record that carries the event name `lens` is compared whole. A
+  review of this release found it before anything was published; the sentence in `parley.lens`
+  1.1.0's `runs[].folded` description that said so is corrected with it (RD-110l,
+  flyingrobots/parley#146).
 - **Runs that decided differently no longer fold under a view that states decisions.** When the
   view's surface holds them, the decision records must be equal as well: `receipt.step` under
   `how-it-decided` and `everything`, `cache.hit` under those and `what-ran` (RD-110c). The fold
@@ -76,11 +94,16 @@ this repository until the root `CHANGELOG.md` releases them; it still reads 1.0.
 - The dependency on `@flyingrobots/parley-emit` is `^0.4.0`, up from `^0.3.0`, so the range admits
   the version in the repository (flyingrobots/parley#131). A read emits no record redaction can
   make invalid that it did not before; a record it would have published invalid is now refused by
-  the writer, and the read ends with status 4.
+  the writer, and the read ends with status 4. The writer's refusal of a record it cannot check
+  (`redaction.schema_unchecked`, flyingrobots/parley#144) cannot reach a read's own `query` or
+  `lens`: both are validated against schemas the writer ships, and a test holds every one of
+  those inside its checker's subset.
 
 ## [0.1.2] — 2026-11-24
 
 No change to behaviour or to the schemas it ships. A read's own receipt records `v` `0.1.2`.
+This version was never tagged or published: it has no tag, no GitHub release and no npm version,
+and 0.2.0 carries its change.
 
 ### Changed
 

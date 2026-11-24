@@ -101,9 +101,29 @@ The writer stamps neither message, so no emitted line changes.
   declared secret value, since a code is never scrubbed. The `schema.unavailable` warning of
   discovery is writer-built, as the writer's other warnings are.
 - Not changed, and stated: an input's `role` is the tool's declaration and is scrubbed, so the
-  secret `stdin` gives a `role` of `[redacted]`, which its schema accepts. `uncaught.exception`
-  and the writer's own steps still travel as a tool's records do, so a secret equal to one of
-  their field names withholds them (flyingrobots/parley#161).
+  secret `stdin` gives a `role` of `[redacted]`, which its schema accepts.
+- **A record the writer raises on its own account is writer-built, and `main` always ends the
+  run** (flyingrobots/parley#161, spec §3.3, §5.3). `uncaught.exception`, the retention and
+  history-retention steps, the projection step and the captured-console step travelled as a
+  tool's records do, so a declared secret equal to one of their field names renamed the field
+  and the redaction check refused the record. With `--token decision` or `because` a run that
+  captured a console line lost the step and ended with status 4, and a run that triggered
+  retention rejected with no `end`, since that call was outside any handler; with `remedy`,
+  `detail` or `stack` the record was published with that key renamed to `[redacted]`. With
+  `--token code`, `problem` or `uncaught.exception` and a handler that threw, the report threw
+  `ParleyRedactionConflict` from inside `main`'s own catch block: `main` rejected, and the last
+  line on stdout was the bootstrap line. Now those records are emitted through `writerError`
+  and `writerStep`: their field names and the writer's own `code` stay, and every string in
+  them is still scrubbed, the exception's name, message and stack, a captured line and a file
+  name included. A step or error the tool emits is unchanged: it is the tool's record, scrubbed
+  in full and checked, so `run.step` under `--token decision` is still withheld with status 4.
+- **`main` never rejects once the receipt is reserved.** Everything after that point runs
+  under one handler. A failure of the writer's own is a new `error`, code
+  `uncaught.writer_failure`, with status 2, as the Python writer already reports it; before, it
+  was a rejected promise and no `end`. When the report of a failure cannot itself be built or
+  written (a thrown value that throws when it is described), the run still ends, with status 4:
+  the run failed and the error that says why could not be written, which spec §3.4 gives to 4,
+  not to the 2 of a failure that was reported.
 - **The redaction exceptions carry what the published line carries, never the secret.** When a
   declared secret was the name of a required property, the scrub renamed the key, the checker
   reported the property it then missed by its JSON Pointer, and `ParleyRedactionConflict` carried

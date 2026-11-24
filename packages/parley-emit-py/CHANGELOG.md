@@ -10,6 +10,15 @@ release's digest is recorded on its GitHub release (tag `parley-emit-py-vX.Y.Z`)
 
 ## [Unreleased]
 
+### Fixed
+
+- **A `receipt_extra` field can no longer contradict the record** (flyingrobots/parley#130).
+  `run.result({"value": 1}, schema, {"value": 2})` used to put `1` on stdout and `2` in the
+  receipt under one `seq`, against spec §1.3. The call now raises `ValueError` before either copy
+  is written. Equal shared values are accepted and written from the record; receipt-only fields
+  are unchanged. **BREAKING for a tool that relied on the overwrite**, which was already
+  non-conforming.
+
 ## [0.1.2] — 2026-11-22
 
 Retention's rule for a receipt that may still be being written is now the spec's (spec section

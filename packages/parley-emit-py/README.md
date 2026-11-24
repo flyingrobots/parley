@@ -253,6 +253,10 @@ included; the raw and resolved arguments; input paths and digests; captured stra
 traceback of an exception that escaped the handler; and copies of every result, error and warning.
 Declared secrets are replaced before writing; an undeclared secret is not, so declare it.
 
+A `receipt_extra` field the record also carries must hold an equal JSON value: the copies of one
+event agree on every field they share (spec §1.3). A different value raises `ValueError` before
+either copy is written.
+
 ## Testing
 
 ```bash

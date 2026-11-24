@@ -12,7 +12,8 @@ it. This page is the reference for what the package does on `main`; the package
 | --- | --- |
 | `defineTool(spec)` | Checks a tool's declaration for the things the writer needs: a non-empty name and version, at least one command, an intent per command, a SemVer version on every emitted type, and a positive retention count. Effects, secrets, error types, source resolvers and the `--human` renderer are carried as declared |
 | `main(spec, argv, handler, options)` | Parses the writer-owned flags (`--human`, `--humanize`, `--dry-run`, `--schema`, `--help`, `-h`) before the first `--`, which ends them (flyingrobots/parley#103), chooses the receipt location, opens the shared history stream when one is configured, resolves declared sources, redacts, bootstraps, writes the head, enforces retention, runs the handler under the top-level handler, closes with `end`, returns the exit status |
-| `Run` | `result`, `page`, `step`, `warning`, `error`, `readInput`, `input`, `inputUnreadable`, `finaliseInputs`, `end`; `receiptPath`, `cwd`, `dryRun`, `ended`, `status` |
+| `Run` | `result`, `page`, `step`, `warning`, `error`, `readInput`, `input`, `inputUnreadable`, `finaliseInputs`, `end`; `receiptPath`, `cwd`, `dryRun`, `ended`, `status`, `sinkFailed`, `redactionRefused` |
+| `ParleyRedactionConflict`, `REDACTION_CONFLICT_CODE` | The error an emission throws when redaction made its record invalid under its declared schema, and the code of the `error` line the writer emits for it |
 | `SCHEMAS`, `SCHEMA_SOURCE` | The seventeen schemas the package ships, the released versions of spec `0.2.0`'s release, with the commit and digest of each |
 | `computeInv`, `canonical`, `digestTree`, `sha256` | The documented `inv` derivation and its parts |
 | `chooseLocation`, `repoRoot`, `stateBase`, `bookkeepingFor` | Receipt placement and the bookkeeping a run declares |
@@ -20,7 +21,7 @@ it. This page is the reference for what the package does on `main`; the package
 | `historyProjection`, `transformDigest`, `transformName`, `isHistorySink` | The projection a configured transform applies to the stream copy: its name, the digest of its source, and which form `MainOptions.history` was given |
 | `declaredProjection(values)` | A built-in transform: the writer's own §5.3 scrubber applied to the stream copy's body with a second declared set; `undefined` for an empty set, so no transform is configured at all |
 | `refuseSuspectedSecrets`, `findSuspectedSecret`, `SECRET_PATTERNS`, `refuse`, `isHistoryRefusal` | The built-in transform that withholds a line whose body matches one of ten documented token shapes, the shapes themselves as data, and the typed refusal a transform returns to withhold a line under a code of its own |
-| `checkRecord` | The bounded JSON Schema check the writer re-validates a projected line with, in a package with no runtime dependencies |
+| `checkRecord` | The bounded JSON Schema check the writer re-validates a projected line and a redacted record with, in a package with no runtime dependencies. A failing result carries `errors` and, in the same order, the JSON Pointer of each in `pointers` |
 | `classifySecrets`, `collectSecretValues`, `redactArgv`, `scrub` | Redaction |
 | `ulid` | Run ids |
 
@@ -70,7 +71,8 @@ it. This page is the reference for what the package does on `main`; the package
    declared inputs, with redacted descriptors in the preimage, and emits `receipt.inputs` with
    `inv` if not already done, then writes `end` to stdout and the receipt as one event and closes
    the file. Status: the one given (`0` refused after a reported error), else 2 if an error was
-   reported, else 0; 4 if any sink or sidecar failed (§3.3, §3.4, §5.4). Every record's payload is
+   reported, else 0; 4 if any sink or sidecar failed, or a record was withheld because redaction
+   made it invalid (§3.3, §3.4, §5.4, §5.3). Every record's payload is
    scrubbed of declared secrets before any copy is written, within strings, in numbers and
    booleans whose decimal form is a secret, and in object keys; the envelope never is. The default
    descriptor sinks retry a full pipe and continue a partial write; a sidecar that cannot be
@@ -244,6 +246,21 @@ code and still owns the namespace: a code that is not spec §6's shape, or an em
 scrub. The package
 [README](../../../packages/parley-emit/README.md#five-decisions-the-owner-may-overrule) states the
 five decisions behind the built-in that the owner can overrule.
+
+## A record redaction made invalid
+
+Spec §5.3 forbids publishing a record that redaction made invalid under its declared schema
+(flyingrobots/parley#131). The writer holds every schema document it can check against, by exact
+pair: the ones it ships and the ones the tool declared on its emitted and error types.
+
+| Step | Behaviour |
+| --- | --- |
+| Trigger | The scrub replaced something in a record the tool emitted. A writer-built record never triggers it: the head, `end`, `redaction`, `sidecar`, `receipt.inputs`, discovery lines and the writer's own diagnostics are emitted with the writer flag, which also keeps their scalars and identity fields from being scrubbed |
+| Check | Before any copy is written and before a `seq` is taken, the stream copy and, with `receiptExtra`, the receipt copy are each validated as scrubbed and as the tool handed them over. A failure the scrubbed copy has and the original did not is a conflict |
+| Not checked | A pair with no schema document, and a schema outside the checker's subset: nothing can be established, and the record is written as before. A record already invalid in the same way is written as before |
+| Report | One writer-built `error`, code `redaction.schema_conflict`, on stderr and in the receipt. `problem` and `detail` (`schema: {id, version}`, `at`, `redacted`) name the fields by JSON Pointer and the schema pair. The checker's text is deliberately not used: it can quote the schema, and the value is the secret or sits beside it. Being writer-built, the error is not checked again, so it cannot raise another |
+| Refusal | The call throws `ParleyRedactionConflict`. `main` does not turn it into `uncaught.exception`; a handler may catch it and continue |
+| Status | 4, forced at `end` exactly as a sink failure forces it, whatever status the handler passes. `run.redactionRefused` is true |
 
 ## What it does not do
 

@@ -10,6 +10,42 @@ release's digest is recorded on its GitHub release (tag `parley-emit-py-vX.Y.Z`)
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-11-24
+
+The writer no longer publishes a record that redaction made invalid under its declared schema
+(flyingrobots/parley#131, spec §5.3), by the same rule as `@flyingrobots/parley-emit` 0.4.0. **A
+run that used to end with status 0 and an invalid line now ends with status 4 and a structured
+error.** The file's digest moves with the file, so a tool that vendors it copies the new file and
+pins the new digest.
+
+### Fixed
+
+- **A record redaction made invalid is never published.** An integer field equal to a declared
+  secret became the string `[redacted]` under the original schema, in a run that ended with
+  status 0; a string with a `pattern`, an `enum`, a `format` or a length bound broke the same
+  way, as did a tool's own `error` whose `code` or typed field the secret landed in. A tool's
+  record in which the scrub replaced something is now validated, as stdout or stderr and the
+  receipt would each receive it (`receipt_extra` included), against the schema document for its
+  declared pair, before any copy is written and before a `seq` is taken. When the redaction made
+  it invalid, nothing of the record is written and the counter has no gap. The writer emits one
+  `error` with the code `redaction.schema_conflict`, whose `problem` and `detail` (`{schema: {id,
+  version}, at, redacted}`) name each field by JSON Pointer and the schema pair, with no value,
+  no text from the checker and no part of the schema. The call raises
+  `ParleyRedactionConflict`, which `main` does not report a second time, and the run ends with
+  status 4 whatever the handler passes to `end`, as after a sink failure.
+- Scope, stated: only a failure the redaction caused is refused. A record already invalid in the
+  same way, a record of a type declared with no `schema` document, and a schema outside the
+  checker's subset are written as before. Writer-built records are never checked.
+- `run.error` marks the run as having reported an error once the line is out, not before.
+
+### Added
+
+- `ParleyRedactionConflict` (with `schema` and `pointers`), `REDACTION_CONFLICT_CODE` and
+  `run.redaction_refused`.
+- `CheckResult.pointers`: the JSON Pointer of each error, in the same order as `errors`, and for a
+  missing or disallowed property, that property. A key containing `/` or `~` is now escaped in
+  the path an error names (RFC 6901).
+
 ### Changed
 
 - The embedded schemas were re-synced: `parley.query` and `parley.lens` are the draft 1.1.0

@@ -37,6 +37,12 @@ the entry under it names each schema version it releases, and those are separate
   Its fold no longer hides a run whose result differs
   (flyingrobots/parley#133; `packages/parley-read/CHANGELOG.md`). It is not tagged: these two
   schema versions are to be released first, since a released package should not stamp a draft.
+- `@flyingrobots/parley-emit` 0.4.0 and `parley_emit.py` 0.3.0 implement the §5.3 sentence below:
+  a tool's record that redaction changed is validated against its declared schema before any copy
+  is written, and one that redaction made invalid is replaced by a `redaction.schema_conflict`
+  error and a run that ends with status 4 (flyingrobots/parley#131; each package's changelog).
+  `@flyingrobots/parley-read` 0.2.0, still untagged, moves its range to parley-emit `^0.4.0`. No
+  schema version moves and no released schema's bytes change.
 - `@flyingrobots/parley-emit` 0.3.0 and `parley_emit.py` 0.2.0 add `run.readInput` and
   `run.read_input`: a tool reads a declared file input through the run, and the receipt records
   the digest of the bytes it read, not of the file as the handler left it
@@ -77,6 +83,16 @@ the entry under it names each schema version it releases, and those are separate
   over a day and then appends while retention deletes its receipt loses it. That window is accepted
   rather than closed by a cross-writer lock protocol (flyingrobots/parley#112). Both writers
   already behaved this way.
+- Spec §5.3, with one sentence added to the `4` row of §3.4: a program **MUST NOT** publish a
+  record that redaction made invalid under its declared schema. It checks the redacted record
+  before any copy leaves the process, gives a failing record no `seq` and writes it nowhere,
+  reports a structured error naming each field by JSON Pointer and the schema's `id` and
+  `version`, and closes the run with status `4`. That error **MUST NOT** carry the value, a
+  validator's message or any part of the schema. Before this, an integer field equal to a declared
+  secret was published as the string `[redacted]` under the original schema by a run that ended
+  with status 0. The owner decided option A, and status `4` over `2`, on 2026-11-24
+  (flyingrobots/parley#131). No error code is enumerated by the spec or by any schema, so the
+  writers' new code changes neither.
 - These sentences add or move a normative term, so the spec's next release is `0.2.1`. The status
   line keeps saying `0.2.0` until that release is cut. No schema version moves, and no released
   schema's bytes change. Decided under the owner's delegation of 2026-11-22.

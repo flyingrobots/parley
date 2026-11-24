@@ -9,6 +9,12 @@ the entry under it names each schema version it releases, and those are separate
 
 ### Added
 
+- Each release workflow can be started by hand as a dry run: it packs once, runs the release gate
+  with no tag, hands the artifact to a second job that checks its digest, and for the npm
+  packages offers the tarball to `npm stage publish --dry-run`. It makes nothing public and the
+  tag-triggered jobs do not run. A pushed tag cannot be taken back, so this is how a workflow is
+  seen to work on a runner first (flyingrobots/parley#156).
+
 - `schemas/parley.graphql`: Wesley SDL for all 17 messages, with interim `parley_` directives
   where Wesley 0.3.0-alpha.4 has no construct yet, each tied to the Wesley issue that retires it
   (flyingrobots/wesley#850 to flyingrobots/wesley#857). **It is not the source.** The hand-written

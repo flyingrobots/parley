@@ -39,6 +39,10 @@ schema and on one that does not (GATE-9, GATE-10).
 Before this workflow, a release was a tag and a GitHub release made by hand, with nothing run
 before either. Tags `parley-emit-py-v0.1.0` to `parley-emit-py-v0.2.0` were released that way.
 
+To see the workflow itself work on a runner before the tag exists, start it by hand as a
+[dry run](../release-spec/README.md#the-dry-run-of-a-release-workflow):
+`gh workflow run release-parley-emit-py.yml --ref main`. It makes nothing public.
+
 ## What a consumer pins
 
 The release notes carry the SHA-256 of the file, and `SHA256SUMS` beside it is in the form

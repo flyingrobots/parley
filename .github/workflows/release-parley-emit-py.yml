@@ -1,0 +1,150 @@
+name: Release parley-emit-py
+
+# A tag `parley-emit-py-vX.Y.Z` on main releases packages/parley-emit-py/parley_emit.py, the
+# vendorable Python writer. It goes to no registry: a tool copies the file and pins its SHA-256, so
+# the release is a GitHub release carrying the file, its digest and the release report.
+#
+#   gate     the file's own tests, then the release gate on the file (scripts/release-gate.ts): the
+#            tag is this version's, the changelog has its dated heading, the commit is on main, and
+#            the publication phase of the release-eligibility check passes against the previous
+#            release tag. Nothing public exists before it passes.
+#   release  the GitHub release, with the changelog section and the digest `--vendor-info` prints
+#
+# What the workflow cannot verify (tag protection, who may push a tag) is in
+# docs/workflows/release-parley-emit-py.
+
+on:
+  push:
+    tags:
+      - "parley-emit-py-v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-parley-emit-py-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PACKAGE_DIR: packages/parley-emit-py
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      file: ${{ steps.digest.outputs.file }}
+      sha256: ${{ steps.digest.outputs.sha256 }}
+    steps:
+      # Full history and every tag: the gate compares released snapshots with the baseline and
+      # with the previous release tag, and verifies the schema pin at its commit.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+
+      - name: The file's own tests
+        run: cd "$PACKAGE_DIR" && python3 -m unittest discover -s tests
+
+      # Exit 1 stops the workflow here: the release job does not run.
+      - name: Run the release gate on the file
+        run: bun run release-gate -- parley-emit-py --tag "$GITHUB_REF_NAME" --out "$RUNNER_TEMP/release"
+
+      - name: Print the release report
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/release/release-report.json" ]; then
+            { echo '## Release report'; echo; echo '```json'; cat "$RUNNER_TEMP/release/release-report.json"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'The gate wrote no release report.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Record the file's digest
+        id: digest
+        run: |
+          cd "$RUNNER_TEMP/release"
+          sha256sum -c SHA256SUMS
+          echo "sha256=$(cut -d' ' -f1 SHA256SUMS)" >> "$GITHUB_OUTPUT"
+          echo "file=$(cut -d' ' -f3 SHA256SUMS)" >> "$GITHUB_OUTPUT"
+
+      # A workflow artifact, to carry the file to the job below. Uploaded only after the gate passed.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: ${{ runner.temp }}/release
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    needs: gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: release-assets
+
+      # Three statements of one digest must agree: the gate's output, the bytes here, and what the
+      # file says of itself, which is the number a vendoring tool pins.
+      - name: Verify the file is the one the gate judged
+        env:
+          SHA256: ${{ needs.gate.outputs.sha256 }}
+          FILE: ${{ needs.gate.outputs.file }}
+        run: |
+          cd release-assets
+          echo "${{ needs.gate.outputs.sha256 }}  ${{ needs.gate.outputs.file }}" | sha256sum -c -
+          SAID=$(python3 -I "$FILE" --vendor-info | python3 -c 'import json, sys; print(json.load(sys.stdin)["sha256"])')
+          [ "$SAID" = "$SHA256" ] || { echo "::error::--vendor-info prints $SAID and the gate judged $SHA256"; exit 1; }
+
+      - name: Write the release notes
+        id: meta
+        env:
+          SHA256: ${{ needs.gate.outputs.sha256 }}
+          FILE: ${{ needs.gate.outputs.file }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#parley-emit-py-v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          awk "/^## \[${VERSION}\]/{found=1; next} /^## \[/{if(found) exit} found{print}" "$PACKAGE_DIR/CHANGELOG.md" > "$RUNNER_TEMP/release-notes.md"
+          [ -s "$RUNNER_TEMP/release-notes.md" ] || echo "Release parley_emit.py $VERSION" > "$RUNNER_TEMP/release-notes.md"
+          {
+            echo
+            echo "## Vendoring"
+            echo
+            echo "SHA-256 of \`$FILE\`, as \`python3 $FILE --vendor-info\` prints it:"
+            echo
+            echo '```text'
+            echo "$SHA256"
+            echo '```'
+            echo
+            echo "Verify a copy with:"
+            echo
+            echo '```bash'
+            echo "echo '$SHA256  $FILE' | shasum -a 256 -c -"
+            echo '```'
+          } >> "$RUNNER_TEMP/release-notes.md"
+
+      # A re-run after a partial release finds the release already there. It is left as it is,
+      # and only if the file it carries is this one, byte for byte.
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FILE: ${{ needs.gate.outputs.file }}
+        run: |
+          cd release-assets
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            mkdir -p "$RUNNER_TEMP/existing"
+            gh release download "$GITHUB_REF_NAME" --pattern "$FILE" --dir "$RUNNER_TEMP/existing"
+            cmp "$RUNNER_TEMP/existing/$FILE" "$FILE" || { echo "::error::the release $GITHUB_REF_NAME exists and carries a different $FILE than the tag holds"; exit 1; }
+            echo "the release $GITHUB_REF_NAME exists and carries this file"
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "parley_emit.py ${{ steps.meta.outputs.version }}" \
+              --notes-file "$RUNNER_TEMP/release-notes.md" \
+              --verify-tag \
+              "$FILE" SHA256SUMS release-report.json
+          fi

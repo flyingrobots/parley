@@ -10,6 +10,13 @@ release's digest is recorded on its GitHub release (tag `parley-emit-py-vX.Y.Z`)
 
 ## [Unreleased]
 
+### Changed
+
+- The embedded copies of the draft `parley.query` 1.1.0 and `parley.lens` 1.1.0 carry the
+  descriptions the pre-freeze review reworded (flyingrobots/parley#146; the root `CHANGELOG.md`
+  lists each): descriptions, and `minLength: 1` on a `stands_for` entry of the lens. No emitted
+  line changes.
+
 ## [0.3.0] — 2026-11-24
 
 The writer no longer publishes a record that redaction made invalid under its declared schema

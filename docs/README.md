@@ -9,6 +9,7 @@
 | [Related work](topics/related-work/README.md) | The neighbouring specifications and formats, what parley borrows from each, and what is its own |
 | [Observer geometry and spec §9](topics/related-work/observer-geometry.md) | What §9 takes from the observer-geometry treatment it cites, where it departs, and a proposed revision of its bullet list |
 | [The reader: asker, view and budget](topics/reader/README.md) | How a read states what it wants and what a result says about itself: the `parley.query` and `parley.lens` messages |
+| [Pre-freeze review of `parley.query` and `parley.lens` 1.1.0](topics/reader/freeze-review-1.1.0.md) | A dated review record: every difference between the two draft schemas and their released 1.0.0, classified, with the recommendation on freezing them and the compatibility statement for the release |
 | [A cold resume on real history](topics/reader/cold-resume.md) | What an agent with no other context reconstructed from footprint's real receipts using the digest and the drill-down, checked against `git log`, and what it missed |
 | [parley-emit](topics/parley-emit/README.md) | The writer library: what it does for a tool, lifecycle by lifecycle; its [test plan](topics/parley-emit/test-plan.md) is the contract ledger |
 | [parley-emit-py](topics/parley-emit-py/README.md) | The Python writer, one vendorable file: its lifecycle, exit statuses, discovery, per-tool retention and what its stray-output capture cannot hold; its [test plan](topics/parley-emit-py/test-plan.md) is the contract ledger |

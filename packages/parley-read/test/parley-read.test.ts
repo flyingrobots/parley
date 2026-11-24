@@ -3395,7 +3395,83 @@ describe("RD-110 a fold never hides a record that differs", () => {
     expect(index.validate(withFold({ others: 2, records: 6, stands_for: [] })).state).toBe("invalid");
     expect(index.validate(withFold({ others: 2, records: 6, stands_for: "all" })).state).toBe("invalid");
     expect(index.validate(withFold({ others: 2, records: 6, stands_for: [1, 2] })).state).toBe("invalid");
+    // An id is never empty: every run id in the schemas has `minLength: 1`, and so do these (flyingrobots/parley#146).
+    expect(index.validate(withFold({ others: 1, records: 3, stands_for: [""] })).state).toBe("invalid");
+    expect(index.validate(withFold({ others: 2, records: 6, stands_for: [runId(1), ""] })).state).toBe("invalid");
     expect(index.validate({ ...line, fold: "no" }).state).toBe("invalid");
     expect(index.validate({ ...line, fold: false }).state).toBe("validated");
+  });
+
+  // The three below hold sentences the pre-freeze review added to the 1.1.0 descriptions
+  // (flyingrobots/parley#146). They pin behaviour the reader already had.
+
+  /** One run of `inv_same` with one result, its head stamped `at` and its end 50 ms later; `null` leaves every record undated. */
+  const runStamped = (n: number, at: number | null): LoadedRecord[] => {
+    const t = (d: number) => (at === null ? null : at + d) as number;
+    return [
+      loaded(runId(n), 1, "receipt.head", t(0), { tool: "t", v: "1", argv: ["t", "x"], inv: "inv_same" }),
+      loaded(runId(n), 2, "result", t(1), { ...TOOL_OWNED, value: 1 }),
+      loaded(runId(n), 3, "end", t(50), { status: 0, redacted: false }),
+    ];
+  };
+
+  test("a fold lists its runs by their latest record, then by the greater id, an undated run last", () => {
+    // Runs 3 and 7 are the latest and tie; 2 and 4 tie; 6 has no dated record at all.
+    const stamps: [number, number | null][] = [[1, T0 + 500], [2, T0 + 100], [3, T0 + 900], [4, T0 + 100], [5, T0 + 300], [6, null], [7, T0 + 900]];
+    const { digested } = digestOf(stamps.flatMap(([n, at]) => runStamped(n, at)));
+    expect(digested.digest.runs.map((r) => r.run)).toEqual([runId(7)]);
+    expect(digested.digest.runs[0]!.folded).toEqual({ others: 6, records: 18, stands_for: [3, 1, 5, 4, 2, 6].map(runId) });
+  });
+
+  test("a byte budget never shortens the ids a fold names: the section is whole or absent", () => {
+    // An older run of another invocation ranks first, then a fold of 41 whose ids alone are over a kilobyte.
+    const other = [
+      loaded(runId(50), 1, "receipt.head", T0 - 10_000, { tool: "t", v: "1", argv: ["t", "y"], inv: "inv_other" }),
+      loaded(runId(50), 2, "result", T0 - 9_999, { ...TOOL_OWNED, value: 9 }),
+      loaded(runId(50), 3, "end", T0 - 9_950, { status: 0, redacted: false }),
+    ];
+    const records = [...other, ...Array.from({ length: 41 }, (_, i) => runStamped(i, T0 + i * 100)).flat()];
+    const whole = digestOf(records, { records: 1000 }).digested;
+    expect(whole.digest.loss).toEqual({ bound: "count-only", excluded: 120, folded: 120 });
+    let withSection = 0;
+    let countOnly = 0;
+    for (let bytes = 1; bytes <= whole.bytes + 20; bytes++) {
+      const { digest, fits } = digestOf(records, { records: 1000, bytes }).digested;
+      if (!fits) continue;
+      // The fold does not depend on the budget, so its count is in every line that is written.
+      expect(digest.loss.folded).toBe(120);
+      const section = digest.runs.find((r) => r.folded !== undefined);
+      if (section === undefined) {
+        // The representative is not named, so no section says which runs: the count is all there is.
+        expect(digest.records.some((e) => e.run === runId(40))).toBe(false);
+        countOnly++;
+        continue;
+      }
+      expect(section.folded!.stands_for.length).toBe(40);
+      expect(section.folded!.others).toBe(40);
+      withSection++;
+    }
+    expect(withSection).toBeGreaterThan(0);
+    expect(countOnly).toBeGreaterThan(0);
+  });
+
+  test("a fold names runs, not records: a folded run's result can sit at another seq", () => {
+    // Under `what-changed` a decision is not compared, so a run that took one more step still folds.
+    const longer = [
+      loaded(runId(1), 1, "receipt.head", T0, { tool: "t", v: "1", argv: ["t", "x"], inv: "inv_same" }),
+      loaded(runId(1), 2, "receipt.step", T0 + 1, { decision: "warm the cache", because: "it was cold" }),
+      loaded(runId(1), 3, "result", T0 + 2, { ...TOOL_OWNED, value: 1 }),
+      loaded(runId(1), 4, "end", T0 + 50, { status: 0, redacted: false }),
+    ];
+    const plan = planQuery({ asker: { tool: "t", cwd: "/w" }, view: "what-changed", window: WIDE, budget: { records: 100 } });
+    if (plan.refused) throw new Error("the plan was refused");
+    const all = [...longer, ...runStamped(2, T0 + 100)];
+    const ranking = rankRecords(plan.query, all);
+    const { digest } = digestFor(plan.query, { run: runId(99), seq: 1 }, ranking.records, { run: runId(99), seq: 30, t: T0 + 10 }, ranking.outcomes);
+    expect(digest.runs.map((r) => [r.run, r.folded])).toEqual([[runId(2), { others: 1, records: 4, stands_for: [runId(1)] }]]);
+    // The representative's result is at seq 2 and the lens names it; the folded run's is at seq 3
+    // and no entry says so, and its seq 2 is a decision.
+    expect(digest.records.filter((e) => e.event === "result").map((e) => [e.run, e.seq])).toEqual([[runId(2), 2]]);
+    expect(all.filter((r) => r.run === runId(1)).map((r) => [r.seq, r.event]).slice(1, 3)).toEqual([[2, "receipt.step"], [3, "result"]]);
   });
 });

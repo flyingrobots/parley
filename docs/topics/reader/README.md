@@ -132,7 +132,9 @@ the view, and results computed under different budgets are not comparable. It al
   [flyingrobots/parley#100](https://github.com/flyingrobots/parley/issues/100),
   [flyingrobots/parley#133](https://github.com/flyingrobots/parley/issues/133)). Two runs whose
   results differ are never one, and a read that states `fold: false` folds nothing; the lens then
-  echoes `fold`. The exact criterion is
+  echoes `fold`. A fold is named only in the section of the run that stands for it, so when the
+  budget names no record of that run the lens reports the fold as a count in `loss.folded` and by
+  no id. The exact criterion is
   [the library's](../parley-read/README.md#runs-of-one-invocation-are-named-once);
 - **a loss bound**, `loss.bound`, with the count of what was left out beside it, and
   `loss.folded`, how many of those a fold rather than the budget left out.
@@ -156,7 +158,8 @@ are now at **draft 1.1.0**, which adds optional fields and removes nothing
 ([flyingrobots/parley#133](https://github.com/flyingrobots/parley/issues/133)): `fold` on the
 query, and on the lens `fold` and a folded section's `stands_for`. The released 1.0.0 of each is
 unchanged under `schemas/released/`, and the reader validates a line against the version it
-advertises. See [`schemas/README.md`](../../../schemas/README.md) for the table and the rules that
+advertises. The drafts were reviewed as contracts before their release, sentence by sentence
+against 1.0.0: [the pre-freeze review](freeze-review-1.1.0.md). See [`schemas/README.md`](../../../schemas/README.md) for the table and the rules that
 govern a release and a draft.
 
 | Schema | Version | Message |

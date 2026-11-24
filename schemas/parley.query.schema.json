@@ -125,7 +125,7 @@
     },
     "fold": {
       "type": "boolean",
-      "description": "Whether the read may fold runs it judges to be repeats of one invocation with one result into the most recent of them (flyingrobots/parley#79). false: nothing is folded, so every run in the window keeps its own records and the budget alone decides what the answer names (flyingrobots/parley#133). true or absent: the reader folds, and the result's lens names every run a fold stands for. Never inferred: the reader records it only when the asker states it, and the lens echoes it. It selects nothing on a drill-down."
+      "description": "Whether the read may fold runs it judges to be repeats of one invocation with one result into the most recent of them (flyingrobots/parley#79). false: nothing is folded, so every run in the window keeps its own records and the budget alone decides what the answer names (flyingrobots/parley#133). true or absent: the reader folds, and the result's lens names the runs a fold stands for in the section of the run that stands for them (parley.lens runs.folded.stands_for). The budget can leave that run out of the answer, and its section with it; the lens then reports that fold as a count alone (parley.lens loss.folded). Never inferred: the reader records it only when the asker states it, and the lens echoes it. It selects nothing on a drill-down."
     },
     "records": {
       "type": "array",

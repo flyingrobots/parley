@@ -34,16 +34,42 @@ the entry under it names each schema version it releases, and those are separate
   (flyingrobots/parley#147). No spec text, schema byte, schema version or package version changes
   (flyingrobots/parley#145).
 - `parley.query` 1.1.0, a draft: an optional boolean `fold`. `false` asks the reader to fold
-  nothing; absent or `true`, the reader folds runs of one invocation with one result as before.
-  1.0.0 stays released and unchanged (flyingrobots/parley#133).
+  nothing; absent or `true`, the reader folds runs of one invocation with one result.
+  1.0.0 stays released and unchanged (flyingrobots/parley#133). Changed in place by the
+  pre-freeze review (flyingrobots/parley#146): `fold`'s description no longer says the lens names
+  every run a fold stands for. It names them in the section of the run that stands for them, and
+  a budget that leaves that run out leaves a count alone.
 - `parley.lens` 1.1.0, a draft: an optional boolean `fold`, echoed from the query when the query
   states it, and an optional `stands_for` in a run section's `folded`, the run ids of the other
   runs the section stands for, most recent first. 1.0.0 gave a count and no way to the folded
   runs. The descriptions of `folded` and `loss.folded` now state the criterion the reader applies
   from `@flyingrobots/parley-read` 0.2.0: runs fold only when their result records are equal too,
-  and under `how-it-decided` and `everything` their decision records, so the fold depends on the
-  view as well as the window. 1.0.0 stays released and unchanged (flyingrobots/parley#133).
-  Both are minor versions: each adds optional fields and removes or narrows nothing (spec §4.5).
+  and under a view whose surface holds decision records, those as well, so the fold depends on
+  the view as well as the window. 1.0.0 stays released and unchanged (flyingrobots/parley#133).
+  Changed in place by the pre-freeze review (flyingrobots/parley#146), descriptions and one
+  constraint on the new field:
+  - `runs[].folded` names the views exactly: `receipt.step` is compared under `how-it-decided`
+    and `everything`, `cache.hit` under those two and `what-ran`. It said the first two only.
+  - `runs[].folded` says result records are compared one for one in `seq` order, that a read's
+    own `lens` and a record the protocol does not define are results, that a sidecar is compared
+    by `bytes` and `sha256`, and that a run the window does not show to be unredacted never
+    folds.
+  - `runs[].folded` and `stands_for` state the order: the latest `t` among a run's records in
+    the window, then the greater run id, a run with no dated record last.
+  - `stands_for` says it names runs and not their records' `seq`, that a schema cannot check its
+    length against `others`, and that `budget.bytes` never shortens it: the section is whole or
+    absent.
+  - `loss.folded` says it counts every record the fold left out, so the sections'
+    `folded.records` sum to less than it when the budget cut a run that stands for others.
+  - One constraint: a `stands_for` entry has `minLength: 1`, as every other run id in the schema
+    has, so `[""]` no longer validates. The field is new in this draft, so nothing released
+    narrows.
+- Both are minor versions: each adds optional fields, removes no field and narrows no constraint
+  (spec §4.5). One statement the released lens schema makes does not hold of a 1.1.0 line: it says
+  `loss.folded` depends on the window alone, and in 1.1.0 it depends on the view and on `fold`
+  too. It still never depends on the budget. The review, its findings and the compatibility
+  statement for the release are in
+  [docs/topics/reader/freeze-review-1.1.0.md](docs/topics/reader/freeze-review-1.1.0.md).
 
 ### Changed
 

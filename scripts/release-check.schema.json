@@ -1,13 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://flyingrobots.dev/parley/tooling/parley.tooling.release_check/1.0.0",
+  "$id": "https://flyingrobots.dev/parley/tooling/parley.tooling.release_check/1.1.0",
   "title": "release-check output line",
   "description": "One line of output from scripts/release-check.ts. Tooling output, not a protocol message; lives beside the script rather than under schemas/.",
   "type": "object",
   "required": ["event", "_schema"],
   "properties": { "_schema": { "$ref": "#/$defs/stamp" }, "event": { "type": "string" } },
   "oneOf": [
-    { "properties": { "event": { "const": "release.baseline" }, "phase": { "$ref": "#/$defs/phase" }, "base": { "type": "string", "minLength": 1, "description": "The baseline as it was asked for: a git ref, or the default, the merge base of HEAD and origin/main." }, "commit": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40}$", "description": "The commit the baseline names; null when it names none." }, "resolved": { "type": "boolean" }, "snapshots": { "type": "integer", "minimum": 0, "description": "Released snapshots at the baseline." }, "_schema": { "$ref": "#/$defs/stamp" } }, "required": ["phase", "base", "commit", "resolved", "snapshots"], "additionalProperties": false },
+    { "properties": { "event": { "const": "release.baseline" }, "phase": { "$ref": "#/$defs/phase" }, "base": { "type": "string", "minLength": 1, "description": "The baseline as it was asked for: a git ref, or the default, the merge base of HEAD and origin/main." }, "commit": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40}$", "description": "The commit the baseline names; null when it names none." }, "resolved": { "type": "boolean" }, "snapshots": { "type": "integer", "minimum": 0, "description": "Released snapshots at the baseline." }, "frozen_since": { "type": ["string", "null"], "minLength": 1, "description": "The frozen-since reference as it was asked for (--frozen-since): a second git ref, independent of the baseline, whose snapshots must be byte-identical in the candidate. Null when none was given." }, "frozen_since_commit": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40}$", "description": "The commit the frozen-since reference names; null when none was given or it names none." }, "frozen_since_snapshots": { "type": ["integer", "null"], "minimum": 0, "description": "Released snapshots at the frozen-since commit; null when there is no such commit." }, "_schema": { "$ref": "#/$defs/stamp" } }, "required": ["phase", "base", "commit", "resolved", "snapshots", "frozen_since", "frozen_since_commit", "frozen_since_snapshots"], "additionalProperties": false },
     { "properties": { "event": { "const": "release.refusal" }, "phase": { "$ref": "#/$defs/phase" }, "package": { "type": ["string", "null"], "minLength": 1, "description": "The package refused; null when the repository itself is." }, "code": { "$ref": "#/$defs/code" }, "problem": { "type": "string", "minLength": 1 }, "id": { "type": "string", "minLength": 1 }, "version": { "$ref": "#/$defs/semver" }, "path": { "type": "string", "minLength": 1 }, "_schema": { "$ref": "#/$defs/stamp" } }, "required": ["phase", "package", "code", "problem"], "additionalProperties": false },
     { "properties": { "event": { "const": "release.package" }, "phase": { "$ref": "#/$defs/phase" }, "package": { "type": "string", "minLength": 1 }, "version": { "type": ["string", "null"] }, "source": { "enum": ["tree", "artifact"] }, "path": { "type": "string", "minLength": 1 }, "sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$", "description": "SHA-256 of the artifact's bytes; null for a source tree." }, "pin": { "type": ["string", "null"], "description": "The commit the bundled schemas are pinned to, as the bundle states it." }, "bundled": { "type": "integer", "minimum": 0 }, "declared": { "type": "integer", "minimum": 0 }, "passed": { "type": "boolean", "description": "No refusal names this package in this phase." }, "eligible": { "type": "boolean", "description": "The publication phase would pass for it against this baseline." }, "blocking": { "type": "array", "items": { "type": "object", "required": ["id", "version", "code"], "additionalProperties": false, "properties": { "id": { "type": "string", "minLength": 1 }, "version": { "$ref": "#/$defs/semver" }, "code": { "$ref": "#/$defs/code" } } } }, "blockers": { "type": "array", "items": { "$ref": "#/$defs/code" }, "uniqueItems": true }, "_schema": { "$ref": "#/$defs/stamp" } }, "required": ["phase", "package", "version", "source", "path", "sha256", "pin", "bundled", "declared", "passed", "eligible", "blocking", "blockers"], "additionalProperties": false },
     { "properties": { "event": { "const": "release.summary" }, "phase": { "$ref": "#/$defs/phase" }, "passed": { "type": "boolean" }, "packages": { "type": "integer", "minimum": 0 }, "eligible": { "type": "array", "items": { "type": "string", "minLength": 1 } }, "not_eligible": { "type": "array", "items": { "type": "string", "minLength": 1 } }, "refusals": { "type": "integer", "minimum": 0 }, "_schema": { "$ref": "#/$defs/stamp" } }, "required": ["phase", "passed", "packages", "eligible", "not_eligible", "refusals"], "additionalProperties": false },
@@ -15,7 +15,7 @@
     { "properties": { "event": { "const": "error" }, "code": { "type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$" }, "problem": { "type": "string", "minLength": 1 }, "_schema": { "$ref": "#/$defs/stamp" } }, "required": ["code", "problem"], "additionalProperties": false }
   ],
   "$defs": {
-    "stamp": { "type": "object", "required": ["id", "version"], "additionalProperties": false, "properties": { "id": { "const": "parley.tooling.release_check" }, "version": { "const": "1.0.0" } } },
+    "stamp": { "type": "object", "required": ["id", "version"], "additionalProperties": false, "properties": { "id": { "const": "parley.tooling.release_check" }, "version": { "const": "1.1.0" } } },
     "phase": { "enum": ["development", "candidate", "publication"] },
     "semver": { "type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$" },
     "code": {
@@ -23,8 +23,9 @@
       "enum": [
         "artifact.unreadable", "inventory.unreadable", "inventory.empty", "inventory.declared_not_bundled",
         "copy.stale", "toplevel.differs",
-        "schema.unreleased", "release.heading_missing", "release.not_accepted", "definition.differs",
+        "schema.unreleased", "release.heading_missing", "release.heading_backdated", "release.not_accepted", "definition.differs",
         "snapshot.modified", "snapshot.deleted", "snapshot.mismatched", "baseline.unresolved",
+        "frozen_since.unresolved", "frozen_since.not_ancestor",
         "pin.malformed", "pin.commit_missing", "pin.unreachable", "pin.content_differs", "pin.bundle_differs"
       ]
     }

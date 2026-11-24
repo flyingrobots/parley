@@ -520,6 +520,161 @@ describe("release eligibility: positive controls and edges (flyingrobots/parley#
   }, SLOW);
 });
 
+describe("release eligibility: a backdated heading and the frozen-since reference (flyingrobots/parley#152, flyingrobots/parley#153)", () => {
+  /** A release branch that snapshots the two drafts and names them under the 0.2.0 heading, which the baseline already has. */
+  function backdate(dir: string, heading = "## [0.2.0] — 2026-01-01"): void {
+    git(dir, "checkout", "-q", "-b", "backdated");
+    for (const id of ["parley.query", "parley.lens"]) put(dir, snap(id, "1.1.0"), get(dir, top(id)));
+    put(dir, "CHANGELOG.md", [
+      "# Changelog", "", "## [Unreleased]", "", heading, "", "### Added", "",
+      "- `parley.error` 2.0.0, `parley.query` 1.0.0 and `parley.lens` 1.0.0.",
+      "- `parley.query` 1.1.0 and `parley.lens` 1.1.0.", "",
+    ].join("\n"));
+    commit(dir, "S: snapshots named under a release that was already cut");
+    sync(dir);
+    commit(dir, "P: package copies synced from S");
+  }
+
+  test("RLC-23: a new snapshot named only under a release heading the baseline already has: candidate rejects, naming the pair", () => {
+    const dir = fixture("drafts");
+    backdate(dir);
+    const lines = check({ phase: "candidate", repo: dir });
+    expect(summary(lines).passed).toBe(false);
+    expect(codes(lines)).toEqual(["release.heading_backdated"]);
+    for (const name of [EMIT, READ, PY]) {
+      expect(refusals(lines).filter((r) => r.package === name).map((r) => `${r.id}@${r.version}`).sort(), name).toEqual(["parley.lens@1.1.0", "parley.query@1.1.0"]);
+      expect(pkg(lines, name).passed).toBe(false);
+    }
+    expect(refusals(lines)[0]?.problem).toContain("[0.2.0]");
+  }, SLOW);
+
+  test("RLC-24: a heading is the same heading when its date is edited: naming a new snapshot under it is still rejected", () => {
+    const dir = fixture("drafts");
+    backdate(dir, "## [0.2.0] — 2026-11-24");
+    const lines = check({ phase: "candidate", repo: dir });
+    expect(codes(lines)).toEqual(["release.heading_backdated"]);
+    expect(refusals(lines).filter((r) => r.package === READ).map((r) => `${r.id}@${r.version}`).sort()).toEqual(["parley.lens@1.1.0", "parley.query@1.1.0"]);
+  }, SLOW);
+
+  test("RLC-25: a new heading releases a new snapshot whatever a pull request does to an old entry's text or date", () => {
+    const dir = fixture("drafts");
+    releaseDrafts(dir);
+    // The positive control of RLC-13, with the old entry reworded and re-dated in the same branch:
+    // entries are not compared by text, so a typo fix in a released entry is not a refusal.
+    edit(dir, "CHANGELOG.md", "## [0.2.0] — 2026-01-01", "## [0.2.0] — 2026-01-02");
+    edit(dir, "CHANGELOG.md", "- `parley.error` 2.0.0, `parley.query` 1.0.0 and `parley.lens` 1.0.0.", "- The first release: `parley.error` 2.0.0, `parley.query` 1.0.0, `parley.lens` 1.0.0.");
+    commit(dir, "reword and re-date a released entry");
+    const reworded = check({ phase: "candidate", repo: dir });
+    expect(refusals(reworded)).toEqual([]);
+    expect(summary(reworded).passed).toBe(true);
+    // Named under the new heading and repeated under the old one, the pair is released by the new one.
+    edit(dir, "CHANGELOG.md", "- The first release:", "- (`parley.query` 1.1.0 came later.) The first release:");
+    const both = check({ phase: "candidate", repo: dir });
+    expect(refusals(both)).toEqual([]);
+    // With no new snapshot, an edited old entry is nothing the rule speaks to.
+    const quiet = fixture("released");
+    edit(quiet, "CHANGELOG.md", "## [0.2.0] — 2026-01-01", "## [0.2.0] — 2026-01-02");
+    commit(quiet, "re-date a released entry");
+    expect(refusals(check({ phase: "candidate", repo: quiet }))).toEqual([]);
+  }, SLOW);
+
+  /** The default branch after a coordinated edit of a released schema merged: `before` is the commit a release tag would name. */
+  function mergedEdit(dir: string): string {
+    const before = git(dir, "rev-parse", "HEAD");
+    git(dir, "tag", "spec-v0.2.0", before);
+    const changed = text({ ...schemaDoc("parley.error", "2.0.0"), description: "a released version, edited in place" });
+    put(dir, top("parley.error"), changed);
+    put(dir, snap("parley.error", "2.0.0"), changed);
+    commit(dir, "S': edit a released schema and its snapshot together");
+    sync(dir);
+    commit(dir, "P': every package copy re-synced from the edit");
+    acceptOnMain(dir);
+    return before;
+  }
+
+  test("RLC-26: a coordinated edit that has merged passes publication on the default branch, and is rejected against a frozen-since reference", () => {
+    const dir = fixture("released");
+    const before = mergedEdit(dir);
+    // The gap: on the default branch the baseline is HEAD, so the tree is compared with itself.
+    const gap = check({ phase: "publication", repo: dir });
+    expect(refusals(gap)).toEqual([]);
+    expect(summary(gap).passed).toBe(true);
+    expect(gap[0]).toMatchObject({ event: "release.baseline", commit: git(dir, "rev-parse", "HEAD"), frozen_since: null, frozen_since_commit: null, frozen_since_snapshots: null });
+    // An earlier `--base` does not close it: the pins now name a commit made since that ref.
+    expect(codes(check({ phase: "publication", repo: dir, base: "spec-v0.2.0" }))).toContain("pin.unreachable");
+    for (const phase of PHASES) {
+      const lines = check({ phase, repo: dir, frozenSince: "spec-v0.2.0" });
+      expect(summary(lines).passed, phase).toBe(false);
+      expect(refusals(lines).map((r) => ({ package: r.package, code: r.code, path: r.path })), phase).toEqual([{ package: null, code: "snapshot.modified", path: snap("parley.error", "2.0.0") }]);
+      expect(refusals(lines)[0]?.problem).toContain("spec-v0.2.0");
+      for (const p of packages(lines)) expect(p, `${phase} ${p.package}`).toMatchObject({ eligible: false, blockers: ["snapshot.modified"] });
+      // Both references are reported, each with the commit it names.
+      expect(lines[0]).toMatchObject({ event: "release.baseline", base: "merge-base(HEAD, origin/main)", commit: git(dir, "rev-parse", "HEAD"), snapshots: 3, frozen_since: "spec-v0.2.0", frozen_since_commit: before, frozen_since_snapshots: 3 });
+    }
+    // A snapshot deleted and merged is seen the same way.
+    rmSync(join(dir, snap("parley.lens", "1.0.0")));
+    commit(dir, "delete a released snapshot");
+    acceptOnMain(dir);
+    expect(refusals(check({ phase: "publication", repo: dir, frozenSince: "spec-v0.2.0" })).filter((r) => r.package === null).map((r) => `${r.code} ${r.path}`).sort())
+      .toEqual([`snapshot.deleted ${snap("parley.lens", "1.0.0")}`, `snapshot.modified ${snap("parley.error", "2.0.0")}`]);
+  }, SLOW);
+
+  test("RLC-27: a frozen-since reference at which every snapshot is unchanged changes nothing, and releases made since it still pass", () => {
+    const dir = fixture("drafts");
+    const before = git(dir, "rev-parse", "HEAD");
+    releaseDrafts(dir);
+    git(dir, "checkout", "-q", "main");
+    git(dir, "merge", "-q", "--no-ff", "-m", "Merge the 0.2.1 release", "release");
+    acceptOnMain(dir);
+    const strip = (lines: Line[]) => lines.slice(1);
+    for (const phase of PHASES) {
+      const without = check({ phase, repo: dir }), withRef = check({ phase, repo: dir, frozenSince: before });
+      expect(strip(withRef), phase).toEqual(strip(without));
+      expect(summary(withRef).passed, phase).toBe(true);
+      // Five snapshots now, three at the reference: the two released since it are not its business.
+      expect(withRef[0]).toMatchObject({ snapshots: 5, frozen_since: before, frozen_since_commit: before, frozen_since_snapshots: 3 });
+    }
+    // Naming the baseline's own commit is allowed and says so.
+    expect(refusals(check({ phase: "publication", repo: dir, frozenSince: "HEAD" }))).toEqual([]);
+  }, SLOW);
+
+  test("RLC-28: a frozen-since reference that names no commit, or one that is not an ancestor of HEAD, is a refusal in every phase", () => {
+    const dir = fixture("released");
+    git(dir, "checkout", "-q", "-b", "elsewhere");
+    commit(dir, "a commit main never had");
+    git(dir, "checkout", "-q", "main");
+    for (const phase of PHASES) {
+      const none = check({ phase, repo: dir, frozenSince: "no-such-tag" });
+      expect(refusals(none).map((r) => ({ package: r.package, code: r.code })), phase).toEqual([{ package: null, code: "frozen_since.unresolved" }]);
+      expect(none[0]).toMatchObject({ frozen_since: "no-such-tag", frozen_since_commit: null, frozen_since_snapshots: null });
+      expect(summary(none)).toMatchObject({ passed: false, eligible: [] });
+      const aside = check({ phase, repo: dir, frozenSince: "elsewhere" });
+      expect(refusals(aside).map((r) => ({ package: r.package, code: r.code })), phase).toEqual([{ package: null, code: "frozen_since.not_ancestor" }]);
+      expect(aside[0]).toMatchObject({ frozen_since: "elsewhere", frozen_since_commit: git(dir, "rev-parse", "elsewhere") });
+      expect(summary(aside)).toMatchObject({ passed: false, eligible: [] });
+    }
+    // A reference that looks like an option names nothing.
+    expect(codes(check({ phase: "publication", repo: dir, frozenSince: "--all" }))).toEqual(["frozen_since.unresolved"]);
+  }, SLOW);
+
+  test("RLC-29: --frozen-since on the command line: exit 1 for the merged edit, both references in the first line and in prose", () => {
+    const cli = (args: string[]) => spawnSync("bun", ["run", join(REPO, "scripts/release-check.ts"), ...args], { encoding: "utf8" });
+    const dir = fixture("released");
+    const before = mergedEdit(dir);
+    expect(cli(["--phase", "publication", "--repo", dir]).status).toBe(0);
+    const refused = cli(["--phase", "publication", "--repo", dir, "--frozen-since", "spec-v0.2.0"]);
+    expect(refused.status).toBe(1);
+    const lines = refused.stdout.split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(lines[0]).toMatchObject({ event: "release.baseline", frozen_since: "spec-v0.2.0", frozen_since_commit: before, _schema: { id: "parley.tooling.release_check", version: "1.1.0" } });
+    expect(lines.filter((l) => l.event === "release.refusal").map((l) => l.code)).toEqual(["snapshot.modified"]);
+    const prose = cli(["--phase", "publication", "--repo", dir, "--frozen-since", "spec-v0.2.0", "--human"]);
+    expect(prose.stdout.split("\n")[0]).toContain(`frozen since spec-v0.2.0 = ${before}`);
+    const usage = cli(["--phase", "publication", "--frozen-since"]);
+    expect(usage.status).toBe(2);
+    expect(JSON.parse(usage.stderr)).toMatchObject({ event: "error", code: "release_check.usage" });
+  }, SLOW);
+});
+
 describe("release eligibility: output and the real tree (flyingrobots/parley#145)", () => {
   const cli = (args: string[], cwd = REPO) => spawnSync("bun", ["run", join(REPO, "scripts/release-check.ts"), ...args], { cwd, encoding: "utf8" });
   const parse = (out: string) => out.split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>);

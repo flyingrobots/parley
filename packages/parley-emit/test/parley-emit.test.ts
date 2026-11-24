@@ -1370,15 +1370,18 @@ process.exit(await main(tool, ["t", "count"], (run) => { console.log("touch cons
     const { dir, env } = scratch();
     const run1 = streams(), run2 = streams();
     const resolved = (args: string[]) => ({ command: "count", pin: Number(args[1]), [args[1]!]: true });
-    await main(tool(), ["t", "count", "--token", "4321"], async (run) => { run.step("checked", "because", { 4321: "key", n: 4321 }); }, { cwd: dir, env, ...run1, resolved });
-    await main(tool(), ["t", "count", "--token", "9999"], async () => {}, { cwd: dir, env, ...run2, resolved });
+    // Fifteen digits on purpose (flyingrobots/parley#142): the assertion below searches the whole
+    // receipt, which also holds the clock in milliseconds, run ids and hex digests, and a four-digit
+    // secret turns up in a timestamp about once in a thousand lines.
+    await main(tool(), ["t", "count", "--token", "902718364550917"], async (run) => { run.step("checked", "because", { 902718364550917: "key", n: 902718364550917 }); }, { cwd: dir, env, ...run1, resolved });
+    await main(tool(), ["t", "count", "--token", "902718364550918"], async () => {}, { cwd: dir, env, ...run2, resolved });
     const r1 = check(dir, run1), r2 = check(dir, run2);
     const head = r1.receiptLines[0] as { resolved: Record<string, unknown>; inv: string; redacted: { resolved: string[] } };
     expect(head.resolved.pin).toBe("[redacted]");
     expect(head.resolved["[redacted]"]).toBe(true);
     expect(head.redacted.resolved.sort()).toEqual(["/[redacted]", "/pin"]);
     expect(head.inv).toBe((r2.receiptLines[0] as { inv: string }).inv);
-    expect(r1.receipt.includes("4321")).toBe(false);
+    expect(r1.receipt.includes("902718364550917")).toBe(false);
     expect(r1.violations).toEqual([]);
   });
 
@@ -2470,10 +2473,10 @@ describe("PE-29 a record redaction made invalid is never published (flyingrobots
   });
 
   test("a distinctive numeric secret appears on no stream and in no receipt line", async () => {
-    const { dir, env } = scratch("8675309");
-    const r = await runCount(dir, env, ["count", "--token", "8675309"], (run) => { run.result({ event: "result", value: 8675309 }, PAIR); });
+    const { dir, env } = scratch("867530986753091");
+    const r = await runCount(dir, env, ["count", "--token", "867530986753091"], (run) => { run.result({ event: "result", value: 867530986753091 }, PAIR); });
     expect(r.status).toBe(4);
-    expect(r.stdout.text + r.stderr.text + r.receipt).not.toContain("8675309");
+    expect(r.stdout.text + r.stderr.text + r.receipt).not.toContain("867530986753091");
     expect(conflicts(r).length).toBe(1);
     expect(r.violations).toEqual([]);
   });
@@ -2594,13 +2597,13 @@ describe("PE-29 a record redaction made invalid is never published (flyingrobots
   });
 
   test("in a real process the exit status is 4 and stdout carries end with status 4", () => {
-    const { dir, env } = scratch("8675309");
+    const { dir, env } = scratch("867530986753091");
     const script = join(dir, "typed.ts");
     writeFileSync(script, `import { defineTool, main } from ${JSON.stringify(resolve(import.meta.dir, "../src/index.ts"))};
 const schema = { type: "object", required: ["value"], properties: { value: { type: "integer" } } };
 const tool = defineTool({ name: "t", version: "0.0.1", commands: { count: { intent: "count", effects: { reads: [], writes: [], network: false, idempotent: true }, secrets: ["--token"], emits: [{ id: "t.count", version: "1.0.0", schema }] } }, retention: { count: 10 } });
-process.exit(await main(tool, ["t", ...process.argv.slice(2)], (run) => { run.result({ event: "result", value: 8675309 }, { id: "t.count", version: "1.0.0" }); }));`);
-    const p = Bun.spawnSync(["bun", script, "count", "--token", "8675309"], { cwd: dir, env: { ...process.env, ...env } });
+process.exit(await main(tool, ["t", ...process.argv.slice(2)], (run) => { run.result({ event: "result", value: 867530986753091 }, { id: "t.count", version: "1.0.0" }); }));`);
+    const p = Bun.spawnSync(["bun", script, "count", "--token", "867530986753091"], { cwd: dir, env: { ...process.env, ...env } });
     const out = p.stdout.toString(), err = p.stderr.toString();
     expect(p.exitCode).toBe(4);
     const outObjs = out.trimEnd().split("\n").map((l) => JSON.parse(l) as Record<string, unknown>);
@@ -2609,20 +2612,20 @@ process.exit(await main(tool, ["t", ...process.argv.slice(2)], (run) => { run.re
     const errObjs = err.trimEnd().split("\n").map((l) => JSON.parse(l) as Record<string, unknown>);
     expect(errObjs.map((o) => o.code)).toEqual(["redaction.schema_conflict"]);
     const receipt = readFileSync((outObjs[0] as { paths: { receipt: string } }).paths.receipt, "utf8");
-    expect(out + err + receipt).not.toContain("8675309");
+    expect(out + err + receipt).not.toContain("867530986753091");
     expect(doctor({ stdout: out, stderr: err, receipt, receiptPresent: true }, SCHEMAS_DIR).filter((v) => v.event === "doctor.violation")).toEqual([]);
   }, 30_000);
 
   test("--human: the refusal is rendered as prose and the receipt holds the structured error", async () => {
-    const { dir, env } = scratch("8675309");
+    const { dir, env } = scratch("867530986753091");
     const s = streams();
-    const status = await main(tool(), ["t", "count", "--human", "--token", "8675309"], async (run) => { run.result({ event: "result", value: 8675309 }, PAIR); }, { cwd: dir, env, ...s });
+    const status = await main(tool(), ["t", "count", "--human", "--token", "867530986753091"], async (run) => { run.result({ event: "result", value: 867530986753091 }, PAIR); }, { cwd: dir, env, ...s });
     expect(status).toBe(4);
     expect(s.stderr.text).toStartWith("error redaction.schema_conflict: ");
-    expect(s.stdout.text + s.stderr.text).not.toContain("8675309");
+    expect(s.stdout.text + s.stderr.text).not.toContain("867530986753091");
     const receipts = join(dir, ".parley", "receipts");
     const text = readFileSync(join(receipts, readdirSync(receipts).find((f) => f.endsWith(".jsonl"))!), "utf8");
-    expect(text).not.toContain("8675309");
+    expect(text).not.toContain("867530986753091");
     const lines = text.trimEnd().split("\n").map((l) => JSON.parse(l) as Record<string, unknown>);
     expect(lines.filter((o) => o.event === "result")).toEqual([]);
     expect(lines.filter((o) => o.event === "error").map((o) => o.code)).toEqual(["redaction.schema_conflict"]);
@@ -2636,7 +2639,7 @@ process.exit(await main(tool, ["t", ...process.argv.slice(2)], (run) => { run.re
 // line the rule exists to prevent. Every case is a real run through `main`.
 describe("PE-30 a record redaction changed under a schema the writer cannot evaluate is withheld (flyingrobots/parley#144)", () => {
   const PAIR = { id: "t.count", version: "1.0.0" };
-  const SECRET = "8675309";
+  const SECRET = "867530986753091";
   /** The reviewers' variants: `value` is an integer in every one, and each but the control adds one construct outside the checker's subset. */
   const CONTROL = { type: "object", required: ["value"], properties: { value: { type: "integer" } } };
   const UNEVALUABLE: Record<string, { schema: Record<string, unknown>; words: string[] }> = {
@@ -2685,7 +2688,7 @@ describe("PE-30 a record redaction changed under a schema the writer cannot eval
 
   test("the control inside the checker's subset is a conflict, as before", async () => {
     const { dir, env } = scratch(SECRET);
-    const r = await runCount(dir, env, ["count", "--token", SECRET], (run) => { run.result({ event: "result", value: 8675309 }, PAIR); }, over(CONTROL));
+    const r = await runCount(dir, env, ["count", "--token", SECRET], (run) => { run.result({ event: "result", value: 867530986753091 }, PAIR); }, over(CONTROL));
     expect(r.status).toBe(4);
     expect(r.stderr.objs.map((o) => o.code)).toEqual(["redaction.schema_conflict"]);
   });
@@ -2695,7 +2698,7 @@ describe("PE-30 a record redaction changed under a schema the writer cannot eval
       const { dir, env } = scratch(SECRET);
       let thrown: unknown;
       const r = await runCount(dir, env, ["count", "--token", SECRET], (run) => {
-        try { run.result({ event: "result", value: 8675309 }, PAIR); } catch (e) { thrown = e; throw e; }
+        try { run.result({ event: "result", value: 867530986753091 }, PAIR); } catch (e) { thrown = e; throw e; }
       }, over(schema));
       const e = expectWithheld(r, ["/value"]);
       // The line carries no value, no validator message and no part of the schema: not even the
@@ -2717,7 +2720,7 @@ describe("PE-30 a record redaction changed under a schema the writer cannot eval
     const { dir, env } = scratch(SECRET);
     const r = await runCount(dir, env, ["count", "--token", SECRET], (run) => {
       run.result({ event: "result", value: 7 }, PAIR);
-      run.result({ event: "result", n: 8675309, note: `saw ${SECRET}` }, { id: "t.loose", version: "1.0.0" });
+      run.result({ event: "result", n: 867530986753091, note: `saw ${SECRET}` }, { id: "t.loose", version: "1.0.0" });
     }, over(UNEVALUABLE["a $ref into $defs"]!.schema, [{ id: "t.loose", version: "1.0.0" }]));
     expect(r.status).toBe(0);
     expect(r.stderr.objs).toEqual([]);
@@ -2754,17 +2757,17 @@ describe("PE-30 a record redaction changed under a schema the writer cannot eval
   test("with receiptExtra, neither copy is written, whichever copy the secret is in", async () => {
     const schema = UNEVALUABLE["multipleOf on an unrelated property"]!.schema;
     const a = scratch(SECRET);
-    const r = await runCount(a.dir, a.env, ["count", "--token", SECRET], (run) => { run.result({ event: "result", step: 1 }, PAIR, { value: 8675309 }); }, over(schema));
+    const r = await runCount(a.dir, a.env, ["count", "--token", SECRET], (run) => { run.result({ event: "result", step: 1 }, PAIR, { value: 867530986753091 }); }, over(schema));
     expectWithheld(r, ["/value"]);
     const b = scratch(SECRET);
-    const r2 = await runCount(b.dir, b.env, ["count", "--token", SECRET], (run) => { run.result({ event: "result", value: 8675309 }, PAIR, { step: 1 }); }, over(schema));
+    const r2 = await runCount(b.dir, b.env, ["count", "--token", SECRET], (run) => { run.result({ event: "result", value: 867530986753091 }, PAIR, { step: 1 }); }, over(schema));
     expectWithheld(r2, ["/value"]);
   });
 
   test("a handler that catches the refusal carries on: later records follow with no gap, and end(0) cannot bring the status back from 4", async () => {
     const { dir, env } = scratch(SECRET);
     const r = await runCount(dir, env, ["count", "--token", SECRET], (run) => {
-      try { run.result({ event: "result", value: 8675309 }, PAIR); } catch (e) { if (!(e instanceof ParleyRedactionUnchecked)) throw e; }
+      try { run.result({ event: "result", value: 867530986753091 }, PAIR); } catch (e) { if (!(e instanceof ParleyRedactionUnchecked)) throw e; }
       run.result({ event: "result", value: 7 }, PAIR);
       expect(run.redactionRefused).toBe(true);
       expect(run.end(0)).toBe(4);
@@ -2783,7 +2786,7 @@ describe("PE-30 a record redaction changed under a schema the writer cannot eval
     writeFileSync(script, `import { defineTool, main } from ${JSON.stringify(resolve(import.meta.dir, "../src/index.ts"))};
 const schema = JSON.parse(process.env.T_SCHEMA!);
 const tool = defineTool({ name: "t", version: "0.0.1", commands: { count: { intent: "count", effects: { reads: [], writes: [], network: false, idempotent: true }, secrets: ["--token"], emits: [{ id: "t.count", version: "1.0.0", schema }] } }, retention: { count: 10 } });
-process.exit(await main(tool, ["t", ...process.argv.slice(2)], (run) => { run.result({ event: "result", value: 8675309 }, { id: "t.count", version: "1.0.0" }); }));`);
+process.exit(await main(tool, ["t", ...process.argv.slice(2)], (run) => { run.result({ event: "result", value: 867530986753091 }, { id: "t.count", version: "1.0.0" }); }));`);
     for (const [name, { schema }] of Object.entries(UNEVALUABLE)) {
       const p = Bun.spawnSync(["bun", script, "count", "--token", SECRET], { cwd: dir, env: { ...process.env, ...env, T_SCHEMA: JSON.stringify(schema) } });
       const out = p.stdout.toString(), err = p.stderr.toString();
@@ -2803,7 +2806,7 @@ process.exit(await main(tool, ["t", ...process.argv.slice(2)], (run) => { run.re
   test("--human: the refusal is rendered as prose and the receipt holds the structured error", async () => {
     const { dir, env } = scratch(SECRET);
     const s = streams();
-    const status = await main(tool(over(UNEVALUABLE["a $ref into $defs"]!.schema)), ["t", "count", "--human", "--token", SECRET], async (run) => { run.result({ event: "result", value: 8675309 }, PAIR); }, { cwd: dir, env, ...s });
+    const status = await main(tool(over(UNEVALUABLE["a $ref into $defs"]!.schema)), ["t", "count", "--human", "--token", SECRET], async (run) => { run.result({ event: "result", value: 867530986753091 }, PAIR); }, { cwd: dir, env, ...s });
     expect(status).toBe(4);
     expect(s.stderr.text).toStartWith("error redaction.schema_unchecked: ");
     expect(s.stdout.text + s.stderr.text).not.toContain(SECRET);
@@ -3089,7 +3092,7 @@ describe("PE-33 the redaction exceptions carry what the published line carries, 
   }
 
   test("an ordinary conflict is unchanged: the pointers name the fields and the message is the line's problem", async () => {
-    const { line, thrown } = await refused("8675309", { type: "object", properties: { value: { type: "integer" } } }, { value: 8675309 });
+    const { line, thrown } = await refused("867530986753091", { type: "object", properties: { value: { type: "integer" } } }, { value: 867530986753091 });
     expect(thrown.pointers).toEqual(["/value"]);
     expect(line.detail.at).toEqual(["/value"]);
     expect(thrown.message).toBe(`${line.problem}; reported as redaction.schema_conflict`);

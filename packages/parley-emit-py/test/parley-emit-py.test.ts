@@ -427,3 +427,63 @@ describe("parley-emit-py: identity and vendoring", () => {
     expectLoadsClean(cap, 1);
   }, SLOW);
 });
+
+describe("parley-emit-py: the two writers read a .gitignore negation alike, and neither stays where git stages", () => {
+  // PY-12f / PE-6g (spec §5.2). For each generated negation line: the TypeScript writer's verdict
+  // and the Python writer's are the same, and wherever real git would stage a file under
+  // `.parley/receipts/` (with `*` in force and the files re-included), the verdict is "matches".
+  const TARGET = "receipts";
+  const classes = (c: string): string[] => {
+    const up = c.toUpperCase(), before = String.fromCharCode(c.charCodeAt(0) - 2), after = String.fromCharCode(c.charCodeAt(0) + 2);
+    return [
+      `[${c}]`, `[${up}]`, `[^x]`, `[!x]`, `[^${c}]`, `[!${c}]`, `[]${c}]`, `[^]]`, `[!]]`, `[]]`, `[${before}-${after}]`, `[${after}-${before}]`,
+      `[${c}-]`, `[-${c}]`, `[a-${before}-${c}]`, `[!-${c}]`, `[^-]`, `[]-a]`, `[--${after}]`, `[%-${after}]`, `[[:alpha:]]`, `[^[:digit:]]`, `[[:lower:]_]`,
+      `[_[:lower:]]`, `[[=${c}=]]`, `[[.${c}.]]`, `[[]`, `[[${c}]`, `[${c}[]`, `[]`, `[^]`, `[!]`, `[`, `]`, `[${c}`, `[^${c}`, `[\\${c}]`, `[${c}\u0000]`, `?`, `*`, `**`, `{${c}}`, `ſ`, `K`, `\t`, " ",
+    ];
+  };
+  const lines: string[] = [];
+  for (const at of [0, 3, TARGET.length - 1]) for (const k of classes(TARGET[at]!)) lines.push(`!${TARGET.slice(0, at)}${k}${TARGET.slice(at + 1)}`);
+  lines.push("!receipts", "!receipts/", "!/receipts", "!**/receipts", "!**/receipts/**", "!a/receipts", "!receipts ", "! receipts", "!Receipts", "!RECEIPTS", "!r*", "!*s", "!r*s", "!r**s", "!????????", "!?????????", "!???????", "!", "!!receipts", "receipts", "#!receipts", "\\!receipts", "!receipts\u0000", "!receipts\u0000x", "!rece\u0000ipts", "\u0000!receipts", "!keep", "!*.jsonl", "!receipts\r", "!receipt", "!receiptss");
+
+  const tsVerdicts = async (): Promise<boolean[]> => {
+    const { negationReachesReceipts } = await import("../../parley-emit/src/location.ts") as { negationReachesReceipts?: (line: string) => boolean };
+    expect(typeof negationReachesReceipts).toBe("function");
+    return lines.map((l) => negationReachesReceipts!(l));
+  };
+  const pyVerdicts = (): boolean[] => {
+    const prog = `import json, sys\nsys.path.insert(0, ${JSON.stringify(PKG)})\nimport parley_emit as pe\nprint(json.dumps([pe._negation_reaches_receipts(l) for l in json.load(sys.stdin)]))`;
+    const p = spawnSync(PY, ["-c", prog], { input: JSON.stringify(lines), encoding: "utf8" });
+    expect(p.status, p.stderr).toBe(0);
+    expect(p.stderr).toBe("");
+    return JSON.parse(p.stdout) as boolean[];
+  };
+
+  test("PY-12f the verdicts agree on every generated line", async () => {
+    const ts = await tsVerdicts(), py = pyVerdicts();
+    expect(lines.map((l, i) => [l, py[i]])).toEqual(lines.map((l, i) => [l, ts[i]]));
+    // The table is not vacuous: both verdicts occur.
+    expect(new Set(ts).size).toBe(2);
+  });
+
+  const GIT_ENV = { PATH: process.env.PATH ?? "", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", HOME: tmpdir() };
+  const hasGit = spawnSync("git", ["--version"], { env: GIT_ENV }).status === 0;
+  test.skipIf(!hasGit)("PY-12g wherever real git would stage a receipt, both verdicts are 'matches'", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "parley-gitignore-oracle-"));
+    expect(spawnSync("git", ["-C", repo, "init", "-q"], { env: GIT_ENV }).status).toBe(0);
+    mkdirSync(join(repo, ".parley", "receipts"), { recursive: true });
+    writeFileSync(join(repo, ".parley", "receipts", "01PROBE.jsonl"), "{}\n");
+    const ts = await tsVerdicts(), py = pyVerdicts();
+    let staged = 0;
+    lines.forEach((line, i) => {
+      // A line break inside the generated line would be a different file; none is generated.
+      writeFileSync(join(repo, ".parley", ".gitignore"), `*\n${line}\n!*.jsonl\n`);
+      const p = spawnSync("git", ["-C", repo, "add", "-A", "-n", "."], { env: GIT_ENV, encoding: "utf8" });
+      expect(p.status, p.stderr).toBe(0);
+      if (!p.stdout.includes("receipts/01PROBE.jsonl")) return;
+      staged += 1;
+      expect([line, "ts", ts[i]]).toEqual([line, "ts", true]);
+      expect([line, "py", py[i]]).toEqual([line, "py", true]);
+    });
+    expect(staged).toBeGreaterThan(20);
+  }, SLOW);
+});

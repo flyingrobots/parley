@@ -1562,6 +1562,104 @@ class TestHygiene(unittest.TestCase):
                 o = run_count(d, env, ["count"], lambda r: None)
                 self.assertTrue(o.path.startswith(os.path.join(d, ".parley")), o.path)
 
+    # PY-12e (spec section 5.2, "a program that cannot tell whether a negation matches MUST treat
+    # it as one that does"): the oracle is real git. Each content is written to
+    # `.parley/.gitignore` in a fresh repository, the writer runs, and `git add -A -n` must not
+    # list the receipt the writer wrote. The two tables are the TypeScript writer's (PE-6f).
+    F = "!*.jsonl\n"
+    RELOCATED = {
+        "a POSIX class at the start": "*\n![[:alpha:]]eceipts\n" + F,
+        "a POSIX class in the middle": "*\n!r[[:lower:]]ceipts\n" + F,
+        "a POSIX class beside a literal": "*\n!r[[:alnum:]_]ceipts\n" + F,
+        "a negated POSIX class": "*\n!r[^[:digit:]]ceipts\n" + F,
+        "a NUL byte after the pattern": "*\n!receipts\x00\n" + F,
+        "an equivalence class": "*\n!r[[=e=]]ceipts\n" + F,
+        "a collating symbol": "*\n!r[[.e.]]ceipts\n" + F,
+        "an unterminated bracket": "*\n![receipts\n" + F,
+        "a negated class whose first member is ]": "*\n![^]]eceipts\n" + F,
+        "the same with !": "*\n![!]]eceipts\n" + F,
+        "a class whose first member is ]": "*\n![]r]eceipts\n" + F,
+        "a range": "*\n!r[a-f]ceipts\n" + F,
+        "a range then a literal dash": "*\n!r[a-e-g]ceipts\n" + F,
+        "a negated class": "*\n!r[!x]ceipts\n" + F,
+        "upper case": "*\n!RECEIPTS\n" + F,
+        "a long s": "*\n!receiptſ\n" + F,
+        "a Kelvin sign": "*\n!receiKts\n" + F,
+        "a tab after the pattern": "*\n!receipts\t\n" + F,
+        "CRLF line endings": "*\r\n!receipts\r\n!*.jsonl\r\n",
+        "no final newline": "*\n!receipts\n!*.jsonl",
+    }
+    KEPT = {
+        "* alone": "*\n",
+        "the files re-included, the directory not": "*\n" + F,
+        "another name": "*\n!keep\n" + F,
+        "a reversed range": "*\n!r[f-a]ceipts\n" + F,
+        "a class without the letter": "*\n!r[abc]ceipts\n" + F,
+        "a negated class holding the letter": "*\n!r[!e]ceipts\n" + F,
+        "braces, which git reads literally": "*\n!{receipts}\n" + F,
+        "a comment": "*\n#!receipts\n" + F,
+        "an escaped bang": "*\n\\!receipts\n" + F,
+    }
+    GIT_ENV = {"PATH": os.environ.get("PATH", ""), "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull, "HOME": tempfile.gettempdir()}
+    HAS_GIT = shutil.which("git") is not None
+
+    def git(self, cwd, *args):
+        p = subprocess.run(["git", "-C", cwd, *args], env=self.GIT_ENV, capture_output=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        return p.stdout.decode("utf-8", "replace")
+
+    def git_would_stage(self, text):
+        """Whether real git would stage a file at `.parley/receipts/` under this ignore file."""
+        o = tempfile.mkdtemp(prefix="parley-py-oracle-")
+        self.git(o, "init", "-q")
+        os.makedirs(os.path.join(o, ".parley", "receipts"))
+        with open(os.path.join(o, ".parley", ".gitignore"), "w", encoding="utf-8", newline="") as f:
+            f.write(text)
+        with open(os.path.join(o, ".parley", "receipts", "01PROBE.jsonl"), "w") as f:
+            f.write("{}\n")
+        return "receipts/01PROBE.jsonl" in self.git(o, "add", "-A", "-n", ".")
+
+    def run_with(self, text):
+        d, state, env = scratch()
+        if self.HAS_GIT:
+            self.git(d, "init", "-q")
+        os.mkdir(os.path.join(d, ".parley"))
+        with open(os.path.join(d, ".parley", ".gitignore"), "w", encoding="utf-8", newline="") as f:
+            f.write(text)
+        o = run_count(d, env, ["count"], lambda r: None)
+        with open(os.path.join(d, ".parley", ".gitignore"), encoding="utf-8", newline="") as f:
+            self.assertEqual(f.read(), text)
+        self.assertEqual(o.status, 0)
+        # The property itself: whatever the writer decided, git does not stage what it wrote.
+        if self.HAS_GIT:
+            self.assertNotIn(".parley/receipts/", self.git(d, "add", "-A", "-n", "."))
+        return o, d, state
+
+    def test_a_negation_the_writer_cannot_evaluate_exactly_counts_as_one_that_matches(self):
+        for name, text in self.RELOCATED.items():
+            with self.subTest(name):
+                o, _, state = self.run_with(text)
+                self.assertTrue(o.path.startswith(os.path.join(state, "parley")), o.path)
+                warn = next(x for x in o.stderr.objs if x.get("code") == "receipt.relocated")
+                self.assertIn("negation", warn["problem"])
+                assert_valid(self, o)
+
+    def test_a_negation_that_cannot_match_receipts_leaves_the_receipt_where_git_does_not_stage_it(self):
+        for name, text in self.KEPT.items():
+            with self.subTest(name):
+                if self.HAS_GIT:
+                    self.assertFalse(self.git_would_stage(text))
+                o, d, _ = self.run_with(text)
+                self.assertTrue(o.path.startswith(os.path.join(d, ".parley")), o.path)
+                self.assertEqual(o.stderr.objs, [])
+
+    @unittest.skipUnless(HAS_GIT, "git is not installed")
+    def test_real_git_stages_a_receipt_under_each_of_the_reviewed_contents(self):
+        for name in ("a POSIX class at the start", "a POSIX class in the middle", "a POSIX class beside a literal", "a negated POSIX class",
+                     "a NUL byte after the pattern", "a negated class whose first member is ]", "the same with !"):
+            with self.subTest(name):
+                self.assertTrue(self.git_would_stage(self.RELOCATED[name]))
+
 
 class TestRetention(unittest.TestCase):
     def test_by_count_oldest_first(self):

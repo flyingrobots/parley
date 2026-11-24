@@ -548,6 +548,98 @@ describe("PE-6 repository hygiene", () => {
       expect([text, r.path!.startsWith(join(dir, ".parley"))]).toEqual([text, true]);
     }
   });
+
+  // PE-6f (spec §5.2, "a program that cannot tell whether a negation matches MUST treat it as one
+  // that does"): the oracle is real git. Each content is written to `.parley/.gitignore` in a fresh
+  // repository, the writer runs, and `git add -A -n` must not list the receipt the writer wrote.
+  const F = "!*.jsonl\n";
+  /** Contents whose negation the writer cannot evaluate exactly, or that match: the receipt must leave the repository. */
+  const RELOCATED: Record<string, string> = {
+    "a POSIX class at the start": `*\n![[:alpha:]]eceipts\n${F}`,
+    "a POSIX class in the middle": `*\n!r[[:lower:]]ceipts\n${F}`,
+    "a POSIX class beside a literal": `*\n!r[[:alnum:]_]ceipts\n${F}`,
+    "a negated POSIX class": `*\n!r[^[:digit:]]ceipts\n${F}`,
+    "a NUL byte after the pattern": `*\n!receipts\u0000\n${F}`,
+    "an equivalence class": `*\n!r[[=e=]]ceipts\n${F}`,
+    "a collating symbol": `*\n!r[[.e.]]ceipts\n${F}`,
+    "an unterminated bracket": `*\n![receipts\n${F}`,
+    "a negated class whose first member is ]": `*\n![^]]eceipts\n${F}`,
+    "the same with !": `*\n![!]]eceipts\n${F}`,
+    "a class whose first member is ]": `*\n![]r]eceipts\n${F}`,
+    "a range": `*\n!r[a-f]ceipts\n${F}`,
+    "a range then a literal dash": `*\n!r[a-e-g]ceipts\n${F}`,
+    "a negated class": `*\n!r[!x]ceipts\n${F}`,
+    "upper case": `*\n!RECEIPTS\n${F}`,
+    "a long s": `*\n!receiptſ\n${F}`,
+    "a Kelvin sign": `*\n!receiKts\n${F}`,
+    "a tab after the pattern": `*\n!receipts\t\n${F}`,
+    "CRLF line endings": `*\r\n!receipts\r\n!*.jsonl\r\n`,
+    "no final newline": `*\n!receipts\n!*.jsonl`,
+  };
+  /** Controls the writer evaluates exactly and that cannot match `receipts`: the receipt stays. */
+  const KEPT: Record<string, string> = {
+    "* alone": "*\n",
+    "the files re-included, the directory not": `*\n${F}`,
+    "another name": `*\n!keep\n${F}`,
+    "a reversed range": `*\n!r[f-a]ceipts\n${F}`,
+    "a class without the letter": `*\n!r[abc]ceipts\n${F}`,
+    "a negated class holding the letter": `*\n!r[!e]ceipts\n${F}`,
+    "braces, which git reads literally": `*\n!{receipts}\n${F}`,
+    "a comment": `*\n#!receipts\n${F}`,
+    "an escaped bang": `*\n\\!receipts\n${F}`,
+  };
+  const GIT_ENV = { PATH: process.env.PATH ?? "", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", HOME: tmpdir() };
+  const HAS_GIT = Bun.spawnSync(["git", "--version"], { env: GIT_ENV }).exitCode === 0;
+  const git = (cwd: string, ...args: string[]) => {
+    const p = Bun.spawnSync(["git", "-C", cwd, ...args], { env: GIT_ENV });
+    if (p.exitCode !== 0) throw new Error(`git ${args.join(" ")}: ${p.stderr.toString()}`);
+    return p.stdout.toString();
+  };
+  /** Whether real git would stage a file at `.parley/receipts/` under this ignore file, in a repository of its own. */
+  const gitWouldStage = (text: string): boolean => {
+    const o = mkdtempSync(join(tmpdir(), "parley-emit-oracle-"));
+    git(o, "init", "-q");
+    mkdirSync(join(o, ".parley", "receipts"), { recursive: true });
+    writeFileSync(join(o, ".parley", ".gitignore"), text);
+    writeFileSync(join(o, ".parley", "receipts", "01PROBE.jsonl"), "{}\n");
+    return git(o, "add", "-A", "-n", ".").includes("receipts/01PROBE.jsonl");
+  };
+  const runWith = async (text: string) => {
+    const { dir, env, state } = scratch();
+    if (HAS_GIT) git(dir, "init", "-q");
+    mkdirSync(join(dir, ".parley")); writeFileSync(join(dir, ".parley", ".gitignore"), text);
+    const r = await runCount(dir, env, ["count"], () => {});
+    expect(readFileSync(join(dir, ".parley", ".gitignore"), "utf8")).toBe(text);
+    expect(r.status).toBe(0);
+    // The property itself: whatever the writer decided, git does not stage what it wrote.
+    if (HAS_GIT) expect(git(dir, "add", "-A", "-n", ".")).not.toContain(".parley/receipts/");
+    return { r, dir, state };
+  };
+
+  for (const [name, text] of Object.entries(RELOCATED)) {
+    test(`a negation the writer cannot evaluate exactly counts as one that matches: ${name}`, async () => {
+      const { r, state } = await runWith(text);
+      expect([name, r.path!.startsWith(join(state, "parley"))]).toEqual([name, true]);
+      const warning = r.stderr.objs.find((o) => o.code === "receipt.relocated") as { problem: string } | undefined;
+      expect(warning?.problem).toContain("negation");
+      expect(r.violations).toEqual([]);
+    });
+  }
+
+  for (const [name, text] of Object.entries(KEPT)) {
+    test(`a negation that cannot match receipts leaves the receipt in the repository, where git does not stage it: ${name}`, async () => {
+      if (HAS_GIT) expect([name, gitWouldStage(text)]).toEqual([name, false]);
+      const { r, dir } = await runWith(text);
+      expect([name, r.path!.startsWith(join(dir, ".parley"))]).toEqual([name, true]);
+      expect(r.stderr.objs).toEqual([]);
+    });
+  }
+
+  test.skipIf(!HAS_GIT)("real git stages a receipt under each of the reviewed contents, which is why the writer must leave", () => {
+    for (const name of ["a POSIX class at the start", "a POSIX class in the middle", "a POSIX class beside a literal", "a negated POSIX class", "a NUL byte after the pattern", "a negated class whose first member is ]", "the same with !"]) {
+      expect([name, gitWouldStage(RELOCATED[name]!)]).toEqual([name, true]);
+    }
+  });
 });
 
 describe("PE-7 redaction", () => {

@@ -3277,6 +3277,40 @@ describe("RD-110 a fold never hides a record that differs", () => {
     expect(foldRuns(pair, { [runId(1)]: "succeeded", [runId(2)]: "succeeded" }).folded).toBe(0);
   });
 
+  test("a tool's own session field is part of its result: runs that differ only in it do not fold (flyingrobots/parley#146)", async () => {
+    // `session` is an envelope field of the bootstrap line alone (§2.1). On a result record it
+    // is the tool's own field, and the fold leaves out `t`, `seq` and `run` and nothing else.
+    const said = (session: string, value: number): [string, Record<string, unknown>] => ["result", { ...TOOL_OWNED, session, value }];
+    expect(folds(runOf(1, "i", [said("alice-login-1", 1)]), runOf(2, "i", [said("bob-login-2", 1)]))).toBe(false);
+    // The control: equal results, the field included, still fold.
+    expect(folds(runOf(1, "i", [said("alice-login-1", 1)]), runOf(2, "i", [said("alice-login-1", 1)]))).toBe(true);
+    // A nested `session` was never left out, and is not now.
+    const nested = (session: string): [string, Record<string, unknown>] => ["result", { ...TOOL_OWNED, who: { session }, value: 1 }];
+    expect(folds(runOf(1, "i", [nested("alice-login-1")]), runOf(2, "i", [nested("bob-login-2")]))).toBe(false);
+    expect(folds(runOf(1, "i", [nested("alice-login-1")]), runOf(2, "i", [nested("alice-login-1")]))).toBe(true);
+    // A decision record's own `session` is compared the same way under a view that states decisions.
+    const stepped = (n: number, session: string) => runOf(n, "i", [["receipt.step", { decision: "d", because: "b", session }], result(1)]);
+    expect(folds(stepped(1, "alice-login-1"), stepped(2, "bob-login-2"), "how-it-decided")).toBe(false);
+    // And through a read of two receipts: both runs are returned, each with its own section.
+    const { dir, env } = scratch();
+    const receipts = repoReceipts(dir);
+    const receipt = (run: string, at: number, session: string) => {
+      const path = join(receipts, `${run}.jsonl`);
+      return writeReceipt(receipts, run, [
+        { ...head(run, { inv: "inv_same" }), t: at },
+        { ...toolResult(run, 2, { session, value: 1 }), t: at + 1 },
+        { ...end(run, 3, path), t: at + 2 },
+      ]);
+    };
+    receipt(runId(1), T0 - 2 * DAY, "alice-login-1");
+    receipt(runId(2), T0 - DAY, "bob-login-2");
+    const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: SEALED, budget: { records: 1000 } }, { cwd: dir, env }));
+    expect(answer.records.filter((r) => r.event === "result").map((r) => [r.run, r.record.session])).toEqual([[runId(1), "alice-login-1"], [runId(2), "bob-login-2"]]);
+    expect(answer.digest.runs.map((r) => r.run)).toEqual([runId(1), runId(2)]);
+    expect(answer.digest.runs.some((r) => "folded" in r)).toBe(false);
+    expect(answer.digest.loss).toEqual({ bound: "none", excluded: 0, folded: 0 });
+  });
+
   test("runs whose decisions differ do not fold under a view that states decisions", () => {
     const stepped = (n: number, decision: string) => runOf(n, "i", [["receipt.step", { decision, because: "b" }], result(1)]);
     const hit = (n: number, served: string) => runOf(n, "i", [["cache.hit", { inv: "i", served_run: served, receipt: "/r" }], result(1)]);

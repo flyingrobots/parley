@@ -55,7 +55,8 @@ Not covered by `bun test`, and why:
   packages bundle draft schemas on 2026-11-24, so each gate would refuse. The `sanity`, `release`
   and `publish` jobs' steps that need GitHub or npm (`gh release create`, `npm stage publish` with
   an OIDC token and provenance, `actions/upload-artifact` and `download-artifact`) have not been
-  exercised since they were rewritten. The first release after this change is their golden run.
+  exercised since they were rewritten. The first release after this change is their golden run,
+  and flyingrobots/parley#156 asks for a run that stops before `release` first.
 - **`npm stage publish <tarball>` for real.** Verified with `--dry-run` only (npm 12.2.3): it
   accepted a tarball path from an empty directory and reported the `shasum` and `integrity` of
   that file. What `npm stage list`, `view` and `download` print was not seen, since they need a

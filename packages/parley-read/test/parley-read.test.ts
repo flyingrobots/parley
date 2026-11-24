@@ -886,7 +886,7 @@ describe("RD-15 an accepted query is recorded and reads back", () => {
     expect(record.note).toBe("the golden case");
   });
 
-  test("the recorded query loads as validated against parley.query 1.0.0 in its own bundle", async () => {
+  test("the recorded query loads as validated against parley.query 1.1.0 in its own bundle", async () => {
     const { dir, env } = scratch();
     datedReceipt(repoReceipts(dir), runId(1), T0 - DAY);
     const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "what-ran", window: WIDE }, { cwd: dir, env }));
@@ -899,7 +899,7 @@ describe("RD-15 an accepted query is recorded and reads back", () => {
     expect(own.defects).toEqual([]);
     const query = own.records.find((r) => r.event === "query")!;
     expect(query.validation.state).toBe("validated");
-    expect((query.validation as { schema: { id: string; version: string } }).schema).toEqual({ id: "parley.query", version: "1.0.0" });
+    expect((query.validation as { schema: { id: string; version: string } }).schema).toEqual({ id: "parley.query", version: "1.1.0" });
     expect(load.counts.invalid).toBe(0);
     expect(load.quarantined).toEqual([]);
   });
@@ -1559,7 +1559,7 @@ describe("RD-20 the first response is a digest", () => {
     expect(payload).toEqual(answer.digest as unknown as typeof payload);
   });
 
-  test("the digest loads as validated against parley.lens 1.0.0 in its own bundle", async () => {
+  test("the digest loads as validated against parley.lens 1.1.0 in its own bundle", async () => {
     const { dir, env } = scratch();
     seedDays(dir, 2);
     const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: SEALED }, { cwd: dir, env }));
@@ -1570,7 +1570,7 @@ describe("RD-20 the first response is a digest", () => {
     expect(own.defects).toEqual([]);
     const lens = own.records.find((r) => r.event === "lens")!;
     expect(lens.validation.state).toBe("validated");
-    expect((lens.validation as { schema: { id: string; version: string } }).schema).toEqual({ id: "parley.lens", version: "1.0.0" });
+    expect((lens.validation as { schema: { id: string; version: string } }).schema).toEqual({ id: "parley.lens", version: "1.1.0" });
     expect(load.counts.invalid).toBe(0);
     expect(load.quarantined).toEqual([]);
   });
@@ -1804,11 +1804,11 @@ describe("RD-22 a digest never reads as complete", () => {
 
     const lens = lensRecord(dir, env, answer.run);
     expect(lens.validation.state).toBe("validated");
-    expect((lens.validation as { schema: { id: string; version: string } }).schema).toEqual({ id: "parley.lens", version: "1.0.0" });
+    expect((lens.validation as { schema: { id: string; version: string } }).schema).toEqual({ id: "parley.lens", version: "1.1.0" });
     const { event, ...rest } = answer.digest;
     expect(lens.record).toEqual({
       event, t: lens.t!, seq: lens.seq, run: answer.run,
-      ...rest, _schema: { id: "parley.lens", version: "1.0.0" },
+      ...rest, _schema: { id: "parley.lens", version: "1.1.0" },
     } as unknown as typeof lens.record);
     expect(answer.load.counts.invalid).toBe(0);
     expect(answer.load.counts.quarantined).toBe(0);
@@ -2622,7 +2622,7 @@ describe("RD-80 a lens states each run it names once", () => {
     // third (flyingrobots/parley#79, RD-90); the failing run is not the same result and stands alone.
     const byId = loadedById(dir, env);
     expect(held.runs.map((r) => r.run)).toEqual([broke.run, third.run]);
-    expect(held.runs[1]!.folded).toEqual({ others: 1, records: [...byId.values()].filter((r) => r.run === first.run).length });
+    expect(held.runs[1]!.folded).toEqual({ others: 1, records: [...byId.values()].filter((r) => r.run === first.run).length, stands_for: [first.run] });
     expectSectionsMatch(held, byId, answer.ranking.outcomes);
     expect(sectionOutcomes(held.runs)[broke.run]).toBe("failed");
     // The failing run's error entry names its code, so three failures of one case read as one.
@@ -2831,7 +2831,7 @@ describe("RD-90 runs of one invocation with one result are folded", () => {
     expect(held.records.map((e) => `${e.run}:${e.seq}`)).toEqual([1, 2, 3, 4].map((s) => `${runId(5)}:${s}`));
     expect(held.runs.length).toBe(1);
     expect(held.runs[0]!.run).toBe(runId(5));
-    expect(held.runs[0]!.folded).toEqual({ others: 4, records: 16 });
+    expect(held.runs[0]!.folded).toEqual({ others: 4, records: 16, stands_for: [4, 3, 2, 1].map(runId) });
     expect(held.loss).toEqual({ bound: "count-only", excluded: 16, folded: 16 });
     // Nothing folded away is in the answer either: not its records, not its ranking prefix.
     expect(answer.records.every((r) => r.run === runId(5))).toBe(true);
@@ -2895,7 +2895,7 @@ describe("RD-90 runs of one invocation with one result are folded", () => {
     // Twelve runs in four groups of three, interleaved in time, so the representatives come last.
     const records = Array.from({ length: 12 }, (_, i) => invRun(runId(i), T0 + i * 10, `inv_g${i % 4}`)).flat();
     const wide = digestOf(records).digested;
-    expect(wide.digest.runs.map((r) => [r.run, r.folded])).toEqual([8, 9, 10, 11].map((i) => [runId(i), { others: 2, records: 8 }]));
+    expect(wide.digest.runs.map((r) => [r.run, r.folded])).toEqual([8, 9, 10, 11].map((i) => [runId(i), { others: 2, records: 8, stands_for: [runId(i - 4), runId(i - 8)] }]));
     expect(wide.digest.loss).toEqual({ bound: "count-only", excluded: 32, folded: 32 });
     expect(wide.folded).toBe(32);
 
@@ -2950,7 +2950,7 @@ describe("RD-90 runs of one invocation with one result are folded", () => {
     const started = Date.now();
     const digested = digestFor(plan.query, { run: runId(99_999), seq: 1 }, ranking.records, { run: runId(99_999), seq: 30, t: T0 }, ranking.outcomes);
     const elapsed = Date.now() - started;
-    expect(digested.digest.runs).toEqual([{ run: runId(999), tool: "t", v: "1", argv: ["t", "x"], inv: "inv_suite", outcome: "succeeded", folded: { others: 999, records: 3996 } }]);
+    expect(digested.digest.runs).toEqual([{ run: runId(999), tool: "t", v: "1", argv: ["t", "x"], inv: "inv_suite", outcome: "succeeded", folded: { others: 999, records: 3996, stands_for: Array.from({ length: 999 }, (_, i) => runId(998 - i)) } }]);
     expect(digested.digest.records.length).toBe(4);
     expect(digested.digest.loss).toEqual({ bound: "count-only", excluded: 3996, folded: 3996 });
     expect(elapsed).toBeLessThan(500);
@@ -3032,7 +3032,7 @@ describe("RD-90 runs of one invocation with one result are folded", () => {
     const held = lens.record as unknown as { runs: Record<string, unknown>[] };
     expect(held.runs.length).toBe(1);
     expect(held.runs[0]!.run).toBe(runs[2]!.run);
-    expect(foldOf(held.runs, runs[2]!.run)).toEqual({ others: 2, records: [...byId.values()].filter((r) => r.run === runs[0]!.run || r.run === runs[1]!.run).length });
+    expect(foldOf(held.runs, runs[2]!.run)).toEqual({ others: 2, records: [...byId.values()].filter((r) => r.run === runs[0]!.run || r.run === runs[1]!.run).length, stands_for: [runs[1]!.run, runs[0]!.run] });
   }, 60_000);
 });
 
@@ -3185,7 +3185,7 @@ describe("RD-100 a fold never hides a different resolved", () => {
       loaded(runId(n), 2, "end", T0 + n * 10 + 1, { status: 0 }),
     ];
     const { digested } = digestOf([...at(1, "/a"), ...at(2, "/b"), ...at(3, "/b")]);
-    expect(digested.digest.runs.map((r) => [r.run, r.folded])).toEqual([[runId(1), undefined], [runId(3), { others: 1, records: 2 }]]);
+    expect(digested.digest.runs.map((r) => [r.run, r.folded])).toEqual([[runId(1), undefined], [runId(3), { others: 1, records: 2, stands_for: [runId(2)] }]]);
   });
 });
 
@@ -3268,6 +3268,10 @@ describe("RD-110 a fold never hides a record that differs", () => {
     const page = (items: unknown): [string, Record<string, unknown>] => ["page", { has_more: false, items }];
     expect(folds(runOf(1, "i", [page([1])]), runOf(2, "i", [page([1])]))).toBe(true);
     expect(folds(runOf(1, "i", [page([1])]), runOf(2, "i", [page([2])]))).toBe(false);
+    // A read's result is its lens. The query it names is that read's own identity, not its result.
+    const lens = (n: number, seqs: number[]): [string, Record<string, unknown>] => ["lens", { query: { run: runId(n), seq: 2 }, loss: { bound: "none", excluded: 0, folded: 0 }, records: seqs.map((seq) => ({ run: runId(50), seq })) }];
+    expect(folds(runOf(1, "i", [lens(1, [1, 2])]), runOf(2, "i", [lens(2, [1, 2])]))).toBe(true);
+    expect(folds(runOf(1, "i", [lens(1, [1, 2])]), runOf(2, "i", [lens(2, [1, 2, 3])]))).toBe(false);
     // `foldRuns` itself, with no view stated, holds results to the same rule.
     const pair = [...runOf(1, "i", [result(1)]), ...runOf(2, "i", [result(2)])];
     expect(foldRuns(pair, { [runId(1)]: "succeeded", [runId(2)]: "succeeded" }).folded).toBe(0);
@@ -3276,10 +3280,13 @@ describe("RD-110 a fold never hides a record that differs", () => {
   test("runs whose decisions differ do not fold under a view that states decisions", () => {
     const stepped = (n: number, decision: string) => runOf(n, "i", [["receipt.step", { decision, because: "b" }], result(1)]);
     const hit = (n: number, served: string) => runOf(n, "i", [["cache.hit", { inv: "i", served_run: served, receipt: "/r" }], result(1)]);
-    const expected: Record<string, boolean> = { "what-ran": true, "what-failed": true, "what-changed": true, "how-it-decided": false, everything: false };
+    // A step is on the surface of `how-it-decided` and `everything`; a cache hit, the decision
+    // not to run at all, is on `what-ran`'s too.
+    const steps: Record<string, boolean> = { "what-ran": true, "what-failed": true, "what-changed": true, "how-it-decided": false, everything: false };
+    const hits: Record<string, boolean> = { ...steps, "what-ran": false };
     for (const view of VIEWS) {
-      expect([view, folds(stepped(1, "took the fast path"), stepped(2, "took the slow path"), view)]).toEqual([view, expected[view]!]);
-      expect([view, folds(hit(1, runId(7)), hit(2, runId(8)), view)]).toEqual([view, expected[view]!]);
+      expect([view, folds(stepped(1, "took the fast path"), stepped(2, "took the slow path"), view)]).toEqual([view, steps[view]!]);
+      expect([view, folds(hit(1, runId(7)), hit(2, runId(8)), view)]).toEqual([view, hits[view]!]);
       // Equal decisions fold under every view.
       expect([view, folds(stepped(1, "same"), stepped(2, "same"), view)]).toEqual([view, true]);
     }
@@ -3341,7 +3348,7 @@ describe("RD-110 a fold never hides a record that differs", () => {
       { cwd: dir, env },
     );
     if (opened.refused || opened.declined) throw new Error("the drill-down did not answer");
-    expect(opened.records.map((o) => [o.outcome, o.record?.run, o.record?.event])).toEqual([4, 3, 2, 1].map((n) => ["opened", runId(n), "result"]));
+    expect(opened.opened.map((o) => [o.outcome, o.record?.run, o.record?.event])).toEqual([4, 3, 2, 1].map((n) => ["opened", runId(n), "result"]));
   });
 
   test("the ids a fold names are outside the section's bound and inside the byte budget", () => {
@@ -3364,7 +3371,11 @@ describe("RD-110 a fold never hides a record that differs", () => {
       expect(bounded.fits).toBe(true);
       expect(digestBytes(bounded.digest, envelope)).toBeLessThanOrEqual(bytes);
     }
-    expect(digestOf(records, { records: 1000, bytes: digested.bytes }).digested.digest.records.length).toBe(3);
+    // The budget is echoed in the line, so the bound that holds all three records is the unbounded
+    // size plus the echoed `bytes`; one byte under that cuts a record.
+    const all = digestOf(records, { records: 1000, bytes: digested.bytes + 100 }).digested;
+    expect(all.digest.records.length).toBe(3);
+    expect(digestOf(records, { records: 1000, bytes: all.bytes - 1 }).digested.digest.records.length).toBeLessThan(3);
   });
 
   test("the reader validates the released 1.0.0 lines beside the 1.1.0 ones", () => {

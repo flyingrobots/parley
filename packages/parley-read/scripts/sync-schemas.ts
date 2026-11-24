@@ -1,8 +1,12 @@
 #!/usr/bin/env bun
-// Copies the repository's draft schemas into src/schemas.ts so the package ships exactly the
-// bytes it was built from, pinned by commit and digest (spec §4.5: a draft's version string does
-// not identify exact bytes). A reader resolves a line's `(id, version)` pair against these and no
-// others (§4.6). Run from the package directory. A test fails when the copy is stale.
+// Copies the repository's schemas into src/schemas.ts so the package ships exactly the bytes it
+// was built from, pinned by commit and digest (spec §4.5: a draft's version string does not
+// identify exact bytes). A reader resolves a line's `(id, version)` pair against these and no
+// others (§4.6), and a history holds lines written under every version there has been, so the
+// copy is the top-level file of each message **and** every released snapshot of another version
+// of it (`schemas/released/<id>/<version>.schema.json`). A snapshot of the version the top-level
+// file already holds is the same bytes and is not copied twice. Run from the package directory. A
+// test fails when the copy is stale.
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
@@ -10,7 +14,16 @@ import { spawnSync } from "node:child_process";
 
 const root = resolve(import.meta.dir, "../../..");
 const dir = join(root, "schemas");
-const files = readdirSync(dir).filter((f) => f.endsWith(".schema.json")).sort();
+const top = readdirSync(dir).filter((f) => f.endsWith(".schema.json")).sort();
+const pairOf = (f: string) => {
+  const s = JSON.parse(readFileSync(join(dir, f), "utf8")) as { properties: { _schema: { properties: { id: { const: string }; version: { const: string } } } } };
+  return `${s.properties._schema.properties.id.const}@${s.properties._schema.properties.version.const}`;
+};
+const current = new Set(top.map(pairOf));
+const released = readdirSync(join(dir, "released")).sort()
+  .flatMap((id) => readdirSync(join(dir, "released", id)).filter((f) => f.endsWith(".schema.json")).sort().map((f) => `released/${id}/${f}`))
+  .filter((f) => !current.has(pairOf(f)));
+const files = [...top, ...released];
 const commit = spawnSync("git", ["-C", root, "rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim();
 const entries = files.map((f) => {
   const bytes = readFileSync(join(dir, f));

@@ -9,10 +9,12 @@ and the first publish.
 
 1. Record the changes under a new dated heading in `packages/parley-read/CHANGELOG.md`, and note
    the release in the root `CHANGELOG.md`. A package release publishes no schema version (spec
-   §4.5); the shipped schemas are the top-level files in `schemas/` at the commit pinned in
-   `src/schemas.ts`, so run `bun run sync-schemas` there first if they moved.
+   §4.5); the shipped schemas are the top-level files in `schemas/`, and the released snapshots of
+   any other version, at the commit pinned in `src/schemas.ts`, so run `bun run sync-schemas`
+   there first if they moved. A version that ships a draft schema stamps lines with a pair whose
+   bytes may still change (spec §4.5), so release the schema first.
 2. Set `version` in `packages/parley-read/package.json` to the same number. Its dependency on
-   `@flyingrobots/parley-emit` is a caret range (`^0.2.4` for 0.1.1), never `workspace:*`: npm
+   `@flyingrobots/parley-emit` is a caret range (`^0.2.4` for 0.2.0), never `workspace:*`: npm
    publishes a `workspace:` range verbatim, and no installer outside this repository can resolve
    it. The range must admit the version of `packages/parley-emit` in the repository, so the
    workspace still links the local copy; `scripts/release.test.ts` checks both.

@@ -10,6 +10,12 @@ release's digest is recorded on its GitHub release (tag `parley-emit-py-vX.Y.Z`)
 
 ## [Unreleased]
 
+### Changed
+
+- The embedded schemas were re-synced: `parley.query` and `parley.lens` are the draft 1.1.0
+  (flyingrobots/parley#133) in place of 1.0.0. The writer stamps neither message, so no emitted
+  line changes; the file's digest moves.
+
 ## [0.1.2] — 2026-11-22
 
 Retention's rule for a receipt that may still be being written is now the spec's (spec section

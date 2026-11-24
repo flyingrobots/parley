@@ -1,6 +1,6 @@
 {
   "name": "@flyingrobots/parley-read",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "A reader for the Parley output protocol: opens a repository's receipt bundles under the reader rules of the spec.",
   "license": "Apache-2.0",
   "type": "module",

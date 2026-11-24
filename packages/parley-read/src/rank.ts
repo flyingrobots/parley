@@ -74,7 +74,7 @@ export function impliesChange(view: View): boolean {
 }
 
 /** The event tokens the protocol itself defines (§1.3 through §9). Anything else is a tool's own. */
-const PROTOCOL_EVENTS: ReadonlySet<string> = new Set([
+export const PROTOCOL_EVENTS: ReadonlySet<string> = new Set([
   "run", "receipt.head", "command", "schema", "receipt.inputs", "receipt.step",
   "warning", "error", "cache.hit", "sidecar", "page", "redaction", "end",
   "startup.failed", "query", "lens",
@@ -100,7 +100,7 @@ function schemaId(record: LoadedRecord): string | null {
  * protocol event token is the tool's too — the reader cannot attribute it to the protocol, and
  * §4.6 says a line whose id is not ours is passed through rather than reinterpreted.
  */
-function toolOwned(record: LoadedRecord): boolean {
+export function toolOwned(record: LoadedRecord): boolean {
   const id = schemaId(record);
   if (id !== null) return !id.startsWith(PROTOCOL_PREFIX);
   return record.event === null || !PROTOCOL_EVENTS.has(record.event);

@@ -5,6 +5,12 @@ on its own; the spec and each message schema move separately (spec §4.4).
 
 ## [Unreleased]
 
+### Changed
+
+- `src/schemas.ts` re-synced: it now holds the draft `parley.query` 1.1.0 and `parley.lens` 1.1.0
+  (flyingrobots/parley#133) in place of 1.0.0. The writer stamps neither message, so no emitted
+  line changes.
+
 ## [0.2.4] — 2026-11-23
 
 No change to the library or the schemas it ships.

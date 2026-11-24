@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://flyingrobots.dev/parley/schemas/parley.lens/1.0.0",
+  "$id": "https://flyingrobots.dev/parley/schemas/parley.lens/1.1.0",
   "title": "parley lens",
   "description": "The lens a result carries: the asker, the view, the budget and the window that produced it, the query it answers, a stated bound on what the view loses, and the records it was built from by (run, seq) (spec §9, informative; decided in flyingrobots/parley#46). One lens line precedes the result it describes, so a later reader knows what it is looking at and can get back to the records.",
   "type": "object",
@@ -131,6 +131,10 @@
       },
       "description": "The stretch of history the result covers, echoed from the query."
     },
+    "fold": {
+      "type": "boolean",
+      "description": "Echoed from the query, present exactly when the query states it (flyingrobots/parley#133). false: the read folded nothing, so loss.folded is 0 and no runs section carries folded because none was allowed to, not because no runs repeated. Two results over one window, one folded and one not, are not comparable, so a lens says which it is."
+    },
     "loss": {
       "type": "object",
       "required": [
@@ -153,7 +157,7 @@
         "folded": {
           "type": "integer",
           "minimum": 0,
-          "description": "How many of excluded were left out because their run was folded into another run of the same invocation and the same result, rather than by the budget (flyingrobots/parley#79): the records of every run a runs section's folded stands for, other than the section's own. It depends on the window alone, never on the budget, so excluded minus folded is what the budget cut. At most excluded, which a schema cannot check; a reader can. Optional so that lines written under the earlier drafts still validate; parley-read always writes it, 0 included."
+          "description": "How many of excluded were left out because their run was folded into another run of the same invocation and the same result, rather than by the budget (flyingrobots/parley#79): the records of every run a runs section's folded stands for, other than the section's own. It depends on the window, the view and fold, never on the budget, so excluded minus folded is what the budget cut. At most excluded, which a schema cannot check; a reader can. Optional so that lines written under the earlier drafts still validate; parley-read always writes it, 0 included."
         }
       },
       "description": "What the view loses against the records it was built from, so a later reader knows which questions this result can still answer and cannot mistake a digest for the whole. A digest that folded runs names fewer records than it stands for, and says how many in folded."
@@ -232,9 +236,17 @@
                 "type": "integer",
                 "minimum": 0,
                 "description": "How many records of those other runs, in the window, the fold left out of records, this run's own excluded; each is counted in loss.excluded and loss.folded."
+              },
+              "stands_for": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string"
+                },
+                "description": "The run ids of the other runs this section stands for, this run excluded, most recent first, so that their records can be opened by (run, seq) or read under a window that holds them (flyingrobots/parley#133). As many as others. Optional so that a line written under 1.0.0, which listed none, has the same shape; parley-read always writes it, never drops it to fit the section's bound and does not count it against that bound. It is part of the line budget.bytes bounds."
               }
             },
-            "description": "Present when this run stands for other runs of the same invocation and the same result (flyingrobots/parley#79): runs with an equal inv (spec §2.2) whose outcome, reason, end status and error, warning and startup-failure codes are equal too. This run is the most recent of them, and the others' records are not named. A run with no inv, and a redacted run, never stands for another (spec §2.3). A run that stands for no other has no folded. The folded runs' ids are not listed, to keep the line small: a read of a window that holds one of them without this run, or a load of the window, finds them. Never dropped to fit the section's bound."
+            "description": "Present when this run stands for other runs of the same invocation and the same result (flyingrobots/parley#79): runs with an equal inv (spec §2.2) whose outcome, reason, end status, error, warning and startup-failure codes and head's resolved are equal too, and whose result records are all equal: the tool's own records, each page and each sidecar's stored bytes, compared without the envelope's t, seq, run and session (flyingrobots/parley#133). Under a view that states the decision records, how-it-decided and everything, their receipt.step and cache.hit records are equal as well. Two runs whose results differ are a divergence (spec §2.3) and never stand for one another. This run is the most recent of them, the others' records are not named, and stands_for lists the others' run ids. A run with no inv, and a redacted run, never stands for another (spec §2.3). A run that stands for no other has no folded. Never dropped to fit the section's bound."
           },
           "dropped": {
             "type": "array",
@@ -345,7 +357,7 @@
           "const": "parley.lens"
         },
         "version": {
-          "const": "1.0.0",
+          "const": "1.1.0",
           "description": "Full validation is against the schema for this exact id and version (spec §4.5, §4.6)."
         }
       }

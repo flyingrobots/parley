@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://flyingrobots.dev/parley/schemas/parley.query/1.0.0",
+  "$id": "https://flyingrobots.dev/parley/schemas/parley.query/1.1.0",
   "title": "parley query",
   "description": "A read against the history, recorded as an event: the asker it is for, the view it wants, the budget it will accept and the window it covers (spec §9, informative; the representation is decided in flyingrobots/parley#46 and read against the observer-geometry treatment in docs/topics/related-work/observer-geometry.md). The envelope's run is the read's own run; asker is who the read is for. A drill-down, which opens records a lens named, is the same message with records stating which.",
   "type": "object",
@@ -123,6 +123,10 @@
       "minLength": 1,
       "description": "Free text from the asker, recorded and never parsed. Nothing in the answer branches on it."
     },
+    "fold": {
+      "type": "boolean",
+      "description": "Whether the read may fold runs it judges to be repeats of one invocation with one result into the most recent of them (flyingrobots/parley#79). false: nothing is folded, so every run in the window keeps its own records and the budget alone decides what the answer names (flyingrobots/parley#133). true or absent: the reader folds, and the result's lens names every run a fold stands for. Never inferred: the reader records it only when the asker states it, and the lens echoes it. It selects nothing on a drill-down."
+    },
     "records": {
       "type": "array",
       "minItems": 1,
@@ -158,7 +162,7 @@
           "const": "parley.query"
         },
         "version": {
-          "const": "1.0.0",
+          "const": "1.1.0",
           "description": "Full validation is against the schema for this exact id and version (spec §4.5, §4.6)."
         }
       }

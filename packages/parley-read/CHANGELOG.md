@@ -49,6 +49,9 @@ this repository until the root `CHANGELOG.md` releases them; it still reads 1.0.
 - **A digest over the same history can name more runs than 0.1.x did**, because fewer runs fold,
   and a folded section is longer by its ids, so a `budget.bytes` that held a line may hold fewer
   records.
+- **`RunFold.stands_for` is required.** A caller that builds a `RunFold` by hand to pass to
+  `runSection` must supply it; `foldRuns` always does. `foldRuns`'s new third argument is optional,
+  so existing calls compile and behave as a read with no view stated.
 - `QUERY_SCHEMA` and `LENS_SCHEMA` are `1.1.0`. A consumer that validates this reader's lines
   against the exact pair needs those schemas.
 - **The package ships nineteen schemas, not seventeen.** `bun run sync-schemas` copies the

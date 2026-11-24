@@ -22,13 +22,17 @@ commit of that release, and carry the wording the pre-freeze review settled
   one invocation that answered 1 and 2 came back as one run with `folded: {others: 1}` under every
   view and every budget. Runs now fold only when every result record is equal too: the tool's own
   records, each `page`, each `sidecar`'s `bytes` and `sha256` and a read's own `lens`, in `seq`
-  order, as canonical JSON without the envelope's `t`, `seq` and `run` (RD-110a, RD-110b).
-- **A record's own `session` field is part of what the fold compares.** As first written for
-  this version the comparison left out a top-level `session` as well, as though it were an
-  envelope field of every record. Only the bootstrap line carries `session` as envelope (spec
-  §2.1), and the writers do not refuse it in a tool's payload, so two runs of one invocation
+  order, as canonical JSON without the envelope's `t`, `seq` and `run`, and a read's own `lens`
+  also without its `session` and the `query` it names (RD-110a, RD-110b).
+- **A tool's own `session` field is part of what the fold compares.** As first written for
+  this version the comparison left out a top-level `session` from every record. `session` is
+  identity only on the protocol lines whose schemas define it (spec §2.1), of which the fold
+  compares one, a read's own `lens`; the writers do not refuse it in a tool's payload, so two runs of one invocation
   whose results were `{"session":"alice-login-1","value":1}` and
   `{"session":"bob-login-2","value":1}` came back as one section with `folded.others: 1`. A
+  top-level `session` is now left out of a read's own `lens` alone, so two reads made in
+  different sessions still fold, and it is compared on a tool's own record, a `page` and a
+  decision record. A tool's own record that carries the event name `lens` is compared whole. A
   review of this release found it before anything was published; the sentence in `parley.lens`
   1.1.0's `runs[].folded` description that said so is corrected with it (RD-110l,
   flyingrobots/parley#146).

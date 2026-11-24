@@ -56,4 +56,5 @@ the repository's own sync scripts.
 | RLC-29 | The command line with `--frozen-since` | exit 0 without it and 1 with it on the merged edit; the first line carries both references, stamped 1.1.0; prose names both; the flag with no value is a usage error | `RLC-29: --frozen-since on the command line: exit 1 for the merged edit, both references in the first line and in prose` | implemented |
 
 Not covered: fuzzing and load, which the issue rules out because the inputs are a small fixed set
-of files; and the release workflows calling the checker, which is flyingrobots/parley#147.
+of files. The release gate that calls the checker, its report, the clean consumer and the release
+workflows' shape are in [the release test plan](../../topics/release/test-plan.md).

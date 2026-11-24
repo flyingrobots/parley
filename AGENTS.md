@@ -50,6 +50,9 @@ which packages a draft schema blocks without failing on the draft. The rule, the
 two-commit procedure for releasing schema versions are in
 [docs/workflows/release-spec](docs/workflows/release-spec/README.md). A release is merged with a
 merge commit, never squashed: the package copies are pinned to the schema release's commit id.
+`bun run release-gate -- <package>` asks the `publication` question of one package's artifact at
+the current commit; a release tag is pushed only after it exits 0, and each release workflow runs
+it as its `gate` job before anything public is created.
 
 ## Hard don'ts
 
@@ -59,5 +62,5 @@ merge commit, never squashed: the package copies are pinned to the schema releas
   still a draft under `Unreleased` in the changelog (spec §4.5), in which case record the change
   in that entry.
 - Do not claim a section is settled that has not been tested against a real program.
-- Do not tag or publish a package as stable while `bun run release-check --phase publication`
-  refuses it, and do not edit, delete or re-point a file under `schemas/released/`.
+- Do not tag or publish a package as stable while `bun run release-gate -- <package>` refuses
+  it, and do not edit, delete or re-point a file under `schemas/released/`.

@@ -11,30 +11,107 @@ the package does is in [its reference](../../topics/parley-emit/README.md).
    `src/schemas.ts`, so run `bun run sync-schemas` there first if they moved.
 2. Set `version` in `packages/parley-emit/package.json` to the same number.
 3. Merge that through a pull request; the checks workflow must be green.
-4. Tag the merge commit on `main` as `parley-emit-vX.Y.Z` and push the tag.
+4. Run the gate on `main` at the merge commit: `bun run release-gate -- parley-emit`
+   ([below](#before-the-tag-the-gate)).
+5. Only once it exits `0`, tag the merge commit on `main` as `parley-emit-vX.Y.Z` and push the tag.
+
+## Before the tag: the gate
+
+A pushed tag cannot be taken back, and the workflow starts from one. So the same gate the workflow
+runs is run first by the person tagging, on `main` at the merge commit, with a clean tree:
+
+```bash
+bun run release-gate -- parley-emit
+```
+
+**Push the tag only after it exits `0`.** Exit `1` means refused: its last line, `gate.result`,
+names the schema identities that block the release, and each `release.refusal` and `gate.refusal`
+line says why. What it checks is in
+[Releasing the spec and its schemas](../release-spec/README.md#the-release-gate).
+
+## What the tag starts
 
 The tag starts `.github/workflows/release-parley-emit.yml`, which:
 
 | Job | Does |
 | --- | --- |
-| `sanity` | Refuses a tag whose version differs from `package.json` or has no changelog heading; checks the manifest fields; installs the Wesley pinned in `package.json` `config.wesley`, as the checks workflow does; runs `bun test`, `bun run check`, `bun run typecheck`; refuses a stale `src/schemas.ts`; dry-runs the pack; fails if `npm publish --dry-run` reports that it would rewrite or remove anything in the manifest, if the packed `package.json` differs from the repository's, or if any dependency uses a `workspace:` range |
-| `release` | Creates the GitHub release named after the tag, with the changelog section as notes and the tarball plus `SHA256SUMS` attached |
-| `publish` | In the `npm` environment, stages the version with `npm stage publish` and OIDC provenance through npm's trusted publishing; no token lives in the repository. Nothing is installable yet |
+| `sanity` | Refuses a tag whose version differs from `package.json` or has no changelog heading; checks the manifest fields; installs the Wesley pinned in `package.json` `config.wesley`, as the checks workflow does; runs `bun test`, `bun run check`, `bun run typecheck`; refuses a stale `src/schemas.ts`; dry-runs the pack; fails if `npm publish --dry-run` reports that it would rewrite or remove anything in the manifest |
+| `gate` | Packs the tarball, **once**, and runs the [release gate](../release-spec/README.md#the-release-gate) on that file: `bun run release-gate -- parley-emit --tag <the tag> --out <dir>`. That is the `publication` phase of the release-eligibility check on the tarball, with the frozen-since reference set to the previous `parley-emit-v` tag; the tag, the dated changelog heading, the commit being on `main` and the tree being clean; the manifest inside the tarball being the repository's, with no `workspace:` range. It writes the release report, prints it in the job summary, and only then uploads the tarball, `SHA256SUMS` and the report as a workflow artifact |
+| `release` | Downloads that artifact, compares the tarball's SHA-256 with the gate job's output, and creates the GitHub release named after the tag, with the changelog section as notes and the tarball, `SHA256SUMS` and `release-report.json` attached. It packs nothing |
+| `publish` | In the `npm` environment, with no checkout: downloads the same artifact, compares the digest again, and stages **that file** with `npm stage publish <tarball> --access public --provenance` through npm's trusted publishing; no token lives in the repository. Nothing is installable yet |
+
+Each job needs the one before it, so when the gate refuses, no GitHub release is created and
+nothing is staged. `scripts/release.test.ts` holds that shape on every pull request, and
+`scripts/release-gate.test.ts` runs the gate job's own steps on a fixture that bundles a draft
+schema: the gate step fails, the report is printed, and the upload does not run.
+
+## What the owner approves
 
 **A release ends with the owner's approval.** The trusted publisher is allowed to stage and nothing
-else, so a workflow cannot put code in front of users on its own. The owner lists what is waiting
-and approves it with their one-time password, or does the same on the package's **Staged Packages**
-tab on npmjs.com:
+else, so a workflow cannot put code in front of users on its own. What is approved is an identified
+file, not a version number:
 
-```bash
-npm stage list @flyingrobots/parley-emit
-npm stage approve <stage-id>
-```
+1. Open the GitHub release for the tag and read `release-report.json` (the `gate` job's summary
+   prints the same document). It names the package and version, the source commit and tree, the
+   spec release, every bundled schema with the digest of its released snapshot, the gate's result,
+   and the tarball's digests: `artifact.sha256`, `artifact.sha1` (what npm prints as
+   `shasum`) and `artifact.integrity`. The `publish` job's summary repeats those three and shows
+   what npm printed when it staged.
+2. Find the staged version and download what npm holds:
+
+   ```bash
+   npm stage list @flyingrobots/parley-emit
+   npm stage download <stage-id>
+   shasum -a 256 <the downloaded tarball>
+   ```
+
+   The digest must be the report's `artifact.sha256`, which is also the digest in `SHA256SUMS` and
+   of the tarball on the GitHub release. If it is not, reject the stage (`npm stage reject
+   <stage-id>`) and do not approve.
+3. Approve with a one-time password, or on the package's **Staged Packages** tab on npmjs.com:
+
+   ```bash
+   npm stage approve <stage-id>
+   ```
 
 These commands need an interactive login and cannot be run from CI.
 
-The tarball on the GitHub release and the one on npm are the same bytes; compare the digest when
-in doubt.
+**Step 2 is the owner's because the workflow cannot do it.** `npm stage publish` accepts a tarball
+path and sends that file's bytes: with npm 12.2.3, `npm stage publish <tarball> --dry-run` from an
+empty directory reported the `shasum` and `integrity` of the file it was given, so the job stages
+the checked tarball and repacks nothing. But the token the job gets by OIDC can run
+`npm stage publish` and no other `stage` subcommand (`npm help stage`: "Shortlived tokens cannot
+run npm stage subcommands"), so the job cannot list, view or download what it staged, and cannot
+record the stage id in the report. The comparison after staging is made by a person with a login.
+
+## What the workflow cannot verify
+
+These protections are real only if the settings behind them are what this page says. The workflow
+has no way to read them, so they are limits, not guarantees:
+
+- **The `npm` environment's required reviewers.** The `publish` job runs in the GitHub environment
+  `npm`. Whether that environment requires a reviewer, and who, is a repository setting. If it
+  requires none, `publish` runs as soon as `release` succeeds.
+- **Tag protection.** Anyone who can push a tag matching `parley-emit-v*` starts this workflow. The gate
+  refuses a commit that is not on `main` and a tag that is not the version's, but whether tags can
+  be created, moved or deleted, and by whom, is a repository ruleset the workflow cannot verify.
+  A tag moved after a release would not change the released artifact; it would make the tag lie.
+- **What the trusted publisher allows.** This page says the publisher on npmjs.com allows
+  `npm stage publish` only. If **Allow `npm publish`** were checked there, a workflow change could
+  publish without approval. The setting is on npmjs.com and the workflow cannot verify it; the
+  workflow's own text never runs `npm publish`, and `scripts/release.test.ts` holds that.
+- **The checks on `main`.** The gate compares released snapshots with the previous release tag and
+  with the baseline. It does not know whether the `checks` workflow was required and green for
+  every pull request merged since.
+- **The approval itself.** Nothing verifies that the owner made the comparison in step 2 before
+  approving.
+
+## Re-running
+
+A job that failed is re-run with **Re-run failed jobs**, which keeps the `gate` job's artifact, so
+`release` and `publish` use the tarball that was judged. **Re-run all jobs** packs again; if the
+GitHub release already exists, `release` then compares the new tarball with the one the release
+carries, byte for byte, and fails on a difference rather than replacing it.
 
 ## One-time setup
 
@@ -44,7 +121,8 @@ trusted publisher pointing at this repository and workflow (owner `flyingrobots`
 **Allow `npm dist-tag`** both unchecked, so it may run `npm stage publish` and nothing else. A
 workflow that runs `npm publish` against it is refused with `OIDC permission denied for this
 action`. Without the entry the publish job fails and nothing is staged; the GitHub release still
-exists.
+exists. Neither setting can be read by the workflow
+([what the workflow cannot verify](#what-the-workflow-cannot-verify)).
 
 ## Packages that depend on it
 

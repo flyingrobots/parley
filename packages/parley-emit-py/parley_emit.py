@@ -763,35 +763,93 @@ class _Unsupported(Exception):
         self.keyword = keyword
 
 
+_TYPE_NAMES = frozenset(["null", "boolean", "object", "array", "number", "string", "integer"])
+_COUNTS = ("minLength", "maxLength", "minItems", "maxItems", "minProperties", "maxProperties")
+_BOUNDS = ("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum")
+# What `schema_subset_gap` reports for a `pattern` this writer will not answer for. It names no
+# part of the pattern.
+_PATTERN_GAP = "a pattern this writer cannot evaluate as ECMAScript reads it"
+_UNEVALUATED_GAP = "a construct this checker could not evaluate"
+
+
+def _is_number(v: Any) -> bool:
+    """A finite JSON number: not a boolean, and not the NaN or Infinity `json` will parse."""
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and v == v and v not in (float("inf"), float("-inf"))
+
+
+def _is_count(v: Any) -> bool:
+    """A non-negative integer, however JSON wrote it: `3` and `3.0` are the same number."""
+    return _is_number(v) and v >= 0 and (isinstance(v, int) or v.is_integer())
+
+
 def schema_subset_gap(schema: Any) -> Optional[str]:
     """The first construct in `schema` this checker does not implement, or None. A property of the
     whole document, walked before any value, so a keyword under a property the value lacks is
-    still found."""
+    still found.
+
+    A keyword whose value has the wrong shape is a schema this checker cannot evaluate, the same
+    as a keyword it does not implement: `enum: 5` has no reading to check a record against. Each
+    is reported here, so nothing below has to trust a shape it did not check and no malformed
+    document can make the walk raise. So is a `pattern` this writer does not read as ECMAScript
+    would (`_js_regex`). The TypeScript writer reports the same constructs in the same words."""
     if schema is True or schema is False or schema is None:
+        return None
+    return _walk_schema(schema)
+
+
+def _walk_schema(schema: Any) -> Optional[str]:
+    if schema is True or schema is False:
         return None
     if not isinstance(schema, dict):
         return "a schema that is not an object or a boolean"
-    for k, v in schema.items():
+    for k in schema:
         if k not in _SUPPORTED:
-            return k
-        if k == "format" and v not in _FORMATS:
-            return f"format {v}"
-    if isinstance(schema.get("items"), list):
+            return k if isinstance(k, str) else "a keyword that is not a string"
+    s = schema
+    if "type" in s:
+        names = s["type"] if isinstance(s["type"], list) else [s["type"]]
+        if not all(isinstance(t, str) and t in _TYPE_NAMES for t in names):
+            return "type that is not a type name or a list of type names"
+    if "enum" in s and not isinstance(s["enum"], list):
+        return "enum that is not a list"
+    if "required" in s and not (isinstance(s["required"], list) and all(isinstance(k, str) for k in s["required"])):
+        return "required that is not a list of strings"
+    for k in _COUNTS:
+        if k in s and not _is_count(s[k]):
+            return f"{k} that is not a non-negative integer"
+    for k in _BOUNDS:
+        if k in s and not _is_number(s[k]):
+            return f"{k} that is not a number"
+    if "pattern" in s:
+        if not isinstance(s["pattern"], str):
+            return "pattern that is not a string"
+        if _js_regex(s["pattern"]) is None:
+            return _PATTERN_GAP
+    if "format" in s:
+        if not isinstance(s["format"], str):
+            return "format that is not a string"
+        if s["format"] not in _FORMATS:
+            return f"format {s['format']}"
+    if isinstance(s.get("items"), list):
         return "items as a tuple"
     for k in _SUBSCHEMA:
-        if k in schema:
-            gap = schema_subset_gap(schema[k])
+        if k in s:
+            gap = _walk_schema(s[k])
             if gap is not None:
                 return gap
     for k in _SUBSCHEMA_LISTS:
-        if isinstance(schema.get(k), list):
-            for sub in schema[k]:
-                gap = schema_subset_gap(sub)
+        if k in s:
+            if not isinstance(s[k], list):
+                return f"{k} that is not a list"
+            for sub in s[k]:
+                gap = _walk_schema(sub)
                 if gap is not None:
                     return gap
-    if isinstance(schema.get("properties"), dict):
-        for sub in schema["properties"].values():
-            gap = schema_subset_gap(sub)
+    if "properties" in s:
+        if not isinstance(s["properties"], dict):
+            return "properties that is not an object"
+        for sub in s["properties"].values():
+            gap = _walk_schema(sub)
             if gap is not None:
                 return gap
     return None
@@ -806,6 +864,12 @@ def check_record(value: Any, schema: Any) -> CheckResult:
         _validate(schema, value, "", errors)
     except _Unsupported as e:
         return CheckResult(False, [str(e)], e.keyword)
+    except Exception:
+        # Nothing else is expected, since the walk above checked every shape the code below
+        # relies on. Whatever it is, it is this checker failing to evaluate the schema, and the
+        # answer to that is "nothing was established", never a raise and never the raised text,
+        # which can quote the schema (spec section 5.3).
+        return CheckResult(False, [f"the schema uses {_UNEVALUATED_GAP}, which this checker does not implement"], _UNEVALUATED_GAP)
     return CheckResult(not errors, errors)
 
 
@@ -881,40 +945,215 @@ def _satisfies(schema: Any, value: Any) -> bool:
 
 
 _REGEX_CACHE: Dict[str, Any] = {}
+# ECMAScript's `\s`: WhiteSpace and LineTerminator. Python's is a different set either way: with
+# re.ASCII it lacks U+00A0 and the rest, without it it adds U+001C to U+001F and U+0085 and lacks
+# U+FEFF. Written as the inside of a character class.
+_JS_SPACE = r"\t\n\x0b\x0c\r \xa0  -     　﻿"
+_JS_DOT = r"[^\n\r  ]"
+_JS_QUANTIFIER = re.compile(r"\{([0-9]+)(?:,([0-9]*))?\}")
+_HEX = frozenset("0123456789abcdefABCDEF")
+_ASCII_LETTERS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+_ASCII_WORD = _ASCII_LETTERS | frozenset("0123456789")
+_SYNTAX = frozenset("^$\\.*+?()[]{}|/")
+_CONTROL = {"t": 9, "n": 10, "r": 13, "f": 12, "v": 11}
+
+
+def _is_hex(h: str) -> bool:
+    return bool(h) and all(c in _HEX for c in h)
+
+
+def _lit(cp: int) -> str:
+    """One code point as `re` source that means only itself, inside a class or outside one."""
+    c = chr(cp)
+    if c in _ASCII_WORD:
+        return c
+    return "\\u%04x" % cp if cp < 0x10000 else "\\U%08x" % cp
+
+
+def _js_escape(p: str, i: int, in_class: bool) -> Optional[Tuple[str, Any, int]]:
+    """The escape at `p[i]` (a backslash) as ECMAScript reads it with the `u` flag: `("char", code
+    point, next)`, `("set", re source, next)` or `("assert", re source, next)`. None for one this
+    writer does not translate, and for one ECMAScript rejects."""
+    c = p[i + 1:i + 2]
+    if c == "":
+        return None
+    if c in ("d", "D", "w", "W"):
+        return ("set", "\\" + c, i + 2)
+    if c == "s":
+        return ("set", _JS_SPACE if in_class else "[" + _JS_SPACE + "]", i + 2)
+    if c == "S":
+        return None if in_class else ("set", "[^" + _JS_SPACE + "]", i + 2)
+    if c == "b":
+        return ("char", 8, i + 2) if in_class else ("assert", "\\b", i + 2)
+    if c == "B":
+        return None if in_class else ("assert", "\\B", i + 2)
+    if c in _CONTROL:
+        return ("char", _CONTROL[c], i + 2)
+    if c == "0":
+        return None if p[i + 2:i + 3] in tuple("0123456789") else ("char", 0, i + 2)
+    if c == "x":
+        h = p[i + 2:i + 4]
+        return ("char", int(h, 16), i + 4) if len(h) == 2 and _is_hex(h) else None
+    if c == "u":
+        if p[i + 2:i + 3] == "{":
+            j = p.find("}", i + 3)
+            h = p[i + 3:j] if j != -1 else ""
+            if not _is_hex(h) or len(h) > 8:
+                return None
+            cp, nxt = int(h, 16), j + 1
+        else:
+            h = p[i + 2:i + 6]
+            if len(h) != 4 or not _is_hex(h):
+                return None
+            cp, nxt = int(h, 16), i + 6
+        # A surrogate escape is half of a pair in ECMAScript and a code point of its own here.
+        if cp > 0x10FFFF or 0xD800 <= cp <= 0xDFFF:
+            return None
+        return ("char", cp, nxt)
+    if c == "c":
+        letter = p[i + 2:i + 3]
+        return ("char", ord(letter) % 32, i + 3) if letter in _ASCII_LETTERS and letter else None
+    if c in _SYNTAX or (c == "-" and in_class):
+        return ("char", ord(c), i + 2)
+    return None
+
+
+def _js_class(p: str, i: int) -> Optional[Tuple[str, int]]:
+    """The character class at `p[i]` (a `[`) as `re` source, and the index after it."""
+    n = len(p)
+    j = i + 1
+    negated = p[j:j + 1] == "^"
+    if negated:
+        j += 1
+    out: List[str] = []
+
+    def atom(k: int) -> Optional[Tuple[str, Any, int]]:
+        if p[k] == "\\":
+            return _js_escape(p, k, True)
+        if 0xD800 <= ord(p[k]) <= 0xDFFF:
+            return None
+        return ("char", ord(p[k]), k + 1)
+
+    while True:
+        if j >= n:
+            return None
+        if p[j] == "]":
+            j += 1
+            break
+        a = atom(j)
+        if a is None:
+            return None
+        kind, payload, j = a
+        if p[j:j + 1] == "-" and j + 1 < n and p[j + 1] != "]":
+            b = atom(j + 1)
+            # ECMAScript with the `u` flag rejects a range whose end is a class, or out of order.
+            if b is None or kind != "char" or b[0] != "char" or b[1] < payload:
+                return None
+            out.append(_lit(payload) + "-" + _lit(b[1]))
+            j = b[2]
+        else:
+            out.append(_lit(payload) if kind == "char" else payload)
+    if not out:
+        return None  # `[]` matches nothing and `[^]` anything in ECMAScript; `re` reads neither so
+    return "[" + ("^" if negated else "") + "".join(out) + "]", j
+
+
+def _js_translate(p: str) -> Optional[str]:
+    r"""An ECMAScript pattern (read with the `u` flag, as JSON Schema says) as `re` source with the
+    same meaning, or None. Every construct is either translated on purpose or refused: nothing is
+    copied across on the hope that the two languages agree.
+
+    Translated: literals; `.` (anything but the four line terminators); `^` and `$` (the ends of
+    the input); `\d \D \w \W \b \B` (ASCII, with re.ASCII); `\s \S` (ECMAScript's set, spelled
+    out); `\t \n \r \f \v \0 \xHH \uHHHH \u{H…} \cX` and an escaped syntax character; classes with
+    ranges; groups `(…)` and `(?:…)`; lookahead; lookbehind, where `re` accepts it (fixed width);
+    `* + ? {n} {n,} {n,m}` and their lazy forms; `|`.
+
+    Refused: `\p{…}` and `\P{…}`; named groups and `\k<…>`; back-references; inline flags; `\S`
+    inside a class; the empty classes `[]` and `[^]`; a surrogate, escaped or not; and everything
+    ECMAScript itself rejects with the `u` flag, such as `\-` outside a class, a quantifier with
+    nothing to repeat, or a lone `{`, `}` or `]`."""
+    out: List[str] = []
+    stack: List[bool] = []  # one entry per open group: whether it is a lookaround
+    i, n, can_repeat = 0, len(p), False
+    while i < n:
+        c = p[i]
+        if 0xD800 <= ord(c) <= 0xDFFF:
+            return None
+        if c == "\\":
+            e = _js_escape(p, i, False)
+            if e is None:
+                return None
+            kind, payload, i = e
+            out.append(_lit(payload) if kind == "char" else payload)
+            can_repeat = kind != "assert"
+        elif c == "[":
+            cls = _js_class(p, i)
+            if cls is None:
+                return None
+            out.append(cls[0])
+            i, can_repeat = cls[1], True
+        elif c == "(":
+            head = next((h for h in ("(?:", "(?=", "(?!", "(?<=", "(?<!") if p.startswith(h, i)), None)
+            if head is None:
+                if p.startswith("(?", i):
+                    return None
+                head = "("
+            out.append(head)
+            stack.append(head not in ("(", "(?:"))
+            i, can_repeat = i + len(head), False
+        elif c == ")":
+            if not stack:
+                return None
+            out.append(")")
+            i, can_repeat = i + 1, not stack.pop()
+        elif c in ("|", "^", "$"):
+            out.append(r"\Z" if c == "$" else c)
+            i, can_repeat = i + 1, False
+        elif c == ".":
+            out.append(_JS_DOT)
+            i, can_repeat = i + 1, True
+        elif c in ("*", "+", "?", "{"):
+            if not can_repeat:
+                return None
+            if c == "{":
+                m = _JS_QUANTIFIER.match(p, i)
+                if m is None or (m.group(2) and int(m.group(2)) < int(m.group(1))):
+                    return None
+                out.append(m.group(0))
+                i = m.end()
+            else:
+                out.append(c)
+                i += 1
+            if p[i:i + 1] == "?":
+                out.append("?")
+                i += 1
+            can_repeat = False
+        elif c in ("}", "]"):
+            return None
+        else:
+            out.append(_lit(ord(c)))
+            i, can_repeat = i + 1, True
+    return None if stack else "".join(out)
 
 
 def _js_regex(pattern: str) -> Any:
-    """An ECMAScript pattern as Python's `re` reads it: `$` is the end of input, not the end before
-    a final newline, and `.` excludes the four ECMAScript line terminators. Escapes and character
-    classes are copied as written."""
+    """A schema's `pattern` compiled so that it matches what ECMAScript would match, or None when
+    this writer cannot do that (`_js_translate`), or `re` will not compile the translation. None
+    is "cannot evaluate", which `schema_subset_gap` reports; the engine's message, which quotes
+    the pattern, goes nowhere."""
     cached = _REGEX_CACHE.get(pattern)
     if cached is not None:
-        return cached
-    out: List[str] = []
-    i, in_class = 0, False
-    while i < len(pattern):
-        c = pattern[i]
-        if c == "\\" and i + 1 < len(pattern):
-            out.append(pattern[i:i + 2])
-            i += 2
-            continue
-        if in_class:
-            if c == "]":
-                in_class = False
-            out.append(c)
-        elif c == "[":
-            in_class = True
-            out.append(c)
-        elif c == "$":
-            out.append(r"\Z")
-        elif c == ".":
-            out.append("[^\n\r  ]")
-        else:
-            out.append(c)
-        i += 1
-    compiled = re.compile("".join(out), re.ASCII)
+        return cached or None
+    compiled: Any = False
+    try:
+        source = _js_translate(pattern)
+        if source is not None:
+            compiled = re.compile(source, re.ASCII)
+    except Exception:
+        compiled = False
     _REGEX_CACHE[pattern] = compiled
-    return compiled
+    return compiled or None
 
 
 def _validate(schema: Any, value: Any, path: str, errors: List[str]) -> None:
@@ -952,12 +1191,16 @@ def _validate(schema: Any, value: Any, path: str, errors: List[str]) -> None:
 
     if isinstance(value, str):
         n = len(value)
-        if isinstance(s.get("minLength"), int) and n < s["minLength"]:
+        if _is_count(s.get("minLength")) and n < s["minLength"]:
             _fail(errors, path, f"is shorter than {s['minLength']}")
-        if isinstance(s.get("maxLength"), int) and n > s["maxLength"]:
+        if _is_count(s.get("maxLength")) and n > s["maxLength"]:
             _fail(errors, path, f"is longer than {s['maxLength']}")
-        if isinstance(s.get("pattern"), str) and not _js_regex(s["pattern"]).search(value):
-            _fail(errors, path, f"does not match {s['pattern']}")
+        if isinstance(s.get("pattern"), str):
+            compiled = _js_regex(s["pattern"])
+            if compiled is None:
+                raise _Unsupported(_PATTERN_GAP)
+            if not compiled.search(value):
+                _fail(errors, path, f"does not match {s['pattern']}")
         if isinstance(s.get("format"), str):
             f = _FORMATS.get(s["format"])
             if f is None:
@@ -969,13 +1212,13 @@ def _validate(schema: Any, value: Any, path: str, errors: List[str]) -> None:
         for key, bad, word in (("minimum", lambda x, b: x < b, "below"), ("maximum", lambda x, b: x > b, "above"),
                                ("exclusiveMinimum", lambda x, b: x <= b, "not above"), ("exclusiveMaximum", lambda x, b: x >= b, "not below")):
             b = s.get(key)
-            if isinstance(b, (int, float)) and not isinstance(b, bool) and bad(value, b):
+            if _is_number(b) and bad(value, b):
                 _fail(errors, path, f"is {word} {b}")
 
     if isinstance(value, (list, tuple)):
-        if isinstance(s.get("minItems"), int) and len(value) < s["minItems"]:
+        if _is_count(s.get("minItems")) and len(value) < s["minItems"]:
             _fail(errors, path, f"has fewer than {s['minItems']} items")
-        if isinstance(s.get("maxItems"), int) and len(value) > s["maxItems"]:
+        if _is_count(s.get("maxItems")) and len(value) > s["maxItems"]:
             _fail(errors, path, f"has more than {s['maxItems']} items")
         if "items" in s:
             if isinstance(s["items"], list):
@@ -988,9 +1231,9 @@ def _validate(schema: Any, value: Any, path: str, errors: List[str]) -> None:
             for k in s["required"]:
                 if k not in value:
                     _fail(errors, path, f"is missing {k}", f"{path}/{_token(k)}")
-        if isinstance(s.get("minProperties"), int) and len(value) < s["minProperties"]:
+        if _is_count(s.get("minProperties")) and len(value) < s["minProperties"]:
             _fail(errors, path, f"has fewer than {s['minProperties']} properties")
-        if isinstance(s.get("maxProperties"), int) and len(value) > s["maxProperties"]:
+        if _is_count(s.get("maxProperties")) and len(value) > s["maxProperties"]:
             _fail(errors, path, f"has more than {s['maxProperties']} properties")
         props = s.get("properties") or {}
         ap = s.get("additionalProperties")

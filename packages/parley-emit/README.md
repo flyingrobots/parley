@@ -300,7 +300,23 @@ status 0, unchecked, which is how `"value":"[redacted]"` went out under a schema
 integer.
 
 The keywords the checker evaluates: `type`, `const`, `enum`, `required`, `properties`, `additionalProperties`, `items` (one schema, not a tuple), `minItems`, `maxItems`, `minLength`, `maxLength`, `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `minProperties`, `maxProperties`, `pattern`, `format` with the value `json-pointer`, `not`, `anyOf`, `allOf`, `oneOf`, `if`, `then`, `else`, and the annotations `$schema`, `$id`, `$anchor`, `$comment`, `title`, `description`, `examples`, `default`, `deprecated`, `readOnly`, `writeOnly`. Anything else, an empty `$defs` included, makes the
-whole document one the writer cannot evaluate.
+whole document one the writer cannot evaluate. So does a keyword whose value has the wrong shape
+(`enum` that is not a list, `required` that is not a list of strings, `properties` that is not an
+object, a `type` that is not a type name or a list of them, a length or size bound that is not a
+non-negative integer, a range bound that is not a number, `anyOf`, `allOf` or `oneOf` that is not
+a list, a subschema that is neither an object nor a boolean), and so does a `pattern` this writer
+will not answer for. A `pattern` is read as JSON Schema says, as an ECMAScript regular expression
+with the `u` flag, by the runtime's own engine. One the engine rejects with that flag (a stray `(`,
+or `\-` outside a class, which only the looser non-Unicode reading accepts) and one with an
+inline-flag group (`(?i)`, `(?i:…)`), which engines differ on, are not evaluated. In each case the
+answer is `redaction.schema_unchecked` and status 4; no engine message and no part of the schema
+is on the line.
+
+**The two writers can differ on which schemas they can evaluate.** The Python writer translates
+a pattern for Python's `re` and refuses what it cannot translate faithfully: `\p{…}`, a named
+group, a back-reference and a lookbehind that is not of fixed width are evaluated here and are
+`redaction.schema_unchecked` there. Where both evaluate a schema they give the same verdict, and
+an unevaluable schema is refused by the writer that cannot evaluate it, never guessed at.
 
 There are two remedies:
 

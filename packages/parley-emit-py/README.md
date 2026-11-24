@@ -325,8 +325,20 @@ beside the text in `errors`, implements the constructs the protocol's own schema
 `const`, `enum`, `required`, `properties`, `additionalProperties`, `items`, the length, size and
 range bounds, `pattern`, the `json-pointer` format, `not`, `anyOf`, `allOf`, `oneOf`,
 `if`/`then`/`else`) and **reports** a keyword it does not implement, walking the whole schema
-before any value, rather than ignoring it. Patterns are ECMAScript patterns read by Python's `re`:
-`$` is the end of input and `.` excludes the four ECMAScript line terminators, as in JSON Schema.
+before any value, rather than ignoring it. A keyword whose value has the wrong shape, such as
+`enum: 5`, is reported the same way, so the checker answers for any document and never raises.
+
+A `pattern` is an ECMAScript regular expression (JSON Schema reads it with the `u` flag), and
+Python's `re` is a different language, so the checker translates a pattern construct by construct
+and reports as unsupported whatever it does not translate. Translated, with ECMAScript's meaning:
+literals; `.` (anything but the four line terminators); `^` and `$` (the ends of the input); `\d`,
+`\w`, `\b` and their negations (ASCII); `\s` and `\S` (ECMAScript's set, which is neither of
+Python's); `\t \n \r \f \v \0 \xHH \uHHHH \u{H…} \cX` and an escaped syntax character; classes
+with ranges; `(…)` and `(?:…)`; lookahead; lookbehind of fixed width; `* + ? {n} {n,} {n,m}` and
+their lazy forms; `|`. Reported as unsupported: `\p{…}` and `\P{…}`; named groups and `\k<…>`;
+back-references; a lookbehind `re` rejects; inline flags; `\S` inside a class; the empty classes
+`[]` and `[^]`; a surrogate; and anything ECMAScript itself rejects with the `u` flag. The
+engine's message is never reported.
 The suite checks it agrees with ajv on more than seven hundred samples of eleven of the
 schemas and their single-field mutations, and that every embedded schema is inside the subset.
 
@@ -385,7 +397,20 @@ status 0, unchecked, which is how `"value":"[redacted]"` went out under a schema
 integer.
 
 The keywords the checker evaluates: `type`, `const`, `enum`, `required`, `properties`, `additionalProperties`, `items` (one schema, not a tuple), `minItems`, `maxItems`, `minLength`, `maxLength`, `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `minProperties`, `maxProperties`, `pattern`, `format` with the value `json-pointer`, `not`, `anyOf`, `allOf`, `oneOf`, `if`, `then`, `else`, and the annotations `$schema`, `$id`, `$anchor`, `$comment`, `title`, `description`, `examples`, `default`, `deprecated`, `readOnly`, `writeOnly`. Anything else, an empty `$defs` included, makes the
-whole document one the writer cannot evaluate.
+whole document one the writer cannot evaluate. So does a keyword whose value has the wrong shape
+(`enum` that is not a list, `required` that is not a list of strings, `properties` that is not an
+object, a `type` that is not a type name or a list of them, a length or size bound that is not a
+non-negative integer, a range bound that is not a number, `anyOf`, `allOf` or `oneOf` that is not
+a list, a subschema that is neither an object nor a boolean), and so does a `pattern` this writer
+will not answer for ([The bounded checker](#the-bounded-checker) lists which). In each case the answer is
+`redaction.schema_unchecked` and status 4; no engine message and no part of the schema is on the
+line.
+
+**The two writers can differ on which schemas they can evaluate.** The TypeScript writer hands a
+pattern to its runtime's ECMAScript engine, so `\p{Lu}`, a named group, a back-reference and a
+lookbehind of any width are evaluated there and are `redaction.schema_unchecked` here. Where both
+evaluate a schema they give the same verdict, and an unevaluable schema is refused by the writer
+that cannot evaluate it, never guessed at.
 
 There are two remedies:
 
@@ -435,6 +460,11 @@ What it omits:
 
 Where it does something different:
 
+- **Which schemas the bounded checker can evaluate.** A `pattern` is ECMAScript; the TypeScript
+  writer hands it to its runtime's engine and this one translates it for `re`, refusing what it
+  cannot translate faithfully ([The bounded checker](#the-bounded-checker)). So a schema with
+  `\\p{Lu}`, a named group, a back-reference or a lookbehind of any width is checked there and is
+  `redaction.schema_unchecked` here. Where both evaluate a schema they give the same verdict.
 - **Capture is of `sys.stdout` and `sys.stderr`**, not of `console`; the limits above are this
   language's. The TypeScript writer captures `console` and cannot contain a direct descriptor write
   either.

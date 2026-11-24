@@ -62,6 +62,27 @@ The writer stamps neither message, so no emitted line changes. `--vendor-info` r
   same way and a record of a type declared with no `schema` document, which spec §5.3 exempts,
   are written as before. Writer-built records are never checked.
 - `run.error` marks the run as having reported an error once the line is out, not before.
+- **A schema the checker cannot evaluate is `redaction.schema_unchecked`, whatever makes it
+  unevaluable** (spec §5.3). The rule above held for a keyword outside the subset. A `pattern`
+  Python's `re` could not compile, such as `^\p{Lu}`, or a keyword whose value had the wrong
+  shape (`enum: 5`), raised out of `check_record` instead: the run ended with
+  `uncaught.exception` and status 2, and the error line carried the engine's message, which
+  quotes the pattern. Now each is the checker's `unsupported` result, a redacted record under
+  such a schema is withheld with status 4, a record the scrub did not change is written as
+  before, and no engine message is reported anywhere. `check_record`, `schema_subset_gap` and
+  `validate_line` no longer raise for any schema document.
+- **A `pattern` is translated for `re`, not handed to it.** Patterns were copied across with two
+  adjustments, so a pattern both languages accept and read differently was answered with
+  Python's reading: `\s` (ECMAScript's set includes U+00A0 and U+FEFF and Python's ASCII set does
+  not), `(?i)…` (not ECMAScript at all, and accepted), `a{,3}`. The checker now translates each
+  construct on purpose and reports the rest as unsupported: `\p{…}`, named groups,
+  back-references, a lookbehind `re` rejects, inline flags, `\S` inside a class, `[]` and `[^]`,
+  a surrogate, and anything ECMAScript rejects with the `u` flag. The README lists both sets. An
+  integer-valued bound written as `3.0` is now applied; it used to be ignored.
+- The two writers can differ on which schemas they can evaluate, and each refuses what it cannot.
+  The TypeScript writer evaluates `\p{Lu}`, a named group, a back-reference and a lookbehind of
+  any width with its runtime's engine. Where both evaluate a schema they give the same verdict; a
+  test compares them over 96 patterns and 51 malformed or well-formed keywords.
 - **A `.parley/.gitignore` negation the writer cannot evaluate exactly counts as one that
   matches** (spec §5.2). The check for a negation that can re-include `receipts/` read a bracket
   expression holding a POSIX class, such as `![[:alpha:]]eceipts`, as a different pattern, and compared a line holding a NUL byte whole where git

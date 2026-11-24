@@ -1098,7 +1098,7 @@ class TestSchemaNeverEscapes(unittest.TestCase):
         # says it cannot evaluate the schema rather than answer with another language's reading.
         refused = ["\\p{L}+", "\\P{Lu}", "(?<=a+)b", "(?<year>[0-9]{4})", "(a)\\1", "\\k<n>", "[^]", "[]", "[\\S]", "a{,3}", "a**", "a*+", "a{2}{3}",
                    "(?=a)+", "\\-", "\\a", "\\Z", "\\A", "\\z", "(?#c)", "(?P<n>a)", "(?i)a", "(?s:a)", "(?-i:a)", "a{2", "a}", "a]", "\\07", "\\x4", "\\u12",
-                   "\\ud83d\\ude00", "\\u{110000}", "[z-a]", "[\\d-x]", "(", "a)", "*a", "a|*", "^*", "\\c1", "(?<!a*)b", "\\"]
+                   "\\ud83d\\ude00", "\\u{110000}", "[z-a]", "[a--b]", "[\\d-x]", "(", "a)", "*a", "a|*", "^*", "\\c1", "(?<!a*)b", "\\"]
         for p in refused:
             with self.subTest(p):
                 with warnings.catch_warnings():
@@ -1119,7 +1119,7 @@ class TestSchemaNeverEscapes(unittest.TestCase):
             ("^[\\b]$", "\x08", True), ("\\bfoo\\b", "a foo b", True), ("^\\0$", "\x00", True), ("^a{2,3}?$", "aaa", True), ("^a{2,}$", "a", False),
             ("^(?:a|b)+?c$", "abac", True), ("^(?!/)(?!.*(^|/)\\.\\.(/|$)).+$", "a/../b", False), ("^(?!/)(?!.*(^|/)\\.\\.(/|$)).+$", "a/b", True),
             ("(?<=a)b", "ab", True), ("(?<!a)b", "ab", False), ("^[a-z]{3}-[0-9]+$", "abc-12", True), ("^#$", "#", True), ("^ $", " ", True),
-            ("^[-a]$", "-", True), ("^[a-]$", "-", True), ("^[&&]$", "&", True), ("^[a~~b]$", "~", True), ("^[a||b]$", "|", True), ("^[a--b]$", "-", True),
+            ("^[-a]$", "-", True), ("^[a-]$", "-", True), ("^[&&]$", "&", True), ("^[a~~b]$", "~", True), ("^[a||b]$", "|", True), ("^[+--]$", ",", True),
         ]
         for p, value, expected in cases:
             with self.subTest(p=p, value=value):

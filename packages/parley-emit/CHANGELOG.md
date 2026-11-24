@@ -63,6 +63,23 @@ The writer stamps neither message, so no emitted line changes.
   never checked: their scalars are not scrubbed and their identity fields are skipped.
 - `run.error` marks the run as having reported an error once the line is out, not before, so an
   error the writer refused does not count as reported.
+- **A schema the checker cannot evaluate is `redaction.schema_unchecked`, whatever makes it
+  unevaluable** (spec §5.3). The rule above held for a keyword outside the subset. A `pattern`
+  the engine could not compile, or a keyword whose value had the wrong shape (`enum: 5`), threw
+  out of `checkRecord` instead, and the run ended with `uncaught.exception` and status 2. Now
+  each is the checker's `unsupported` result: a keyword whose value has the wrong shape; a
+  `pattern` the runtime rejects as ECMAScript with the `u` flag; and a `pattern` with an
+  inline-flag group (`(?i)`, `(?i:…)`), which engines differ on. A redacted record under such a
+  schema is withheld with status 4, a record the scrub did not change is written as before, and
+  a history projection under one is `history.transform_uncheckable`. `checkRecord` no longer
+  throws for any schema document. **Changed with it:** a pattern is compiled with the `u` flag
+  only, as JSON Schema reads it; one that compiled only without it, such as `\-` outside a
+  class, used to be evaluated and is now unevaluable.
+- The two writers can differ on which schemas they can evaluate, and each refuses what it cannot.
+  This writer evaluates `\p{Lu}`, a named group, a back-reference and a lookbehind of any width,
+  which the Python writer reports as `redaction.schema_unchecked`. Where both evaluate a schema
+  they give the same verdict; a test compares them over 96 patterns and 51 malformed or
+  well-formed keywords.
 - **A `.parley/.gitignore` negation the writer cannot evaluate exactly counts as one that
   matches** (spec §5.2). The check for a negation that can re-include `receipts/` read a bracket
   expression holding a POSIX class, such as `![[:alpha:]]eceipts`, as a different pattern, read

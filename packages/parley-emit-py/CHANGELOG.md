@@ -10,6 +10,36 @@ release's digest is recorded on its GitHub release (tag `parley-emit-py-vX.Y.Z`)
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-11-24
+
+A declared file input can be read through the run, so the receipt records the bytes the tool read
+(flyingrobots/parley#132). The schemas it embeds and the `--vendor-info` line's shape are
+unchanged. **The file's digest moves with the file, so a tool that vendors it copies the new file
+and re-pins the copy by the SHA-256 that `--vendor-info` prints.**
+
+### Added
+
+- **`run.read_input(path)`**. It reads a declared file input, returns its `bytes`, and records
+  those bytes for the input. `receipt.inputs` and `inv` then describe what the tool consumed,
+  whatever the file holds when the run ends. The path is resolved as the declaration is, against
+  the run's `cwd` when relative. A file that cannot be read is recorded as `run.input_unreadable`
+  records it, and the `OSError` is raised. It raises `ValueError` for a path that is not a
+  declared input, for a `stdin` or `tree` input, and after the inputs are settled.
+
+### Changed
+
+- The README and the living reference present `run.read_input` as the way to read a declared file
+  input, with a captured run of a tool that edits its input in place.
+
+### Fixed
+
+- A tool that reads a declared file and then rewrites it had no single step that recorded the
+  bytes it read: the writer digested the file when the handler finished, so the receipt and `inv`
+  described the rewritten file. `run.read_input` is that step. **The default path is unchanged**:
+  a declared file the tool does not read through the writer, and does not supply with `run.input`,
+  is still digested when the inputs are finalised, and can describe bytes the tool did not read.
+  The documentation now says so. A tool gets the fix by calling `run.read_input`.
+
 ## [0.1.2] — 2026-11-22
 
 Retention's rule for a receipt that may still be being written is now the spec's (spec section

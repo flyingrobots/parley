@@ -152,13 +152,84 @@ which is why a redacted receipt is never replayed (spec §2.3).
 `{ path, role?, exclude? }`; it may be async. A relative path is resolved against the initial
 working directory; an absolute path stands, and enters the `inv` preimage as given, so prefer
 relative paths and never a temporary one. Roles: a file (default), `tree` for a directory,
-`stdin` for bytes the handler supplies with `run.input("-", bytes)`. An input the writer cannot
-read is recorded with `error: input.unreadable`; a stdin input never supplied is `input.unread`.
-Either omits `inv`. When the handler itself fails to read a declared input, it calls
-`run.inputUnreadable(path)` (optionally with its own code), so the writer records the input as
-unread instead of reading the path at finalisation and digesting bytes the program never saw
-(spec §2.2, flyingrobots/parley#110). It throws for a path that is not a declared input, and
-after the inputs are settled.
+`stdin` for bytes the handler supplies with `run.input("-", bytes)`.
+
+### Read a declared file with `run.readInput`
+
+`run.readInput(path)` reads a declared file, returns its bytes as a `Buffer`, and records the
+digest of exactly those bytes. Reading and recording are one step, so the receipt's digest for
+that input is of what the tool consumed, whatever happens to the file afterwards. **This is the
+way to read a declared file input.** `path` is the declared path, resolved as the declaration is:
+against the run's `cwd` when relative.
+
+A tool that edits a file in place, declared as its input:
+
+```ts
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { defineTool, main } from "@flyingrobots/parley-emit";
+
+const tool = defineTool({
+  name: "upcase", version: "0.1.0",
+  commands: {
+    file: {
+      intent: "Rewrite a file in upper case, in place",
+      effects: { reads: ["<file>"], writes: ["<file>"], network: false, idempotent: true },
+      secrets: [],
+      emits: [],
+    },
+  },
+  retention: { count: 50 },
+});
+
+const status = await main(tool, ["upcase", ...process.argv.slice(2)], (run, args) => {
+  const path = args[0]!;
+  const before = run.readInput(path).toString("utf8"); // read and recorded in one step
+  writeFileSync(join(run.cwd, path), before.toUpperCase()); // the file no longer holds what was read
+  run.step(`rewrote ${path} in upper case`, "the receipt records the bytes read, not the bytes written", { bytes: before.length });
+}, {
+  resolved: (args, command) => ({ command, file: args[0] }),
+  inputs: (args) => [{ path: args[0]! }],
+});
+process.exit(status);
+```
+
+Captured from that program run as `upcase file input.txt` on 2026-11-24, in a directory whose
+`input.txt` held the six bytes `before`. Afterwards the file held `BEFORE`, the exit status was 0,
+and the receipt's `receipt.inputs` line was:
+
+```jsonl
+{"event":"receipt.inputs","t":1795528119743,"seq":3,"run":"01M86X1NDVF3YERXCQC6RS4TZZ","inputs":[{"path":"input.txt","sha256":"6db7d803e74f1ffa7d8f5adc0bf95b3e15bf4c8373fffadf546227cc6c6742cb"}],"inv":"14084fa18df646f47e9511399468cb1d043d792a4f943c46b2a37f233d8fed4e","_schema":{"id":"parley.receipt.inputs","version":"1.0.0"}}
+```
+
+`6db7d803…` is the SHA-256 of `before`, the bytes read. The SHA-256 of `BEFORE`, the bytes left on
+disk, is `c341c7fe…`, and it appears nowhere in the receipt.
+
+**An input not read through the writer is digested when the handler finishes.** A declared file
+the tool opens itself, with `readFileSync` or anything else, is read again by the writer at
+finalisation (`run.finaliseInputs()`, or `end`), and the digest recorded is of the file as it is
+at that moment. If the tool rewrote the file, or anything else changed it during the run, the
+receipt and `inv` describe bytes the tool did not read, and the run still exits 0. The writer does
+not warn about this. A tool that already holds the bytes of a declared file can record them with
+`run.input(path, bytes)` instead; `readInput` is that, with the read included.
+
+When the file cannot be read, `readInput` records the input with `error: input.unreadable`, as
+`run.inputUnreadable` does, and throws the file system's error to the caller. It throws
+`TypeError` for a path that is not a declared input, for a `stdin` input (supply it with
+`run.input`) or a `tree` input (the writer digests a tree itself, at finalisation), and after the
+inputs are settled. The last of `readInput`, `input` and `inputUnreadable` for a path is the
+record.
+
+### Unreadable inputs
+
+An input the writer cannot read is recorded with `error: input.unreadable`; a stdin input never
+supplied is `input.unread`. Either omits `inv`. When the handler itself fails to read a declared
+input by its own means, it calls `run.inputUnreadable(path)` (optionally with its own code), so
+the writer records the input as unread instead of reading the path at finalisation and digesting
+bytes the program never saw (spec §2.2, flyingrobots/parley#110). It throws for a path that is
+not a declared input, and after the inputs are settled.
+
+### Trees
 
 A `tree` must not contain a credential source (spec §2.2: its bytes must not reach `inv` through
 a directory digest). Name such files in `exclude`, as relative paths under the tree; if you cannot

@@ -531,3 +531,17 @@ describe("the gate's output (flyingrobots/parley#147)", () => {
     expect(existsSync(join(REPO, "scripts/release-report.schema.json"))).toBe(true);
   });
 });
+
+// The Python release workflow runs the file's own tests before the gate, and Python writes
+// bytecode beside what it imports. Found by the first dry run on a runner (2026-11-24): the gate
+// refused with gate.dirty_tree for two __pycache__ directories. The repository ignores them, so
+// running the tests leaves the tree clean wherever git's own configuration does not.
+describe("GATE-11 the tree stays clean after the Python tests", () => {
+  test("git ignores Python bytecode under the Python writer's package, by the repository's own rules", () => {
+    for (const path of ["packages/parley-emit-py/__pycache__/parley_emit.cpython-312.pyc", "packages/parley-emit-py/tests/__pycache__/x.pyc"]) {
+      // -c core.excludesFile= : the answer must come from the repository, not from this machine.
+      const r = Bun.spawnSync(["git", "-c", "core.excludesFile=", "check-ignore", "-q", "--no-index", path]);
+      expect(r.exitCode, `${path} is not ignored by the repository's .gitignore`).toBe(0);
+    }
+  });
+});

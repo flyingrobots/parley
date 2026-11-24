@@ -6,3 +6,5 @@ dist/
 .env.*
 !.env.example
 .parley/
+__pycache__/
+*.pyc

@@ -852,6 +852,10 @@ class TestRedactionUnchecked(unittest.TestCase):
         self.assertIn("t.count@1.0.0", e["problem"])
         for p in redacted:
             self.assertIn(p, e["problem"])
+        # The code means "not checked": the line says so, and never calls it a conflict.
+        self.assertIn("could not be checked", e["problem"])
+        self.assertNotIn("conflict", self.said(e))
+        self.assertIn("not shown to be invalid", e["remedy"])
         self.assertEqual([(x["seq"], x["code"]) for x in o.receipt_lines if x["event"] == "error"], [(e["seq"], "redaction.schema_unchecked")])
         self.assertEqual((o.receipt_lines[-1]["event"], o.receipt_lines[-1]["status"]), ("end", 4))
         self.assert_gapless(o)
@@ -907,11 +911,27 @@ class TestRedactionUnchecked(unittest.TestCase):
         self.assertNotIn(UNCHECKED_SECRET, o.everything)
         self.assert_gapless(o)
 
-    def test_a_redaction_in_a_free_string_is_withheld_too(self):
+    FREE = {"type": "object", "properties": {"note": {"type": "string"}, "when": {"type": "string", "format": "date-time"}}}
+
+    def test_the_surprising_case_a_secret_in_an_unconstrained_string_is_withheld_under_an_unevaluable_schema(self):
         d, _, env = scratch_free(UNCHECKED_SECRET)
-        schema = {"type": "object", "properties": {"note": {"type": "string"}, "when": {"type": "string", "format": "date-time"}}}
-        o = run_count(d, env, ["count", "--token", UNCHECKED_SECRET], lambda run: run.result({"event": "result", "note": "saw " + UNCHECKED_SECRET}, T_COUNT), unchecked_tool(schema))
+        # Without the unevaluable property the redacted record is valid: the refusal is "not
+        # checked", not "invalid".
+        evaluable = {"type": "object", "properties": {"note": {"type": "string"}}}
+        self.assertTrue(pe.check_record({"event": "result", "note": "saw [redacted]"}, evaluable).ok)
+        self.assertEqual(pe.schema_subset_gap(self.FREE), "format date-time")
+        o = run_count(d, env, ["count", "--token", UNCHECKED_SECRET], lambda run: run.result({"event": "result", "note": "saw " + UNCHECKED_SECRET}, T_COUNT), unchecked_tool(self.FREE))
         self.assert_withheld(o, ["/note"])
+
+    def test_an_unevaluable_schema_where_the_scrub_replaced_nothing_is_written_with_status_0(self):
+        d, _, env = scratch_free(UNCHECKED_SECRET)
+        o = run_count(d, env, ["count", "--token", UNCHECKED_SECRET], lambda run: run.result({"event": "result", "note": "saw nothing", "when": "2026-11-24T00:00:00Z"}, T_COUNT), unchecked_tool(self.FREE))
+        self.assertEqual(o.status, 0)
+        self.assertEqual(o.stderr.objs, [])
+        self.assertEqual([x["note"] for x in o.stdout.objs if x["event"] == "result"], ["saw nothing"])
+        self.assertEqual(len([x for x in o.receipt_lines if x["event"] == "result"]), 1)
+        self.assertEqual((o.receipt_lines[-1]["event"], o.receipt_lines[-1]["status"]), ("end", 0))
+        self.assert_gapless(o)
 
     def test_with_receipt_extra_neither_copy_is_written_whichever_copy_the_secret_is_in(self):
         schema = UNEVALUABLE["multiple_of"][0]

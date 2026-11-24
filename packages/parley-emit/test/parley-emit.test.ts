@@ -2579,6 +2579,10 @@ describe("PE-30 a record redaction changed under a schema the writer cannot eval
     expect(e.detail).toEqual({ schema: PAIR, redacted });
     expect(e.problem).toContain("t.count@1.0.0");
     for (const p of redacted) expect(e.problem).toContain(p);
+    // The code means "not checked": the line says so, and never calls it a conflict.
+    expect(e.problem).toContain("could not be checked");
+    expect(said(e)).not.toContain("conflict");
+    expect(e.remedy).toContain("not shown to be invalid");
     expect(r.receiptLines.filter((o) => o.event === "error").map((o) => [o.seq, o.code])).toEqual([[e.seq, "redaction.schema_unchecked"]]);
     expect(r.receiptLines.at(-1)).toMatchObject({ event: "end", status: 4 });
     expectGapless(r);
@@ -2630,11 +2634,28 @@ describe("PE-30 a record redaction changed under a schema the writer cannot eval
     expect(r.violations).toEqual([]);
   });
 
-  test("a redaction in a free string is withheld too: the writer cannot show the record is valid", async () => {
+  test("the surprising case: a secret inside an unconstrained string, where the redacted record would still be valid, is withheld under an unevaluable schema", async () => {
     const { dir, env } = scratch(SECRET);
     const schema = { type: "object", properties: { note: { type: "string" }, when: { type: "string", format: "date-time" } } };
+    // A full validator accepts the redacted record: the refusal is "not checked", not "invalid".
+    const ajv = new Ajv2020({ strict: false }); addFormats(ajv);
+    expect(ajv.validate(schema, { event: "result", note: "saw [redacted]" })).toBe(true);
+    expect(schemaSubsetGap(schema)).toBe("format date-time");
     const r = await runCount(dir, env, ["count", "--token", SECRET], (run) => { run.result({ event: "result", note: `saw ${SECRET}` }, PAIR); }, over(schema));
     expectWithheld(r, ["/note"]);
+  });
+
+  test("an unevaluable schema where the scrub replaced nothing: the record is written and the run ends with status 0", async () => {
+    const { dir, env } = scratch(SECRET);
+    const schema = { type: "object", properties: { note: { type: "string" }, when: { type: "string", format: "date-time" } } };
+    const r = await runCount(dir, env, ["count", "--token", SECRET], (run) => { run.result({ event: "result", note: "saw nothing", when: "2026-11-24T00:00:00Z" }, PAIR); }, over(schema));
+    expect(r.status).toBe(0);
+    expect(r.stderr.objs).toEqual([]);
+    expect(r.stdout.objs.filter((o) => o.event === "result").map((o) => o.note)).toEqual(["saw nothing"]);
+    expect(r.receiptLines.filter((o) => o.event === "result").length).toBe(1);
+    expect(r.receiptLines.at(-1)).toMatchObject({ event: "end", status: 0 });
+    expectGapless(r);
+    expect(r.violations).toEqual([]);
   });
 
   test("with receiptExtra, neither copy is written, whichever copy the secret is in", async () => {

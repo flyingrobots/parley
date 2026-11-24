@@ -607,6 +607,8 @@ describe("release eligibility: output and the real tree (flyingrobots/parley#145
     }
   }, SLOW);
 
+  // This case reads the lines the cases above produced, so it is meaningful only in a whole-file
+  // run: building every refusal a second time here would double the file's cost.
   test("RLC-22: every line the checker emitted in these cases validates against its own schema", () => {
     const validate = new Ajv2020({ strict: false, allErrors: true }).compile(schema());
     expect(everyLine.length).toBeGreaterThan(100);

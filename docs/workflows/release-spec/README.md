@@ -141,7 +141,7 @@ artifact matches them; the comparison that catches an edited snapshot was made e
 `bun test` on each pull request against the commit it forked from. To repeat that comparison over
 a longer span, run `development` or `candidate` with `--base` naming an earlier ref, such as a
 release tag. `publication` with an old `--base` asks whether the releases existed at that ref, and
-refuses the ones made since.
+refuses the ones made since, so it cannot make that comparison itself (flyingrobots/parley#153).
 
 `candidate` and `publication` refuse to run without a baseline; `development` says the baseline is
 unresolved and reports no package eligible. A shallow clone has no merge base, which is why the

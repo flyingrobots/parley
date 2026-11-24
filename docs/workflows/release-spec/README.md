@@ -44,8 +44,8 @@ bun run release-check --phase publication --frozen-since <the previous release t
 
 `bun test` runs `development` on this repository every time (`scripts/release-check.test.ts`,
 case RLC-18), so an inconsistent source fails the ordinary gate and the eligibility report is
-always computed. The release workflows do not call the checker yet; that is
-flyingrobots/parley#147.
+always computed. The release workflows call it through [the release gate](#the-release-gate),
+on the artifact they are about to release.
 
 | Flag | Meaning |
 | --- | --- |
@@ -169,7 +169,8 @@ The reference must resolve (`frozen_since.unresolved`) and must be an ancestor o
 (`frozen_since.not_ancestor`): agreement with a commit that is not an earlier state of the history
 being released would establish nothing. There is no default, because nothing in this repository
 names the previous spec release by a tag. Whoever runs `publication` on the default branch names
-it: the previous release tag of the package being released is the natural choice. Without the
+it. [The release gate](#the-release-gate) does, with the previous release tag of the package being
+released. Without the
 flag, `publication` on the default branch establishes that the releases are accepted and that the
 artifact matches them, and the comparison that catches an edited snapshot is the one `bun test`
 made on each pull request against the commit it forked from, which holds only if that check was
@@ -221,6 +222,107 @@ references:
 {"event":"release.baseline","phase":"publication","base":"merge-base(HEAD, origin/main)","commit":"29e95b91b5e02c7654ea4422f127a33310485777","resolved":true,"snapshots":17,"frozen_since":"parley-read-v0.1.1","frozen_since_commit":"1a7b74c29182bc3eb65c15dc74996d79777de88f","frozen_since_snapshots":17,"_schema":{"id":"parley.tooling.release_check","version":"1.1.0"}}
 ```
 
+## The release gate
+
+`scripts/release-gate.ts` asks the checker's `publication` question of one package at the current
+commit, on the artifact that would be released, before anything public exists:
+
+```text
+bun run release-gate -- parley-emit
+bun run release-gate -- parley-read
+bun run release-gate -- parley-emit-py
+bun run release-gate -- parley-read --tag parley-read-v0.2.1 --out <dir> --consumer
+```
+
+It has two callers. The person tagging runs it on `main` at the merge commit and **pushes the tag
+only after it exits `0`**, because a pushed tag cannot be taken back. Each release workflow runs it
+as its `gate` job, and every job that creates a GitHub release or stages on npm needs that job
+([parley-emit](../release-parley-emit/README.md), [parley-read](../release-parley-read/README.md),
+[parley-emit-py](../release-parley-emit-py/README.md)).
+
+| Flag | Meaning |
+| --- | --- |
+| `<package>` | Required: a directory under `packages/`, or the package's published name |
+| `--tag TAG` | The tag being released; it must be `<directory>-v<version>` |
+| `--out DIR` | Leave the artifact, `SHA256SUMS` and `release-report.json` in this directory |
+| `--artifact FILE` | Judge this file in place of building one |
+| `--frozen-since REF` | Use this reference in place of the derived one |
+| `--consumer` | After everything else passes, prove the packed package against the packages here it depends on, as npm serves them ([the clean consumer](../release-parley-read/README.md#the-clean-consumer)) |
+| `--repo DIR` | The repository. Default: the working directory |
+| `--human` | Prose in place of JSON Lines |
+| `--help` | One `gate.help` line |
+
+Exit status is `0` when the artifact may be released, `1` when anything is refused, and `2` when
+the gate could not run (a usage error, a `--repo` that is not a git repository, a pack that
+failed).
+
+### What it does
+
+1. **Builds the artifact once.** For an npm package, `npm pack` into `--out` (or a temporary
+   directory); for `parley_emit.py`, the file itself. Every later statement is about that file.
+2. **Derives the frozen-since reference**: the highest tag `<directory>-vX.Y.Z` below the version
+   being released that is an ancestor of `HEAD`. Versions are compared as numbers, and a tag off
+   this history, a pre-release tag, the tag of the version being released and another package's
+   tags are not candidates. That is the package's previous release, read from the tags the release
+   workflows are triggered by. A package with no earlier release has none, and the gate says so
+   (`how: "none"`) rather than inventing one; released snapshots are then compared with the
+   baseline alone.
+3. **Runs `release-check --phase publication --artifact <the file> --frozen-since <that tag>`**
+   and passes its lines through, under the checker's own stamp.
+4. **Checks what the checker does not**:
+
+   | Condition | Refusal |
+   | --- | --- |
+   | `--tag` is not this package's tag for this version | `gate.tag_mismatch` |
+   | The package's `CHANGELOG.md` has no dated heading for the version | `gate.changelog_heading_missing` |
+   | `HEAD` is not on `origin/main` | `gate.not_on_default_branch` |
+   | The working tree differs from `HEAD` | `gate.dirty_tree` |
+   | The artifact is another package's, or another version's | `gate.artifact_mismatch` |
+   | The `package.json` inside the tarball is not the repository's, as a JSON value | `gate.manifest_differs` |
+   | The tarball's manifest has a `workspace:` dependency range | `gate.workspace_range` |
+   | With `--consumer`, the clean consumer refused | its `consumer.*` code |
+
+5. **Writes the release report**, with `--out`, whatever the verdict.
+
+Its own lines are stamped `parley.tooling.release_gate` 1.0.0 (`scripts/release-gate.schema.json`):
+`gate.artifact`, `gate.frozen_since`, `gate.refusal`, `gate.consumer`, `gate.result`, `gate.help`,
+and `error` on stderr. `gate.result` is the last line: `passed`, the artifact's SHA-256, and the
+`blocking` schema identities.
+
+Captured from `bun run scripts/release-gate.ts parley-emit-py` on `main` at commit `29e95b9`, when
+`parley.query` 1.1.0 and `parley.lens` 1.1.0 were drafts; it exited `1`. The first two lines and
+the last, of eight:
+
+```jsonl illustrative
+{"event":"gate.artifact","package":"@flyingrobots/parley-emit-py","version":"0.3.0","file":"parley_emit.py","path":"/Users/james/git/parley/packages/parley-emit-py/parley_emit.py","sha256":"955f0551cb30213236750960c749df2e2da4f756e8d8069219e44c3fa461ffcb","packed":false,"_schema":{"id":"parley.tooling.release_gate","version":"1.0.0"}}
+{"event":"gate.frozen_since","ref":"parley-emit-py-v0.2.0","commit":"b64b48276e98230a5a3affe384de66ea870e57be","how":"derived","note":"the highest parley-emit-py-vX.Y.Z tag below 0.3.0 that is an ancestor of HEAD","_schema":{"id":"parley.tooling.release_gate","version":"1.0.0"}}
+{"event":"gate.result","package":"@flyingrobots/parley-emit-py","version":"0.3.0","passed":false,"file":"parley_emit.py","sha256":"955f0551cb30213236750960c749df2e2da4f756e8d8069219e44c3fa461ffcb","blocking":[{"id":"parley.lens","version":"1.1.0","code":"schema.unreleased"},{"id":"parley.query","version":"1.1.0","code":"schema.unreleased"}],"refusals":2,"report":null,"_schema":{"id":"parley.tooling.release_gate","version":"1.0.0"}}
+```
+
+The same run for `parley-emit` and `parley-read` exited `1` with the same two blocking identities.
+
+### The release report
+
+One JSON document, `release-report.json`, stamped `parley.tooling.release_report` 1.0.0
+(`scripts/release-report.schema.json`). It is written beside the artifact and attached to the
+GitHub release; it is never inside the artifact it describes.
+
+| Field | Says |
+| --- | --- |
+| `package` | Name, version and directory |
+| `tag` | The tag the release was started by; null when the gate ran before a tag existed |
+| `source` | The commit and its tree, whether the commit is on the default branch, and whether the working tree was clean |
+| `spec_release` | The latest dated heading of the root `CHANGELOG.md` at the commit: version and date |
+| `schema_source` | The commit the artifact's bundled schemas were copied from, as the artifact states it |
+| `schemas` | Every schema the artifact bundles: the pair, whether the artifact's code stamps it, its snapshot path, the SHA-256 of that snapshot file (null for a draft) and the release that names it |
+| `artifact` | File name, size, SHA-256, SHA-1 (what npm prints as `shasum`), `integrity` (what a lockfile records), and every file inside by digest |
+| `gate` | The phase, the verdict, the checker's schema version, both references with their commits, how the frozen-since reference was chosen, and every refusal |
+| `consumer` | With `--consumer`: the directory, the reader as installed, the dependency's exact version, resolution and integrity, and the smoke read's counts; otherwise null |
+
+It does not carry a stage id. The job that stages on npm authenticates by OIDC, and that token
+cannot list or view what it staged, so the id is read by the owner with `npm stage list`
+([what the owner approves](../release-parley-emit/README.md#what-the-owner-approves)).
+
 ## Releasing schema versions: two commits and a merge commit
 
 A package may be released as stable only after every schema it carries is released. Releasing
@@ -255,7 +357,9 @@ schema versions is one pull request with two commits, in this order.
    id, so the pins name a commit that is not on the branch either.
 5. **After the merge**, `bun run release-check --phase publication` passes on the default branch,
    and the steps in [`RELEASE.md`](../../../RELEASE.md) apply. A package version that carries the
-   newly released schemas is then released by its own workflow
-   ([parley-emit](../release-parley-emit/README.md), [parley-read](../release-parley-read/README.md)).
+   newly released schemas is then released by its own workflow, once its
+   [release gate](#the-release-gate) exits `0`
+   ([parley-emit](../release-parley-emit/README.md), [parley-read](../release-parley-read/README.md),
+   [parley-emit-py](../release-parley-emit-py/README.md)).
 
 A change to a message that is not a release follows [Changing a message](../change-a-message/README.md).

@@ -1,9 +1,13 @@
 # Releases — test plan
 
-Evidence lives in `scripts/release.test.ts` and `scripts/schemas.test.ts`. The release workflows'
-own `sanity` jobs (`.github/workflows/release-parley-emit.yml`, `release-parley-read.yml`) are the
-golden check of a tag (flyingrobots/parley#85); the cases here are what `bun test` can hold on
-every pull request.
+Evidence lives in `scripts/release.test.ts`, `scripts/schemas.test.ts` and
+`scripts/release-gate.test.ts`. A release workflow cannot be run from a pull request and a real
+tag cannot be used for a negative test, so the workflows are thin: what they decide is in
+`scripts/release-gate.ts` and `scripts/clean-consumer.ts`, which the cases below run on throwaway
+repositories with real git history, and `release.test.ts` holds the workflows' shape. The
+workflows' own `sanity` jobs remain the golden check of a tag (flyingrobots/parley#85). The
+checker the gate calls has its own ledger,
+[release-spec/test-plan.md](../../workflows/release-spec/test-plan.md).
 
 | ID | Requirement | Spec |
 | --- | --- | --- |
@@ -11,6 +15,10 @@ every pull request.
 | REL-2 | A publishable package's manifest survives `npm publish` as written: the fields the release workflow requires are present, no dependency uses a `workspace:` range (npm publishes it verbatim), and a package that depends on another package here admits that package's own version, so the workspace links the local copy | — |
 | REL-3 | Every package's version has a dated heading in its changelog, and the Python file's `__version__` is its manifest's version | — |
 | REL-4 | `RELEASE.md` declares the after-merge steps in the form footprint reads (top-level list items under a landing heading, outside fenced code), and every tag it names matches a release workflow's trigger | — |
+| REL-5 | The release gate (`bun run release-gate -- <package>`) runs the checker's `publication` phase on one artifact of one package at the current commit, packed once, with the frozen-since reference set to that package's previous release tag; it also refuses a tag that is not the version's, a version with no dated changelog heading, a commit off the default branch, a dirty tree, and a tarball whose manifest is not the repository's. It exits 0 only when nothing is refused | — |
+| REL-6 | The release report is one JSON document beside the artifact, never inside it: package and version, source commit and tree, the spec release, the bundled schema inventory with snapshot digests, the artifact's digests, the gate's result, and for the reader the clean-consumer result | — |
+| REL-7 | The clean-consumer check installs the packed reader into a directory outside the workspace and refuses unless its writer dependency came from the npm registry: not a link, not a `file:` resolution, not a directory inside the repository; it records the writer's exact version and integrity and runs a smoke read there | — |
+| REL-8 | In every release workflow the gate is a job, and every job that creates a GitHub release or sends anything to npm needs it, takes the gate's artifact and compares its digest with the gate's output first; the npm tarball is packed once, by the gate, and staged by path | — |
 
 | ID | Case | Oracle | Evidence | Status |
 | --- | --- | --- | --- | --- |
@@ -22,3 +30,42 @@ every pull request.
 | REL-2b | `@flyingrobots/parley-read`'s range for `@flyingrobots/parley-emit` | admits `packages/parley-emit`'s version | `release.test.ts` `a dependency on a package here admits its own version` | implemented |
 | REL-3a | Each package's `version`, and `__version__` in `parley_emit.py` | a `## [X.Y.Z] — YYYY-MM-DD` heading in its `CHANGELOG.md`; the Python version equals its manifest | `release.test.ts` `every package version has a dated changelog heading` | implemented |
 | REL-4a | `RELEASE.md` read by footprint's rule | at least one top-level list item under a heading containing `after merge`; each `parley-*-v` tag it names has a workflow whose trigger pattern matches it | `release.test.ts` `RELEASE.md declares steps footprint can read and names real tags` | implemented |
+| REL-4b | `RELEASE.md` and the three package release pages | each names `bun run release-gate -- <package>`, says the tag is pushed only after it exits 0, and states what the workflow cannot verify | `release.test.ts` `RELEASE.md and the release pages say the tag is pushed only after the gate exits 0` | implemented |
+| GATE-1 | A default branch whose three packages bundle draft `parley.query` 1.1.0 and `parley.lens` 1.1.0, as `main` did on 2026-11-24 | the gate fails for each package, in-process and as a command (exit 1), naming both pairs; the report is written and says the gate refused | `release-gate.test.ts` `GATE-1: a package bundling a draft schema is refused, for all three packages, naming the identities` | implemented |
+| GATE-2 | The same after the schema release merged | the gate passes for each package; the output directory holds exactly the artifact, `SHA256SUMS` and the report; one SHA-256 is in the gate's artifact line, the checker's package line, `SHA256SUMS`, the report and the result | `release-gate.test.ts` `GATE-2: once the schemas are released the gate passes, on one artifact whose digest is in every place it is named` | implemented |
+| GATE-3 | The report of a passing and of a refused gate | every field of REL-6, each schema with the digest of its snapshot file, a draft with none; the tarball's files by digest; no report inside the artifact | `release-gate.test.ts` `GATE-3: the report names the package, the commit and tree, the spec release, every bundled schema with its snapshot digest, and the gate's result` | implemented |
+| GATE-4 | Tags of this package and others, earlier and later, on and off this history; no earlier tag; a coordinated edit merged since the previous release | the reference is the highest earlier version of this package that is an ancestor of `HEAD`, compared by number; with none the gate says so; the merged edit is `snapshot.modified` for every package | `release-gate.test.ts` `GATE-4: the frozen-since reference is the package's previous release tag on this history, and a merged edit since it is refused` | implemented |
+| GATE-5 | A tag for another version or another package; an undated changelog heading; `HEAD` ahead of `origin/main`; an uncommitted file | `gate.tag_mismatch`, `gate.changelog_heading_missing`, `gate.not_on_default_branch`, `gate.dirty_tree` | `release-gate.test.ts` `GATE-5: a tag that is not this version's, a version with no dated changelog heading, a commit off the default branch and a dirty tree are each refused` | implemented |
+| GATE-6 | `--artifact`: the gate's own tarball; another package's, and the Python file for an npm package; one with a rewritten manifest and a `workspace:` range; a path that is no file | passes; `gate.artifact_mismatch`; `gate.manifest_differs` and `gate.workspace_range`; refused | `release-gate.test.ts` `GATE-6: the gate judges the artifact it is given: another package's, a manifest npm would not publish as written, a file that is not there` | implemented |
+| GATE-7 | No package, an unknown package, an unknown flag, a flag with no value, two packages; a `--repo` that is no repository; `--help` | one `error` line on stderr and exit 2; `--help` prints one `gate.help` line | `release-gate.test.ts` `GATE-7: a usage error is one schema'd line on stderr and exit 2; --help describes the command` | implemented |
+| GATE-8 | Every line and report the cases above produced | each line validates against `scripts/release-gate.schema.json` or, for the checker's lines, `scripts/release-check.schema.json`; each report against `scripts/release-report.schema.json`; the gate's refusal codes produced are exactly the ones its schema declares | `release-gate.test.ts` `GATE-8: every line the gate emitted validates against the gate's schema or the checker's, and every report against the report's` | implemented |
+| CONS-1 | A consumer directory outside the workspace holding this tree's reader and writer as plain directories, with a lockfile that resolves the writer from the registry | passes; the writer's name, version, resolution and integrity are recorded; the smoke read loads one bundle of two validated records, and the reader's import of the writer resolves inside the directory | `release-gate.test.ts` `CONS-1: a reader and a writer installed from the registry into a directory outside the workspace pass, and the writer's version and integrity are recorded` | implemented |
+| CONS-2 | The writer as a link into the repository (in-process and as the command); `link: true` in the lockfile; a `file:` resolution; no integrity; no entry; a lockfile version the directory does not hold | `consumer.dependency_linked` (exit 1), `consumer.dependency_linked`, `consumer.dependency_not_from_registry` twice, `consumer.dependency_missing`, `consumer.dependency_differs` | `release-gate.test.ts` `CONS-2: a writer that resolved from the workspace is refused: a link in node_modules, a link in the lockfile, a file: resolution, or no entry` | implemented |
+| CONS-3 | A consumer directory inside the repository; a reader whose lockfile integrity is not the tarball's; a reader whose read returns nothing | `consumer.inside_workspace`, `consumer.reader_differs`, `consumer.smoke_failed` | `release-gate.test.ts` `CONS-3: a directory inside the workspace, a reader that is not the packed tarball, and a failed read are each refused` | implemented |
+| CONS-4 | Every result the cases above produced; an unknown flag | each validates against `scripts/clean-consumer.schema.json`; the usage error is one schema'd line and exit 2 | `release-gate.test.ts` `CONS-4: every consumer result validates against its schema, and the command's usage error is a schema'd line` | implemented |
+| REL-8a | The three release workflows, parsed | each is triggered by its tag pattern; its `gate` job runs `release-gate` for its package with the tag and an output directory on a full-history checkout; nothing public and no artifact upload precedes the gate step; every job that makes something public needs `gate`, downloads its artifact and compares the digest with the gate's output first, and packs nothing | `release.test.ts` `each release workflow is triggered by its tag and runs the gate as a job before any job that makes something public` | implemented |
+| REL-8b | The two npm workflows and the Python one | no `npm pack` outside a dry run; `publish` runs in the `npm` environment, stages `"$TARBALL"` from the gate's output by path, has no checkout and never runs `npm publish`; the reader's gate passes `--consumer`; the Python workflow has only `gate` and `release` | `release.test.ts` `the npm workflows pack nowhere but in the gate, stage the gate's tarball by path, and the reader's gate proves a clean consumer` | implemented |
+| GATE-9 | Each workflow's `gate` job, its `run` steps executed with `bash -e` from the gate step on, on a fixture whose packages bundle a draft schema | the gate step fails; of the later steps only the summary runs, and it prints the report with `"passed": false` and both identities; no digest is written to the job's outputs and the artifact upload is skipped | `release-gate.test.ts` `GATE-9: with a package bundling a draft schema, each workflow's gate job stops at the gate: the report is printed, no digest is recorded and nothing is uploaded` | implemented |
+| GATE-10 | The same steps for parley-emit and `parley_emit.py` on a fixture whose schemas are released; then the `release` job's verification step on the gate's output and on another file under the same name | every step passes and the job's outputs carry the artifact's SHA-256 and name; the verification step passes for the gate's file and fails for the other | `release-gate.test.ts` `GATE-10: once the schemas are released, the gate job's steps pass and hand on one digest, and the release job's check refuses any other file` | implemented |
+| GATE-11 | `--consumer` with a stand-in for the consumer check: passing, refusing, and on a refused artifact; `--consumer` for a package with no dependency here | the check is asked about the one tarball, the dependency and the repository; its result is in the report; its refusal fails the gate; a refused artifact is never installed; the last is a usage error | `release-gate.test.ts` `GATE-11: --consumer runs the clean consumer on the packed tarball once the artifact is otherwise releasable, records the writer in the report, and refuses when it refuses` | implemented |
+
+Not covered by `bun test`, and why:
+
+- **A real tag.** No workflow was run: a tag cannot be pushed for a test, and this repository's
+  packages bundle draft schemas on 2026-11-24, so each gate would refuse. The `sanity`, `release`
+  and `publish` jobs' steps that need GitHub or npm (`gh release create`, `npm stage publish` with
+  an OIDC token and provenance, `actions/upload-artifact` and `download-artifact`) have not been
+  exercised since they were rewritten. The first release after this change is their golden run,
+  and flyingrobots/parley#156 asks for a run that stops before `release` first.
+- **`npm stage publish <tarball>` for real.** Verified with `--dry-run` only (npm 12.2.3): it
+  accepted a tarball path from an empty directory and reported the `shasum` and `integrity` of
+  that file. What `npm stage list`, `view` and `download` print was not seen, since they need a
+  staged package and an interactive login.
+- **The clean consumer's install.** It needs the registry. It was run by hand on the reader of tag
+  `parley-read-v0.1.1`, which resolved `@flyingrobots/parley-emit` 0.2.4 from npm and passed; the
+  refusals are CONS-2 and CONS-3, on hand-built directories.
+- **The reader's gate job with `--consumer` on a passing fixture** (GATE-10 leaves it out), for the
+  same reason.
+- **A re-run after a partial release.** The `release` job's branch for an existing release (compare
+  the tarball, fail on a difference) is shell in the workflow and has not been run.
+- Fuzzing and load, which the issue rules out because this is workflow.

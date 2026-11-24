@@ -30,8 +30,7 @@ the entry under it names each schema version it releases, and those are separate
   content at the commit it names. Its output is JSON Lines stamped `parley.tooling.release_check`
   1.0.0, a new tooling schema beside the script (`scripts/release-check.schema.json`).
   `docs/workflows/release-spec` holds the rule, the phases and the procedure for releasing schema
-  versions in two commits and a merge commit. The release workflows do not call the checker yet
-  (flyingrobots/parley#147). No spec text, schema byte, schema version or package version changes
+  versions in two commits and a merge commit. No spec text, schema byte, schema version or package version changes
   (flyingrobots/parley#145).
 - Two rules in the release-eligibility checker, which moves its tooling schema
   `parley.tooling.release_check` to 1.1.0. `candidate` refuses, with `release.heading_backdated`,
@@ -45,6 +44,22 @@ the entry under it names each schema version it releases, and those are separate
   `frozen_since.not_ancestor`), and `release.baseline` reports both references in three new
   fields. No spec text, schema byte, protocol schema version or package version changes
   (flyingrobots/parley#153).
+- The release gate, `bun run release-gate -- <package>` (`scripts/release-gate.ts`): for one
+  package at the current commit it builds the artifact once, runs the checker's `publication`
+  phase on that file with `--frozen-since` set to the package's previous release tag, refuses a
+  tag that is not the version's, a missing dated changelog heading, a commit off `main`, a dirty
+  tree and a tarball whose manifest is not the repository's, and writes a release report
+  (`release-report.json`): package, source commit and tree, spec release, the bundled schema
+  inventory with snapshot digests, the artifact's digests and the gate's result. A release tag is
+  pushed only after it exits 0. With `--consumer` it also runs `scripts/clean-consumer.ts`, which
+  installs the packed reader and its writer from npm into a directory outside the workspace,
+  refuses a writer that resolved from a link or a file, and runs a smoke read there. Three tooling
+  schemas beside the scripts: `parley.tooling.release_gate`, `parley.tooling.release_report` and
+  `parley.tooling.clean_consumer`, each 1.0.0 (flyingrobots/parley#147).
+- `.github/workflows/release-parley-emit-py.yml`: a tag `parley-emit-py-vX.Y.Z` runs the gate on
+  `parley_emit.py` and creates its GitHub release with the changelog section, the file, its
+  SHA-256 as `--vendor-info` prints it, and the report. The release was made by hand before
+  (flyingrobots/parley#147).
 - `parley.query` 1.1.0, a draft: an optional boolean `fold`. `false` asks the reader to fold
   nothing; absent or `true`, the reader folds runs of one invocation with one result.
   1.0.0 stays released and unchanged (flyingrobots/parley#133). Changed in place by the
@@ -85,6 +100,16 @@ the entry under it names each schema version it releases, and those are separate
 
 ### Changed
 
+- The two npm release workflows run the gate as a job between `sanity` and `release`, and nothing
+  public is created unless it passes. The tarball is packed once, by the gate; `release` and
+  `publish` take that file, compare its SHA-256 with the gate job's output, and pack nothing.
+  `publish` has no checkout and stages the file by path, `npm stage publish <tarball>`, where it
+  used to pack a second tarball from a second checkout. The GitHub release carries the tarball,
+  `SHA256SUMS` and the report. The job that stages authenticates by OIDC and cannot list, view or
+  download what it staged, so comparing the staged tarball with the report's digest before
+  approving is the owner's step, and the release pages say so, with the protections that depend
+  on settings the workflow cannot verify. No spec text, schema byte, schema version or package
+  version changes (flyingrobots/parley#147).
 - The checks workflow fetches full history, which the release-eligibility check needs for its
   baseline and for the commits the package copies are pinned to (flyingrobots/parley#145).
 - `@flyingrobots/parley-read` 0.2.0 emits `parley.query` and `parley.lens` at the draft 1.1.0

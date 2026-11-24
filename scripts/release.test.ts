@@ -83,8 +83,113 @@ describe("REL-4 RELEASE.md", () => {
     for (const tag of tags) {
       const prefix = tag.replace(/v\d+\.\d+\.\d+$/, "v");
       const triggered = workflows.some((w) => w.includes(`"${prefix}[0-9]+.[0-9]+.[0-9]+"`));
-      const manual = /parley-emit-py-v/.test(tag);
-      expect(triggered || manual, `${tag}: no release workflow is triggered by ${prefix}X.Y.Z`).toBe(true);
+      expect(triggered, `${tag}: no release workflow is triggered by ${prefix}X.Y.Z`).toBe(true);
     }
+  });
+});
+
+// REL-8 (flyingrobots/parley#147): a workflow cannot be run from a pull request, so what can be
+// held here is its shape: the gate is a job, and nothing public is made by a job that does not
+// need it. What the gate itself decides is scripts/release-gate.test.ts.
+interface Step { name?: string; uses?: string; run?: string; if?: string; with?: Record<string, unknown> }
+interface Job { needs?: string | string[]; environment?: string; steps: Step[]; outputs?: Record<string, string> }
+interface Workflow { on: { push?: { tags?: string[] } }; jobs: Record<string, Job> }
+const RELEASES = [
+  { file: "release-parley-emit.yml", pkg: "parley-emit", npm: true },
+  { file: "release-parley-read.yml", pkg: "parley-read", npm: true },
+  { file: "release-parley-emit-py.yml", pkg: "parley-emit-py", npm: false },
+] as const;
+const workflow = (file: string) => Bun.YAML.parse(readFileSync(join(".github/workflows", file), "utf8")) as Workflow;
+const needs = (j: Job) => (j.needs === undefined ? [] : Array.isArray(j.needs) ? j.needs : [j.needs]);
+/** Every job a job waits for, directly or not. */
+function upstream(w: Workflow, name: string, seen = new Set<string>()): Set<string> {
+  for (const n of needs(w.jobs[name]!)) if (!seen.has(n)) { seen.add(n); upstream(w, n, seen); }
+  return seen;
+}
+/** A step that makes something public: a GitHub release, or anything sent to npm that is not a dry run. */
+const PUBLIC = /\bgh release (create|upload)\b|\bnpm@?\S* (stage )?publish\b(?![^\n]*--dry-run)/;
+const runs = (j: Job) => j.steps.map((s) => s.run ?? "");
+
+describe("REL-8 the release workflows", () => {
+  test("each release workflow is triggered by its tag and runs the gate as a job before any job that makes something public", () => {
+    for (const { file, pkg } of RELEASES) {
+      const w = workflow(file);
+      expect(w.on.push?.tags, file).toEqual([`${pkg}-v[0-9]+.[0-9]+.[0-9]+`]);
+      const gate = w.jobs.gate;
+      expect(gate, `${file}: no gate job`).toBeDefined();
+      const at = gate!.steps.findIndex((s) => new RegExp(`\\bbun run release-gate -- ${pkg} `).test(s.run ?? ""));
+      expect(at, `${file}: the gate job does not run release-gate for ${pkg}`).toBeGreaterThanOrEqual(0);
+      const step = gate!.steps[at]!;
+      expect(step.run, file).toContain('--tag "$GITHUB_REF_NAME"');
+      expect(step.run, file).toContain("--out ");
+      // The gate needs the history: the baseline, the pins and the previous release tag.
+      expect(gate!.steps.find((s) => s.uses?.startsWith("actions/checkout@"))?.with?.["fetch-depth"], file).toBe(0);
+      // Nothing leaves the gate job before the gate has passed, the workflow artifact included,
+      // and no step there is allowed to run after a failure except the summary.
+      gate!.steps.forEach((s, i) => {
+        expect(PUBLIC.test(s.run ?? ""), `${file}: gate step ${i} makes something public`).toBe(false);
+        if (s.uses?.startsWith("actions/upload-artifact@")) expect(i, `${file}: the artifact is uploaded before the gate ran`).toBeGreaterThan(at);
+        if (s.if !== undefined) { expect(s.if, file).toBe("always()"); expect(s.run, file).toContain("GITHUB_STEP_SUMMARY"); }
+      });
+      expect(gate!.steps.some((s) => s.uses?.startsWith("actions/upload-artifact@")), file).toBe(true);
+      expect(gate!.steps.some((s) => (s.run ?? "").includes("release-report.json") && (s.run ?? "").includes("GITHUB_STEP_SUMMARY")), `${file}: the report is not printed in the job summary`).toBe(true);
+      const makers = Object.entries(w.jobs).filter(([, j]) => runs(j).some((r) => PUBLIC.test(r))).map(([name]) => name);
+      expect(makers.length, `${file}: no job releases anything`).toBeGreaterThan(0);
+      for (const name of makers) {
+        expect(upstream(w, name).has("gate"), `${file}: job ${name} makes something public and does not need the gate`).toBe(true);
+        const j = w.jobs[name]!;
+        // It releases the file the gate judged: downloaded, and its digest compared with the gate's output.
+        expect(j.steps.some((s) => s.uses?.startsWith("actions/download-artifact@")), `${file}: ${name} does not take the gate's artifact`).toBe(true);
+        const verify = j.steps.findIndex((s) => (s.run ?? "").includes("needs.gate.outputs.sha256") && (s.run ?? "").includes("sha256sum"));
+        const first = j.steps.findIndex((s) => PUBLIC.test(s.run ?? ""));
+        expect(verify, `${file}: ${name} does not compare the artifact's digest with the gate's`).toBeGreaterThanOrEqual(0);
+        expect(verify, `${file}: ${name} verifies the digest after using the artifact`).toBeLessThan(first);
+        // No job that releases builds: the tarball is packed once, by the gate.
+        for (const r of runs(j)) expect(/\b(npm|bun pm) pack\b/.test(r), `${file}: ${name} packs again`).toBe(false);
+      }
+      expect(gate!.outputs?.sha256, file).toBeDefined();
+      // The GitHub release carries the artifact, its digest and the report.
+      const release = runs(w.jobs.release!).find((r) => /gh release create/.test(r)) ?? "";
+      expect(release, file).toContain("release-report.json");
+      expect(release, file).toContain("SHA256SUMS");
+      expect(release, file).toContain("--verify-tag");
+    }
+  });
+
+  test("the npm workflows pack nowhere but in the gate, stage the gate's tarball by path, and the reader's gate proves a clean consumer", () => {
+    for (const { file } of RELEASES.filter((r) => r.npm)) {
+      const w = workflow(file);
+      for (const [name, j] of Object.entries(w.jobs)) for (const r of runs(j)) for (const line of r.split("\n")) {
+        if (/\b(npm|bun pm) pack\b/.test(line)) expect(line, `${file}: ${name} packs a tarball outside the gate`).toContain("--dry-run");
+      }
+      const publish = w.jobs.publish!;
+      expect(publish.environment, file).toBe("npm");
+      expect([...upstream(w, "publish")].sort(), file).toEqual(["gate", "release", "sanity"]);
+      const stage = runs(publish).filter((r) => /stage publish/.test(r));
+      expect(stage, file).toHaveLength(1);
+      // A tarball path, not a directory: npm stages the bytes it is given and repacks nothing.
+      expect(stage[0], file).toMatch(/npm@latest stage publish "\$TARBALL" --access public --provenance/);
+      expect(stage[0], file).toContain("${{ needs.gate.outputs.tarball }}");
+      // The job stages a file; it has no checkout to pack from, and it never publishes.
+      expect(publish.steps.some((s) => s.uses?.startsWith("actions/checkout@")), `${file}: publish checks the repository out`).toBe(false);
+      for (const r of runs(publish)) expect(/npm@?\S* publish\b/.test(r.replace(/stage publish/g, "")), `${file}: publish runs npm publish`).toBe(false);
+    }
+    const gateOf = (file: string) => runs(workflow(file).jobs.gate!).find((r) => /release-gate/.test(r)) ?? "";
+    expect(gateOf("release-parley-read.yml")).toContain("--consumer");
+    expect(gateOf("release-parley-emit.yml")).not.toContain("--consumer");
+    // The Python file goes to no registry.
+    expect(Object.keys(workflow("release-parley-emit-py.yml").jobs).sort()).toEqual(["gate", "release"]);
+  });
+
+  test("RELEASE.md and the release pages say the tag is pushed only after the gate exits 0", () => {
+    const release = readFileSync("RELEASE.md", "utf8");
+    for (const { pkg } of RELEASES) {
+      expect(release, pkg).toContain(`bun run release-gate -- ${pkg}`);
+      const page = readFileSync(join("docs/workflows", `release-${pkg}`, "README.md"), "utf8");
+      expect(page, pkg).toContain(`bun run release-gate -- ${pkg}`);
+      expect(page, pkg).toMatch(/only (after|once) it exits (with )?`?0`?/);
+      expect(page, pkg).toContain("cannot verify");
+    }
+    expect(JSON.parse(readFileSync("package.json", "utf8")).scripts["release-gate"]).toBe("bun run scripts/release-gate.ts");
   });
 });

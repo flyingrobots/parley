@@ -12,7 +12,7 @@ below, and what to do once it has merged is in [`RELEASE.md`](../../../RELEASE.m
 | The spec and its message schemas | the spec's status line; each schema's `$id` and `_schema` | a dated heading in the root `CHANGELOG.md`, naming every schema version it releases | this repository: `schemas/released/<id>/<version>.schema.json` |
 | `@flyingrobots/parley-emit` | `packages/parley-emit/package.json` | the tag `parley-emit-vX.Y.Z` ([how](../../workflows/release-parley-emit/README.md)) | npm, with provenance |
 | `@flyingrobots/parley-read` | `packages/parley-read/package.json` | the tag `parley-read-vX.Y.Z` ([how](../../workflows/release-parley-read/README.md)) | npm, with provenance after the first, manual publish |
-| `parley_emit.py` | `__version__` in the file and its `package.json` | the tag `parley-emit-py-vX.Y.Z` and a GitHub release carrying its SHA-256 | nowhere: a tool vendors the file and pins its digest |
+| `parley_emit.py` | `__version__` in the file and its `package.json` | the tag `parley-emit-py-vX.Y.Z` ([how](../../workflows/release-parley-emit-py/README.md)), whose workflow creates a GitHub release carrying its SHA-256 | nowhere: a tool vendors the file and pins its digest |
 
 None of these numbers is another's. A package release publishes no schema version, and a schema
 release moves no package version (spec §4.4, §4.5).

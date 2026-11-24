@@ -321,6 +321,19 @@ function readArtifact(path: string): Inventory {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 }
 
+/** What an artifact carries, for a caller that reports it (scripts/release-gate.ts): the same reading the check judges. */
+export interface ArtifactInventory {
+  name: string; version: string | null; sha256: string | null; pin: string | null;
+  bundled: { id: string; version: string }[]; declared: { id: string; version: string }[];
+  /** Why there is no inventory, when there is none. */
+  unreadable: string | null;
+}
+export function artifactInventory(path: string): ArtifactInventory {
+  const inv = readArtifact(resolve(path));
+  const pairs = (ps: Pair[]) => ps.map((p) => ({ id: p.id, version: p.version })).sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
+  return { name: inv.name, version: inv.version, sha256: inv.sha256, pin: inv.pin?.commit ?? null, bundled: pairs(inv.bundled), declared: pairs(inv.declared), unreadable: inv.unreadable?.problem ?? null };
+}
+
 // ---- the rules --------------------------------------------------------------------------------
 
 interface Finding { code: Code; problem: string; id?: string; version?: string; path?: string }

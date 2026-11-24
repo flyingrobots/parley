@@ -10,6 +10,7 @@
     "test": "bun test",
     "doctor": "bun run scripts/doctor.ts",
     "release-check": "bun run scripts/release-check.ts",
+    "release-gate": "bun run scripts/release-gate.ts",
     "typecheck": "tsc -p tsconfig.json && tsc -p packages/parley-emit/tsconfig.json && tsc -p packages/parley-read/tsconfig.json"
   },
   "config": {

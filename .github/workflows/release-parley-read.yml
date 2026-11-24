@@ -1,12 +1,27 @@
 name: Release parley-read
 
-# A tag `parley-read-vX.Y.Z` on main releases packages/parley-read: sanity checks, a GitHub
-# release carrying the tarball, then a staged publish to npm through OIDC trusted publishing (no
-# token in the repository); the owner approves the staged version before it is installable. The package version moves on its own; a release here publishes no
-# schema version (spec §4.5). parley-read depends on @flyingrobots/parley-emit, so the version
-# of parley-emit its range names is published first. npm cannot attach a trusted publisher to a
-# package that does not exist yet, so the first version is published by hand by the owner, and
-# the publish job of that first tag fails until it is (docs/workflows/release-parley-read).
+# A tag `parley-read-vX.Y.Z` on main releases packages/parley-read in four jobs, each needing the one
+# before:
+#
+#   sanity   the tag, the manifest, the whole test gate, the manifest npm would send
+#   gate     packs the tarball ONCE and runs the release gate on that file (scripts/release-gate.ts):
+#            the publication phase of the release-eligibility check, against the package's previous
+#            release tag. It writes the release report. Nothing public exists before it passes.
+#   release  the GitHub release, carrying that tarball, its digest and the report
+#   publish  stages that same tarball on npm, by path, through OIDC trusted publishing (no token in
+#            the repository); the owner approves the staged version before it is installable
+#
+# release and publish take the tarball from the gate job and compare its SHA-256 with the gate's
+# output before using it; neither packs. The package version moves on its own; a release here
+# publishes no schema version (spec §4.5). What the workflow cannot verify (the npm environment's
+# reviewers, tag protection, what the trusted publisher allows) is in
+# docs/workflows/release-parley-read.
+#
+# parley-read depends on @flyingrobots/parley-emit, so the version of parley-emit its range names is
+# published first, and the gate proves the packed reader against that published writer in a clean
+# directory. npm cannot attach a trusted publisher to a package that does not exist yet, so the
+# first version is published by hand by the owner, and the publish job of that first tag fails
+# until it is.
 
 on:
   push:
@@ -14,8 +29,7 @@ on:
       - "parley-read-v[0-9]+.[0-9]+.[0-9]+"
 
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 
 concurrency:
   group: release-parley-read-${{ github.ref }}
@@ -108,7 +122,8 @@ jobs:
       # npm rewrites or removes manifest fields it considers invalid when it publishes, and says so
       # only as a warning (a `./`-prefixed bin path was stripped from footprint this way). The
       # published manifest must be the one in the repository, so any such correction fails here,
-      # before anything is released, and so does a dependency range npm would publish verbatim.
+      # before anything is released. The gate job compares the manifest inside the one tarball it
+      # packs with the repository's, and refuses a dependency range npm would send verbatim.
       - name: Verify npm publishes the manifest as written
         run: |
           cd "$PACKAGE_DIR"
@@ -125,73 +140,149 @@ jobs:
             echo "::error::npm publish --dry-run failed (exit $status)"
             exit 1
           fi
-          mkdir -p "$RUNNER_TEMP/pack"
-          npm pack --pack-destination "$RUNNER_TEMP/pack" > /dev/null
-          tar -xzf "$RUNNER_TEMP"/pack/*.tgz -C "$RUNNER_TEMP/pack"
-          node -e '
-            const [src, packed] = process.argv.slice(1).map((p) => require(p));
-            if (JSON.stringify(src) !== JSON.stringify(packed)) { console.error("the packed package.json differs from the one in the repository"); process.exit(1); }
-            for (const m of ["dependencies", "peerDependencies", "optionalDependencies"]) {
-              for (const [k, v] of Object.entries(src[m] ?? {})) if (String(v).startsWith("workspace:")) { console.error(`${k}@${v} would be published verbatim`); process.exit(1); }
-            }
-            console.log("the packed manifest is the manifest");
-          ' "$PWD/package.json" "$RUNNER_TEMP/pack/package/package.json"
 
-  release:
+  gate:
     needs: sanity
     runs-on: ubuntu-latest
+    outputs:
+      tarball: ${{ steps.digest.outputs.file }}
+      sha256: ${{ steps.digest.outputs.sha256 }}
     steps:
+      # Full history and every tag: the gate compares released snapshots with the baseline and
+      # with the package's previous release tag, and verifies the schema pin at its commit.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - run: bun install --frozen-lockfile
+
+      # The only place a tarball is built. Exit 1 stops the workflow here: no later job runs.
+      # --consumer: the packed reader and its @flyingrobots/parley-emit dependency are installed
+      # from npm into a new directory outside the workspace, the step fails if the writer resolved
+      # from a link or a file, and a smoke read runs there (scripts/clean-consumer.ts).
+      - name: Pack once and run the release gate on that tarball
+        run: bun run release-gate -- parley-read --tag "$GITHUB_REF_NAME" --out "$RUNNER_TEMP/release" --consumer
+
+      - name: Print the release report
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/release/release-report.json" ]; then
+            { echo '## Release report'; echo; echo '```json'; cat "$RUNNER_TEMP/release/release-report.json"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'The gate wrote no release report.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Record the tarball's digest
+        id: digest
+        run: |
+          cd "$RUNNER_TEMP/release"
+          sha256sum -c SHA256SUMS
+          echo "sha256=$(cut -d' ' -f1 SHA256SUMS)" >> "$GITHUB_OUTPUT"
+          echo "file=$(cut -d' ' -f3 SHA256SUMS)" >> "$GITHUB_OUTPUT"
+
+      # A workflow artifact, to carry the one tarball to the jobs below. Uploaded only after the
+      # gate passed.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: ${{ runner.temp }}/release
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    needs: gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: release-assets
+
+      - name: Verify the tarball is the one the gate judged
+        run: |
+          cd release-assets
+          echo "${{ needs.gate.outputs.sha256 }}  ${{ needs.gate.outputs.tarball }}" | sha256sum -c -
 
       - name: Extract the version and its changelog section
         id: meta
         run: |
           VERSION="${GITHUB_REF_NAME#parley-read-v}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          awk "/^## \[${VERSION}\]/{found=1; next} /^## \[/{if(found) exit} found{print}" "$PACKAGE_DIR/CHANGELOG.md" > release-notes.md
-          [ -s release-notes.md ] || echo "Release @flyingrobots/parley-read $VERSION" > release-notes.md
+          awk "/^## \[${VERSION}\]/{found=1; next} /^## \[/{if(found) exit} found{print}" "$PACKAGE_DIR/CHANGELOG.md" > "$RUNNER_TEMP/release-notes.md"
+          [ -s "$RUNNER_TEMP/release-notes.md" ] || echo "Release @flyingrobots/parley-read $VERSION" > "$RUNNER_TEMP/release-notes.md"
 
-      - name: Build the release tarball
-        run: |
-          mkdir -p release-assets
-          (cd "$PACKAGE_DIR" && npm pack --pack-destination "$GITHUB_WORKSPACE/release-assets")
-          (cd release-assets && sha256sum -- *.tgz > SHA256SUMS)
-
+      # A re-run after a partial release finds the release already there. It is left as it is,
+      # and only if the tarball it carries is this one, byte for byte.
       - name: Create the GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARBALL: ${{ needs.gate.outputs.tarball }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            --title "@flyingrobots/parley-read ${{ steps.meta.outputs.version }}" \
-            --notes-file release-notes.md \
-            --verify-tag \
-            release-assets/*.tgz release-assets/SHA256SUMS
+          cd release-assets
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            mkdir -p "$RUNNER_TEMP/existing"
+            gh release download "$GITHUB_REF_NAME" --pattern "$TARBALL" --dir "$RUNNER_TEMP/existing"
+            cmp "$RUNNER_TEMP/existing/$TARBALL" "$TARBALL" || { echo "::error::the release $GITHUB_REF_NAME exists and carries a different $TARBALL than this run packed"; exit 1; }
+            echo "the release $GITHUB_REF_NAME exists and carries this tarball"
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "@flyingrobots/parley-read ${{ steps.meta.outputs.version }}" \
+              --notes-file "$RUNNER_TEMP/release-notes.md" \
+              --verify-tag \
+              "$TARBALL" SHA256SUMS release-report.json
+          fi
 
   publish:
-    needs: release
+    needs: [gate, release]
     runs-on: ubuntu-latest
     environment: npm
     permissions:
       id-token: write
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
+      # No checkout: this job has nothing to pack from. It stages a file.
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
-      - run: bun install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: release-assets
 
-      # The trusted publisher on npmjs.com allows `npm stage publish` only: this stages the version,
-      # and the owner approves it with two-factor authentication. Staging needs npm 11.15.0 or later.
-      - name: Stage on npm with OIDC provenance; the owner approves
-        run: cd "$PACKAGE_DIR" && npx -y npm@latest stage publish --access public --provenance
+      - name: Verify the tarball is the one the gate judged
+        run: |
+          cd release-assets
+          echo "${{ needs.gate.outputs.sha256 }}  ${{ needs.gate.outputs.tarball }}" | sha256sum -c -
+
+      # The trusted publisher on npmjs.com allows staging only: this stages the version, and the
+      # owner approves it with two-factor authentication. Given a tarball path, npm sends that
+      # file's bytes and packs nothing (npm 11.15.0 or later has the command). The token this job
+      # gets by OIDC can stage and nothing else: it cannot list, view or download what it staged,
+      # so the comparison of the staged tarball with this one is the owner's, from the digests
+      # printed below (docs/workflows/release-parley-read).
+      - name: Stage that tarball on npm with OIDC provenance; the owner approves
+        run: |
+          TARBALL="$GITHUB_WORKSPACE/release-assets/${{ needs.gate.outputs.tarball }}"
+          cd "$RUNNER_TEMP"
+          set +e
+          npx -y npm@latest stage publish "$TARBALL" --access public --provenance > "$RUNNER_TEMP/stage.log" 2>&1
+          status=$?
+          set -e
+          cat "$RUNNER_TEMP/stage.log"
+          node -e '
+            const r = require(process.argv[1]), ok = process.argv[2] === "0";
+            console.log(`## ${ok ? "Staged" : "NOT staged"}: ${r.package.name}@${r.package.version}\n`);
+            console.log(`The file sent to npm is \`${r.artifact.file}\`, the one the gate judged and the GitHub release carries. Before approving, compare what npm holds with:\n`);
+            console.log(`| | |\n| --- | --- |\n| SHA-256 | \`${r.artifact.sha256}\` |\n| shasum (SHA-1) | \`${r.artifact.sha1}\` |\n| integrity | \`${r.artifact.integrity}\` |\n| source commit | \`${r.source.commit}\` |\n`);
+          ' "$GITHUB_WORKSPACE/release-assets/release-report.json" "$status" >> "$GITHUB_STEP_SUMMARY"
+          { echo '```text'; cat "$RUNNER_TEMP/stage.log"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"

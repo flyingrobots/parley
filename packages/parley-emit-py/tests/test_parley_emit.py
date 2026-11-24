@@ -978,6 +978,164 @@ class TestRedactionUnchecked(unittest.TestCase):
         self.assertEqual(lines[-1]["status"], 4)
 
 
+NEVER_SECRET = "zq7kx9secret"
+
+
+def _named(name, **more):
+    return {"type": "object", "properties": {"name": name}, **more}
+
+
+# The reviewed table, then keywords whose value has the wrong shape: the TypeScript writer's PE-31
+# table. The second item is what this writer does with a record whose `name` is `Zed <secret>`;
+# the third is wording the error line must not carry.
+NEVER_ESCAPES = {
+    "pattern_unicode_property": (_named({"type": "string", "pattern": "^\\p{Lu}"}), "unchecked", ["\\p", "Lu", "bad escape", "position"]),
+    "pattern_lookbehind_of_any_width": (_named({"type": "string", "pattern": "(?<=Z.*)d"}), "unchecked", ["(?<=", "look-behind", "fixed-width"]),
+    "pattern_inline_flag": (_named({"type": "string", "pattern": "(?i)^zed"}), "unchecked", ["(?i)", "zed"]),
+    "pattern_modifier_group": (_named({"type": "string", "pattern": "^(?i:zed)"}), "unchecked", ["(?i", "zed"]),
+    "pattern_no_engine_compiles": (_named({"type": "string", "pattern": "^Z("}), "unchecked", ["^Z(", "parenthesis", "position"]),
+    "pattern_not_a_string": (_named({"type": "string", "pattern": 5}), "unchecked", []),
+    "pattern_plain_control": (_named({"type": "string", "pattern": "^Zed( .+)?$"}), "published", []),
+    "enum_5": (_named({"enum": 5}), "unchecked", ["enum", "iterable"]),
+    "required_a_string": (_named({"type": "string"}, required="name"), "unchecked", ["required"]),
+    "required_a_list_holding_a_number": (_named({"type": "string"}, required=["name", 5]), "unchecked", ["required"]),
+    "properties_a_list": ({"type": "object", "properties": [{"type": "string"}]}, "unchecked", ["properties"]),
+    "type_a_number": (_named({"type": 5}), "unchecked", []),
+    "type_an_unknown_name": (_named({"type": "text"}), "unchecked", ["text"]),
+    "type_a_list_holding_a_number": (_named({"type": ["string", 5]}), "unchecked", []),
+    "min_length_a_string": (_named({"type": "string", "minLength": "3"}), "unchecked", ["minLength"]),
+    "max_length_negative": (_named({"type": "string", "maxLength": -1}), "unchecked", ["maxLength"]),
+    "minimum_a_string": ({"type": "object", "properties": {"name": {"type": "string"}, "n": {"minimum": "0"}}}, "unchecked", ["minimum"]),
+    "any_of_an_object": (_named({"anyOf": {"type": "string"}}), "unchecked", ["anyOf"]),
+    "all_of_a_number": (_named({"allOf": 5}), "unchecked", ["allOf"]),
+    "items_a_number": ({"type": "object", "properties": {"name": {"type": "string"}, "rows": {"items": 5}}}, "unchecked", ["items"]),
+    "not_null": (_named({"not": None}), "unchecked", []),
+    "format_a_list": (_named({"type": "string", "format": ["json-pointer"]}), "unchecked", ["json-pointer", "unhashable"]),
+    "additional_properties_a_string": (_named({"type": "string"}, additionalProperties="no"), "unchecked", ["additionalProperties"]),
+}
+
+
+class TestSchemaNeverEscapes(unittest.TestCase):
+    """PY-25: a schema document the writer holds and cannot evaluate, whether for a `pattern` its
+    engine does not read as ECMAScript would, a pattern nothing compiles or a keyword whose value
+    has the wrong shape, leads to `redaction.schema_unchecked` and status 4 for a redacted record
+    and never to an escaped exception (spec section 5.3). Every case is a real run through
+    `main`."""
+
+    every_line = staticmethod(TestRedactionConflict.every_line)
+    assert_gapless = TestRedactionConflict.assert_gapless
+
+    def test_a_redacted_record_is_withheld_as_unchecked_or_checked_and_published_never_an_uncaught_exception(self):
+        for name, (schema, verdict, leaks) in NEVER_ESCAPES.items():
+            with self.subTest(name):
+                d, _, env = scratch_free(NEVER_SECRET)
+                raised = []
+
+                def body(run):
+                    try:
+                        run.result({"event": "result", "name": "Zed " + NEVER_SECRET}, T_COUNT)
+                    except Exception as e:
+                        raised.append(e)
+                        raise
+
+                with warnings.catch_warnings():
+                    warnings.simplefilter("error")
+                    o = run_count(d, env, ["count", "--token", NEVER_SECRET], body, unchecked_tool(schema))
+                self.assertNotIn(NEVER_SECRET, o.everything)
+                self.assertEqual([x for x in self.every_line(o) if x.get("code") == "uncaught.exception"], [])
+                self.assert_gapless(o)
+                if verdict == "published":
+                    self.assertEqual(raised, [])
+                    self.assertEqual(o.status, 0)
+                    self.assertEqual(o.stderr.objs, [])
+                    self.assertEqual([x["name"] for x in o.stdout.objs if x["event"] == "result"], ["Zed [redacted]"])
+                    continue
+                self.assertEqual(o.status, 4)
+                self.assertEqual([x for x in self.every_line(o) if x["event"] == "result"], [])
+                self.assertEqual([(x["event"], x["code"]) for x in o.stderr.objs], [("error", "redaction.schema_unchecked")])
+                e = o.stderr.objs[0]
+                self.assertEqual(e["detail"], {"schema": {"id": "t.count", "version": "1.0.0"}, "redacted": ["/name"]})
+                # No engine message and no fragment of the schema on the line, and no traceback
+                # in the receipt.
+                said = "\n".join([e["problem"], e["remedy"], json.dumps(e["detail"])])
+                for leak in leaks:
+                    self.assertNotIn(leak, said)
+                self.assertNotIn("Traceback", o.receipt)
+                self.assertNotIn("stack", o.receipt)
+                self.assertEqual((o.receipt_lines[-1]["event"], o.receipt_lines[-1]["status"]), ("end", 4))
+                self.assertIsInstance(raised[0], pe.ParleyRedactionUnchecked)
+                self.assertNotIn(NEVER_SECRET, str(raised[0]))
+
+    def test_a_record_the_scrub_did_not_change_is_written_as_before(self):
+        for name, (schema, _, _) in NEVER_ESCAPES.items():
+            with self.subTest(name):
+                d, _, env = scratch_free(NEVER_SECRET)
+                o = run_count(d, env, ["count", "--token", NEVER_SECRET], lambda run: run.result({"event": "result", "name": "Zed"}, T_COUNT), unchecked_tool(schema))
+                self.assertEqual(o.status, 0)
+                self.assertEqual(o.stderr.objs, [])
+                self.assertEqual([x["name"] for x in o.stdout.objs if x["event"] == "result"], ["Zed"])
+                self.assertEqual((o.receipt_lines[-1]["event"], o.receipt_lines[-1]["status"]), ("end", 0))
+                self.assert_gapless(o)
+
+    def test_the_checker_answers_and_does_not_raise(self):
+        for name, (schema, verdict, _) in NEVER_ESCAPES.items():
+            with self.subTest(name):
+                gap = pe.schema_subset_gap(schema)
+                v = pe.check_record({"event": "result", "name": "Zed"}, schema)
+                if verdict == "published":
+                    self.assertIsNone(gap)
+                    self.assertTrue(v.ok)
+                else:
+                    self.assertIsInstance(gap, str)
+                    self.assertFalse(v.ok)
+                    self.assertEqual(v.unsupported, gap)
+                # A line under such a schema, through the tool-facing helper.
+                line = {"event": "result", "name": "Zed", "_schema": {"id": "t.count", "version": "1.0.0"}}
+                self.assertEqual(pe.validate_line(line, {T_COUNT: schema}).unsupported, gap)
+
+    def test_patterns_python_does_not_read_as_ecmascript_would_are_unsupported_not_guessed(self):
+        # Each is valid ECMAScript (with the `u` flag) or is read differently by `re`; the writer
+        # says it cannot evaluate the schema rather than answer with another language's reading.
+        refused = ["\\p{L}+", "\\P{Lu}", "(?<=a+)b", "(?<year>[0-9]{4})", "(a)\\1", "\\k<n>", "[^]", "[]", "[\\S]", "a{,3}", "a**", "a*+", "a{2}{3}",
+                   "(?=a)+", "\\-", "\\a", "\\Z", "\\A", "\\z", "(?#c)", "(?P<n>a)", "(?i)a", "(?s:a)", "(?-i:a)", "a{2", "a}", "a]", "\\07", "\\x4", "\\u12",
+                   "\\ud83d\\ude00", "\\u{110000}", "[z-a]", "[\\d-x]", "(", "a)", "*a", "a|*", "^*", "\\c1", "(?<!a*)b", "\\"]
+        for p in refused:
+            with self.subTest(p):
+                with warnings.catch_warnings():
+                    warnings.simplefilter("error")
+                    v = pe.check_record("a", {"type": "string", "pattern": p})
+                self.assertFalse(v.ok)
+                self.assertIsNotNone(v.unsupported)
+                self.assertNotIn(p, v.unsupported)
+
+    def test_patterns_python_evaluates_are_read_as_ecmascript_reads_them(self):
+        nbsp, ls = " ", " "
+        cases = [
+            ("^a.c$", "abc", True), ("^a.c$", "a\nc", False), ("^a.c$", "a" + ls + "c", False), ("^a$", "a\n", False),
+            ("^\\s$", nbsp, True), ("^\\s$", "﻿", True), ("^\\s$", "\x1c", False), ("^\\s$", "\x85", False), ("^\\S$", nbsp, False), ("^\\S$", "x", True),
+            ("^[\\s]$", nbsp, True), ("^[^\\s]$", nbsp, False), ("^\\d$", "٣", False), ("^\\w$", "é", False), ("^\\w+$", "a_9", True),
+            ("^[a-c]+$", "abc", True), ("^[^a-c]$", "d", True), ("^[\\]\\-\\\\]+$", "]-\\", True), ("^[[]$", "[", True), ("^a\\/b$", "a/b", True),
+            ("^\\u0041\\x42\\u{43}$", "ABC", True), ("^\\u{1F600}$", "\U0001F600", True), ("^.$", "\U0001F600", True), ("^\\cJ$", "\n", True),
+            ("^[\\b]$", "\x08", True), ("\\bfoo\\b", "a foo b", True), ("^\\0$", "\x00", True), ("^a{2,3}?$", "aaa", True), ("^a{2,}$", "a", False),
+            ("^(?:a|b)+?c$", "abac", True), ("^(?!/)(?!.*(^|/)\\.\\.(/|$)).+$", "a/../b", False), ("^(?!/)(?!.*(^|/)\\.\\.(/|$)).+$", "a/b", True),
+            ("(?<=a)b", "ab", True), ("(?<!a)b", "ab", False), ("^[a-z]{3}-[0-9]+$", "abc-12", True), ("^#$", "#", True), ("^ $", " ", True),
+            ("^[-a]$", "-", True), ("^[a-]$", "-", True), ("^[&&]$", "&", True), ("^[a~~b]$", "~", True), ("^[a||b]$", "|", True), ("^[a--b]$", "-", True),
+        ]
+        for p, value, expected in cases:
+            with self.subTest(p=p, value=value):
+                with warnings.catch_warnings():
+                    warnings.simplefilter("error")
+                    v = pe.check_record(value, {"type": "string", "pattern": p})
+                self.assertIsNone(v.unsupported, v)
+                self.assertEqual(v.ok, expected)
+
+    def test_integer_valued_bounds_are_applied_whichever_way_json_wrote_them(self):
+        self.assertFalse(pe.check_record("ab", {"type": "string", "minLength": 3.0}).ok)
+        self.assertIsNone(pe.check_record("ab", {"type": "string", "minLength": 3.0}).unsupported)
+        self.assertEqual(pe.schema_subset_gap({"minLength": True}), pe.schema_subset_gap({"minLength": "3"}))
+        self.assertIsNotNone(pe.schema_subset_gap({"minItems": 1.5}))
+
+
 class TestStartupFailure(unittest.TestCase):
     def test_no_writable_location(self):
         d, state, env = scratch()

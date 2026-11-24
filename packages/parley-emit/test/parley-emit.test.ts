@@ -2815,3 +2815,123 @@ process.exit(await main(tool, ["t", ...process.argv.slice(2)], (run) => { run.re
     expect(doctor({ receipt: text }, SCHEMAS_DIR).filter((v) => v.event === "doctor.violation")).toEqual([]);
   });
 });
+
+describe("PE-31 a schema the checker cannot evaluate never escapes as an exception (spec §5.3)", () => {
+  const PAIR = { id: "t.count", version: "1.0.0" };
+  const SECRET = "zq7kx9secret";
+  const named = (name: Record<string, unknown>, more: Record<string, unknown> = {}) => ({ type: "object", properties: { name }, ...more });
+  /**
+   * The reviewed table, then keywords whose value has the wrong shape. `ts` is what this writer
+   * does with a record whose `name` is `Zed <secret>`: `published` when its engine evaluates the
+   * schema and the redacted record is valid, `unchecked` when it cannot evaluate the schema.
+   */
+  const CASES: Record<string, { schema: Record<string, unknown>; ts: "published" | "unchecked"; leaks: string[] }> = {
+    "pattern ^\\p{Lu}, a Unicode property": { schema: named({ type: "string", pattern: "^\\p{Lu}" }), ts: "published", leaks: [] },
+    "pattern (?<=Z.*)d, a lookbehind of any width": { schema: named({ type: "string", pattern: "(?<=Z.*)d" }), ts: "published", leaks: [] },
+    "pattern (?i)^zed, an inline flag ECMAScript does not have": { schema: named({ type: "string", pattern: "(?i)^zed" }), ts: "unchecked", leaks: ["(?i)", "zed", "Invalid", "regular expression", "group"] },
+    "pattern (?i:zed), a modifier group some engines lack": { schema: named({ type: "string", pattern: "^(?i:zed)" }), ts: "unchecked", leaks: ["(?i", "zed", "Invalid"] },
+    "pattern ^Z(, which no engine compiles": { schema: named({ type: "string", pattern: "^Z(" }), ts: "unchecked", leaks: ["^Z(", "Invalid", "regular expression", "Unterminated", "missing"] },
+    "pattern that is not a string": { schema: named({ type: "string", pattern: 5 }), ts: "unchecked", leaks: [] },
+    "enum: 5": { schema: named({ enum: 5 }), ts: "unchecked", leaks: ["enum", "iterable", "not a function"] },
+    "required: a string": { schema: named({ type: "string" }, { required: "name" }), ts: "unchecked", leaks: ["required"] },
+    "required: a list holding a number": { schema: named({ type: "string" }, { required: ["name", 5] }), ts: "unchecked", leaks: ["required"] },
+    "properties: a list": { schema: { type: "object", properties: [{ type: "string" }] }, ts: "unchecked", leaks: ["properties"] },
+    "type: a number": { schema: named({ type: 5 }), ts: "unchecked", leaks: [] },
+    "type: an unknown name": { schema: named({ type: "text" }), ts: "unchecked", leaks: ["text"] },
+    "type: a list holding a number": { schema: named({ type: ["string", 5] }), ts: "unchecked", leaks: [] },
+    "minLength: a string": { schema: named({ type: "string", minLength: "3" }), ts: "unchecked", leaks: ["minLength"] },
+    "maxLength: negative": { schema: named({ type: "string", maxLength: -1 }), ts: "unchecked", leaks: ["maxLength"] },
+    "minimum: a string": { schema: named({ type: "string" }, { properties: { name: { type: "string" }, n: { minimum: "0" } } }), ts: "unchecked", leaks: ["minimum"] },
+    "anyOf: an object": { schema: named({ anyOf: { type: "string" } }), ts: "unchecked", leaks: ["anyOf"] },
+    "allOf: a number": { schema: named({ allOf: 5 }), ts: "unchecked", leaks: ["allOf"] },
+    "items: a number": { schema: named({ type: "string" }, { properties: { name: { type: "string" }, rows: { items: 5 } } }), ts: "unchecked", leaks: ["items"] },
+    "not: null": { schema: named({ not: null }), ts: "unchecked", leaks: [] },
+    "format: a list": { schema: named({ type: "string", format: ["json-pointer"] }), ts: "unchecked", leaks: ["json-pointer"] },
+    "additionalProperties: a string": { schema: named({ type: "string" }, { additionalProperties: "no" }), ts: "unchecked", leaks: ["additionalProperties"] },
+  };
+  const over = (schema: Record<string, unknown>) => ({ commands: { count: { intent: "count", effects: { reads: [], writes: [], network: false, idempotent: true }, secrets: ["--token"], emits: [{ ...PAIR, schema }] } } });
+  const scratch = () => {
+    for (let i = 0; i < 64; i++) { const s = scratchAnywhere(); if (!s.dir.includes(SECRET) && !s.state.includes(SECRET)) return s; }
+    throw new Error("no temporary directory free of the secret could be made");
+  };
+  type R = Awaited<ReturnType<typeof runCount>>;
+  const everyLine = (r: R) => [...r.stdout.objs, ...r.stderr.objs, ...r.receiptLines];
+  const expectGapless = (r: R) => {
+    const seqs = [...new Set(everyLine(r).map((o) => o.seq as number))].sort((a, b) => a - b);
+    expect(seqs).toEqual(seqs.map((_, i) => i));
+  };
+
+  for (const [name, { schema, ts, leaks }] of Object.entries(CASES)) {
+    test(`${name}: a redacted record is ${ts === "published" ? "checked and published" : "withheld as redaction.schema_unchecked with status 4"}, never an uncaught exception`, async () => {
+      const { dir, env } = scratch();
+      let thrown: unknown;
+      const r = await runCount(dir, env, ["count", "--token", SECRET], (run) => {
+        try { run.result({ event: "result", name: `Zed ${SECRET}` }, PAIR); } catch (e) { thrown = e; throw e; }
+      }, over(schema));
+      expect(r.stdout.text + r.stderr.text + r.receipt).not.toContain(SECRET);
+      expect(everyLine(r).filter((o) => o.code === "uncaught.exception")).toEqual([]);
+      expectGapless(r);
+      expect(r.violations).toEqual([]);
+      if (ts === "published") {
+        expect(thrown).toBeUndefined();
+        expect(r.status).toBe(0);
+        expect(r.stderr.objs).toEqual([]);
+        expect(r.stdout.objs.filter((o) => o.event === "result").map((o) => o.name)).toEqual(["Zed [redacted]"]);
+        // A full validator agrees the redacted record is valid: it was checked, not waved through.
+        const ajv = new Ajv2020({ strict: false }); addFormats(ajv);
+        expect(ajv.validate(schema, { event: "result", name: "Zed [redacted]" })).toBe(true);
+        return;
+      }
+      expect(r.status).toBe(4);
+      expect(everyLine(r).filter((o) => o.event === "result")).toEqual([]);
+      expect(r.stderr.objs.map((o) => [o.event, o.code])).toEqual([["error", "redaction.schema_unchecked"]]);
+      const e = r.stderr.objs[0] as { problem: string; remedy: string; detail: unknown };
+      expect(e.detail).toEqual({ schema: PAIR, redacted: ["/name"] });
+      // No engine message and no fragment of the schema on the line, in the receipt or on stdout.
+      const said = `${e.problem}\n${e.remedy}\n${JSON.stringify(e.detail)}`;
+      for (const leak of leaks) expect([leak, said.includes(leak)]).toEqual([leak, false]);
+      expect(r.receipt).not.toContain("stack");
+      expect(r.receiptLines.at(-1)).toMatchObject({ event: "end", status: 4 });
+      expect(thrown).toBeInstanceOf(ParleyRedactionUnchecked);
+      expect((thrown as Error).message).not.toContain(SECRET);
+    });
+
+    test(`${name}: a record the scrub did not change is written as before, with status 0`, async () => {
+      const { dir, env } = scratch();
+      const r = await runCount(dir, env, ["count", "--token", SECRET], (run) => { run.result({ event: "result", name: "Zed" }, PAIR); }, over(schema));
+      expect(r.status).toBe(0);
+      expect(r.stderr.objs).toEqual([]);
+      expect(r.stdout.objs.filter((o) => o.event === "result").map((o) => o.name)).toEqual(["Zed"]);
+      expect(r.receiptLines.at(-1)).toMatchObject({ event: "end", status: 0 });
+      expectGapless(r);
+    });
+
+    test(`${name}: checkRecord and schemaSubsetGap answer and do not throw`, () => {
+      const verdict = checkRecord({ event: "result", name: "Zed" }, schema);
+      const gap = schemaSubsetGap(schema);
+      if (ts === "published") { expect(gap).toBeNull(); expect(verdict).toEqual({ ok: true }); return; }
+      expect(typeof gap).toBe("string");
+      expect(verdict.ok).toBe(false);
+      expect("unsupported" in verdict && verdict.unsupported).toBe(gap!);
+    });
+  }
+
+  test("the engine does evaluate ^\\p{Lu}: a redaction that breaks it is a conflict, not a pass", async () => {
+    const { dir, env } = scratch();
+    const secret = "Zedsecret77";
+    const r = await runCount(dir, env, ["count", "--token", secret], (run) => { run.result({ event: "result", name: secret }, PAIR); }, over(CASES["pattern ^\\p{Lu}, a Unicode property"]!.schema));
+    expect(r.status).toBe(4);
+    expect(r.stderr.objs.map((o) => o.code)).toEqual(["redaction.schema_conflict"]);
+  });
+
+  test("a history transform's projection under such a schema is withheld as uncheckable, with no engine message", async () => {
+    const r = await projected((rec) => rec, (run) => { run.result({ event: "result", name: "Zed" }, PAIR); }, { over: over(CASES["pattern ^Z(, which no engine compiles"]!.schema) });
+    expect(r.status).toBe(0);
+    const warnings = r.stderr.objs.filter((o) => o.event === "warning");
+    expect(warnings.map((o) => o.code)).toEqual(["history.transform_uncheckable"]);
+    expect(JSON.stringify(warnings)).not.toContain("Invalid");
+    expect(JSON.stringify(warnings)).not.toContain("^Z(");
+    expect(r.objs.map((o) => o.event)).not.toContain("result");
+    expect(r.stdout.objs.filter((o) => o.event === "result").length).toBe(1);
+  });
+});

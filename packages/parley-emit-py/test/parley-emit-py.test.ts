@@ -487,3 +487,65 @@ describe("parley-emit-py: the two writers read a .gitignore negation alike, and 
     expect(staged).toBeGreaterThan(20);
   }, SLOW);
 });
+
+describe("parley-emit-py: the two checkers on patterns and malformed keywords", () => {
+  // PY-25e / PE-31e (spec §5.3). The writers may differ on which schemas they can evaluate; they
+  // may not differ on a verdict, and neither may answer for a pattern its engine reads otherwise.
+  const PATTERNS = [
+    "^a.c$", "^a$", "^\\s+$", "^\\S+$", "^[\\s]$", "^[^\\s]$", "^\\d+$", "^\\D$", "^\\w+$", "^\\W$", "\\bfoo\\b", "\\Bfoo", "^[a-c]+$", "^[^a-c]$", "^[\\]\\-\\\\]+$", "^[[]$",
+    "^a\\/b$", "^\\u0041\\x42\\u{43}$", "^\\u{1F600}$", "^.$", "^\\cJ$", "^[\\b]$", "^\\0$", "^a{2,3}?$", "^a{2,}$", "^(?:a|b)+?c$", "^(?!/)(?!.*(^|/)\\.\\.(/|$)).+$",
+    "(?<=a)b", "(?<!a)b", "^[a-z]{3}-[0-9]+$", "^#$", "^ $", "^[-a]$", "^[a-]$", "^[&&]$", "^[a~~b]$", "^[a||b]$", "^[a--b]$", "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$", "^[0-9a-f]{4}$",
+    "a|b|", "^$", "", "^\\t\\n\\r\\f\\v$", "^[\\t\\n]$", "^\\.\\*\\+\\?\\^\\$\\{\\}\\(\\)\\|\\[\\]$", "^[.*+?^${}()|/]$", "^x*?y+?z??$", "(a(b(c)))", "^(a|)$", "^\\x41$",
+    // Read differently by Python's `re`, or valid only in ECMAScript: Python must say unsupported.
+    "^\\p{Lu}", "\\P{L}", "(?<=Z.*)d", "(?<year>[0-9]{4})", "(a)\\1", "[^]", "[]", "[\\S]", "[\\D\\d]x{2}(?<n>a)\\k<n>", "\\ud83d\\ude00",
+    // Not ECMAScript with the `u` flag, or an inline flag: both must say unsupported.
+    "(?i)^zed", "^(?i:zed)", "(?-i:a)", "(?s:a)", "^Z(", "a{,3}", "a**", "a*+", "a{2}{3}", "(?=a)+", "\\-", "\\a", "\\Z", "\\A", "(?#c)", "(?P<n>a)", "a{2", "a}", "a]", "\\07", "\\x4",
+    "\\u12", "\\u{110000}", "[z-a]", "[\\d-x]", "a)", "*a", "a|*", "^*", "\\c1", "\\", "{", "a{1,2,3}", "a{3,1}", "(?<!a*)b",
+  ];
+  const VALUES = ["", "a", "abc", "a\nc", "a c", "a\n", " ", "﻿", "\u001c", "\u0085", " ", "\t", "x", "٣", "é", "a_9", "d", "]-\\", "[", "a/b", "ABC", "\u{1F600}", "\n", "\b", "a foo b", "foo", "\u0000", "aa", "aaa", "abac", "a/../b", "ab", "b", "abc-12", "#", "-", "&", "~", "|", "1.0", "01.0", "beef", "Zed", "zed", "Zd", "\t\n\r\f\v", ".*+?^${}()|[]", "A", "xyz", "é", "aé"];
+  const SHAPES: Record<string, unknown>[] = [
+    { enum: 5 }, { enum: {} }, { enum: [] }, { required: "a" }, { required: [5] }, { required: [] }, { properties: [] }, { properties: 5 }, { properties: { a: 5 } }, { type: 5 }, { type: "text" }, { type: [] }, { type: ["string", 5] },
+    { type: ["string", "null"] }, { minLength: "3" }, { minLength: -1 }, { minLength: 1.5 }, { minLength: 2.0 }, { maxLength: true }, { minItems: null }, { maxItems: [] }, { minProperties: {} }, { maxProperties: 1e400 }, { minimum: "0" }, { maximum: true },
+    { exclusiveMinimum: null }, { exclusiveMaximum: [] }, { minimum: 1.5 }, { pattern: 5 }, { pattern: null }, { format: 5 }, { format: ["json-pointer"] }, { format: "json-pointer" }, { anyOf: {} }, { anyOf: [] }, { allOf: 5 }, { oneOf: "x" }, { oneOf: [5] },
+    { items: 5 }, { items: [] }, { items: null }, { not: null }, { not: 5 }, { if: "x" }, { then: 5 }, { else: [] }, { additionalProperties: "no" }, { additionalProperties: null }, { const: null }, { const: { a: [1] } }, { description: 5, title: [], default: null, examples: 7 },
+  ];
+  const SHAPE_VALUES: unknown[] = ["abc", 1, 1.5, null, true, [], ["a"], {}, { a: 1 }];
+
+  const { checkRecord } = require("../../parley-emit/src/index.ts") as typeof import("../../parley-emit/src/index.ts");
+  type Verdict = "ok" | "no" | "unsupported";
+  const tsVerdict = (value: unknown, schema: unknown): Verdict => { const v = checkRecord(value, schema); return v.ok ? "ok" : "unsupported" in v ? "unsupported" : "no"; };
+  const pyVerdicts = (cases: { value: unknown; schema: unknown }[]): Verdict[] => {
+    const prog = `import json, sys, warnings\nwarnings.simplefilter("error")\nsys.path.insert(0, ${JSON.stringify(PKG)})\nimport parley_emit as pe\ndef v(c):\n    r = pe.check_record(c["value"], c["schema"])\n    return "ok" if r.ok else ("unsupported" if r.unsupported is not None else "no")\nprint(json.dumps([v(c) for c in json.load(sys.stdin)]))`;
+    const p = spawnSync(PY, ["-c", prog], { input: JSON.stringify(cases), encoding: "utf8", maxBuffer: 1 << 26 });
+    expect(p.status, p.stderr).toBe(0);
+    expect(p.stderr).toBe("");
+    return JSON.parse(p.stdout) as Verdict[];
+  };
+
+  test("PY-25e on every pattern and value: Python evaluates only what TypeScript evaluates, the verdicts then agree, and TypeScript's is the engine's own", () => {
+    const cases = PATTERNS.flatMap((pattern) => VALUES.map((value) => ({ value, schema: { type: "string", pattern } })));
+    const py = pyVerdicts(cases);
+    let both = 0, pyOnlyRefuses = 0, bothRefuse = 0;
+    cases.forEach((c, i) => {
+      const ts = tsVerdict(c.value, c.schema), pattern = c.schema.pattern;
+      let engine: Verdict;
+      try { engine = /\(\?[A-Za-z-]/.test(pattern) ? "unsupported" : new RegExp(pattern, "u").test(c.value) ? "ok" : "no"; } catch { engine = "unsupported"; }
+      expect([pattern, c.value, "ts", ts]).toEqual([pattern, c.value, "ts", engine]);
+      if (py[i] === "unsupported") { if (ts === "unsupported") bothRefuse += 1; else pyOnlyRefuses += 1; return; }
+      both += 1;
+      expect([pattern, c.value, "py", py[i]]).toEqual([pattern, c.value, "py", ts]);
+    });
+    expect(both).toBeGreaterThan(1000);
+    expect(pyOnlyRefuses).toBeGreaterThan(100);
+    expect(bothRefuse).toBeGreaterThan(500);
+  });
+
+  test("PY-25f on keywords whose value has the wrong shape, and their well-formed neighbours, the two checkers give one verdict", () => {
+    const cases = SHAPES.flatMap((schema) => SHAPE_VALUES.map((value) => ({ value, schema })));
+    // JSON cannot carry 1e400; the TypeScript side sees Infinity and the Python side null, both of which are refused.
+    const py = pyVerdicts(cases);
+    const ts = cases.map((c) => tsVerdict(c.value, c.schema));
+    expect(cases.map((c, i) => [JSON.stringify(c.schema), JSON.stringify(c.value), py[i]])).toEqual(cases.map((c, i) => [JSON.stringify(c.schema), JSON.stringify(c.value), ts[i]]));
+    expect(new Set(ts)).toEqual(new Set<Verdict>(["ok", "no", "unsupported"]));
+  });
+});

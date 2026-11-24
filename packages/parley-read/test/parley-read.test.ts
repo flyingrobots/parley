@@ -3395,6 +3395,9 @@ describe("RD-110 a fold never hides a record that differs", () => {
     expect(index.validate(withFold({ others: 2, records: 6, stands_for: [] })).state).toBe("invalid");
     expect(index.validate(withFold({ others: 2, records: 6, stands_for: "all" })).state).toBe("invalid");
     expect(index.validate(withFold({ others: 2, records: 6, stands_for: [1, 2] })).state).toBe("invalid");
+    // An id is never empty: every run id in the schemas has `minLength: 1`, and so do these (flyingrobots/parley#146).
+    expect(index.validate(withFold({ others: 1, records: 3, stands_for: [""] })).state).toBe("invalid");
+    expect(index.validate(withFold({ others: 2, records: 6, stands_for: [runId(1), ""] })).state).toBe("invalid");
     expect(index.validate({ ...line, fold: "no" }).state).toBe("invalid");
     expect(index.validate({ ...line, fold: false }).state).toBe("validated");
   });

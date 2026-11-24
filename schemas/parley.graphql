@@ -559,7 +559,7 @@ type RunFolded @parley_open {
   "How many records of those other runs, in the window, the fold left out of records, this run's own excluded; each is counted in loss.excluded and loss.folded."
   records: Int! @parley_minimum(value: 0)
   "The run ids of the other runs this section stands for, this run excluded, most recent first by the rule that makes this run the most recent of them: the latest t among each run's records in the window, then the greater run id, a run with no dated record last (flyingrobots/parley#133). It names runs, not records: the others' seq numbers are not listed and need not be this run's, so their records are read under a window that holds them with fold false, or opened by (run, seq) once their seq is known. As many as others, which a schema cannot check; a reader can. Optional, as every field a minor version adds is (spec §4.5); parley-read always writes it, never shortens it, never drops it to fit the section's bound and does not count it against that bound. It is part of the line budget.bytes bounds: when the line cannot hold it whole, no record of this run is named and this section is absent, and loss.folded still counts the fold."
-  stands_for: [String!] @parley_optional @parley_minItems(value: 1)
+  stands_for: [String!] @parley_optional @parley_minItems(value: 1) @parley_minLength(value: 1)
 }
 
 type RunSection @parley_open

@@ -131,7 +131,8 @@ export interface RunInit {
    * Every schema document the writer holds, by `id@version`: the ones the package ships and the
    * ones the tool declared (§4.2). A record redaction changed is validated against its own pair's
    * document before it is written (§5.3, flyingrobots/parley#131); a pair outside this map
-   * cannot be checked and is written as before.
+   * cannot be checked and is written as before. A pair inside it whose document the checker
+   * cannot evaluate is withheld (flyingrobots/parley#144).
    */
   schemas?: ReadonlyMap<string, Record<string, unknown>>;
 }
@@ -149,7 +150,7 @@ export class Run {
   private redactedAny: boolean;
   private failedSinks = new Set<SinkName>();
   private sidecarFailed = false;
-  /** A record was withheld because redaction made it invalid: like a sink failure, the run closes with 4 (§3.4, §5.3). */
+  /** A record was withheld because redaction made it invalid, or because the writer could not show it valid: like a sink failure, the run closes with 4 (§3.4, §5.3). */
   private outputRefused = false;
   private historyFailed = false;
   private projectionSeq: number | null = null;
@@ -180,7 +181,7 @@ export class Run {
   get status(): number | null { return this.finalStatus; }
   /** True when any stream, the receipt or a sidecar could not be written: the run closes with 4. */
   get sinkFailed(): boolean { return this.failedSinks.size > 0 || this.sidecarFailed; }
-  /** True when a record was withheld because redaction made it invalid under its declared schema (§5.3): the run closes with 4. */
+  /** True when a record redaction changed was withheld, because it was left invalid under its declared schema or because the writer could not evaluate that schema (§5.3): the run closes with 4. */
   get redactionRefused(): boolean { return this.outputRefused; }
 
   // ---- emission -------------------------------------------------------------------------
@@ -488,28 +489,40 @@ export class Run {
   }
 
   /**
-   * Refuse a record that redaction made invalid under its declared schema (§5.3,
-   * flyingrobots/parley#131). Called before a seq is taken, with the seq and time the record
-   * would get. Each copy is checked as scrubbed and as the tool handed it over; a failure the
-   * scrubbed copy has and the original did not is one redaction caused. A record that was already
-   * invalid in the same way is not this rule's business and is written as before, as is one whose
-   * pair has no schema document here or whose schema is outside the checker's subset: nothing
-   * can be established about it (check.ts).
+   * Refuse a record that redaction made invalid under its declared schema, or that the writer
+   * cannot show is valid (§5.3, flyingrobots/parley#131, flyingrobots/parley#144). Called before
+   * a seq is taken, with the seq and time the record would get, and only for a tool's record the
+   * scrub changed.
    *
-   * On a conflict nothing of the record is written. One writer-built error names each field by
-   * JSON Pointer and the schema pair, and deliberately nothing the checker said: a validator's
+   * A pair with no schema document here is exempt, as §5.3 says: the rule asks nothing of it. A
+   * pair whose document uses a construct outside the checker's subset (check.ts) is not: the
+   * writer holds the schema and cannot evaluate it, so it cannot show the redacted record is
+   * valid, and it withholds the record as `redaction.schema_unchecked`. Publishing it would be
+   * the silent invalid line the rule exists to prevent.
+   *
+   * Otherwise each copy is checked as scrubbed and as the tool handed it over; a failure the
+   * scrubbed copy has and the original did not is one redaction caused, and is
+   * `redaction.schema_conflict`. A record that was already invalid in the same way is not this
+   * rule's business and is written as before.
+   *
+   * Either way nothing of the record is written. One writer-built error names the schema pair
+   * and the fields by JSON Pointer, and deliberately nothing the checker said: a validator's
    * message can quote the schema or the value, and the value is the secret or sits beside it.
-   * The run is marked to close with 4, since a record the writer would not write is an output it
-   * could not write (§3.4), and the refusal is thrown to the caller.
+   * The construct the checker could not evaluate is part of the schema, so it is not on the line
+   * either; it is on the exception. The run is marked to close with 4, since a record the writer
+   * would not write is an output it could not write (§3.4), and the refusal is thrown to the
+   * caller.
    */
   private refuseRedactionConflict(how: Emit, payload: Record_, receiptExtra: Record_ | undefined, scrubbed: Record_, extra: Record_ | undefined, schema: SchemaRef, at: { seq: number; t: number }, redacted: string[]): void {
     const doc = this.init.schemas?.get(`${schema.id}@${schema.version}`);
     if (doc === undefined) return;
+    const pair = `${schema.id}@${schema.version}`;
     const after = this.copies(how, scrubbed, extra, schema, at), before = this.copies(how, payload, receiptExtra, schema, at);
     const pointers: string[] = [];
     for (let i = 0; i < after.length; i++) {
       const verdict = checkRecord(after[i], doc);
-      if (verdict.ok || "unsupported" in verdict) continue;
+      if (verdict.ok) continue;
+      if ("unsupported" in verdict) this.refuseUnchecked(payload, schema, pair, redacted, verdict.unsupported);
       const was = checkRecord(before[i], doc);
       const already = new Set(was.ok || "unsupported" in was ? [] : was.errors.map((e, j) => `${was.pointers[j]}\u0000${e}`));
       verdict.errors.forEach((e, j) => {
@@ -518,7 +531,6 @@ export class Run {
       });
     }
     if (pointers.length === 0) return;
-    const pair = `${schema.id}@${schema.version}`;
     const problem = `the ${String(payload.event)} record was not published: replacing a declared secret at ${redacted.join(", ")} left it invalid under ${pair} at ${pointers.join(", ")}`;
     this.outputRefused = true;
     this.emit({ to: { stderr: true, receipt: true }, writer: true }, {
@@ -527,6 +539,25 @@ export class Run {
       detail: { schema: { id: schema.id, version: schema.version }, at: pointers, redacted },
     }, SCHEMA_IDS.error);
     throw new ParleyRedactionConflict(schema, pointers, `${problem}; reported as ${REDACTION_CONFLICT_CODE}`);
+  }
+
+  /**
+   * Withhold a record the scrub changed whose schema document the writer holds and cannot
+   * evaluate (§5.3, flyingrobots/parley#144). The error line names the pair and the pointers the
+   * scrub replaced and nothing of the schema; `construct` goes to the exception only, and not
+   * even there when it would carry a declared secret value, since an exception's message is not
+   * scrubbed.
+   */
+  private refuseUnchecked(payload: Record_, schema: SchemaRef, pair: string, redacted: string[], construct: string): never {
+    const problem = `the ${String(payload.event)} record was not published: a declared secret was replaced at ${redacted.join(", ")}, and this writer cannot evaluate the schema document it holds for ${pair}, so it cannot show the redacted record is valid under it`;
+    this.outputRefused = true;
+    this.emit({ to: { stderr: true, receipt: true }, writer: true }, {
+      event: "error", code: REDACTION_UNCHECKED_CODE, problem,
+      remedy: "keep declared secrets out of records of this type, or state the type's schema within the constructs this writer's checker evaluates (its README lists them); the run will close with status 4",
+      detail: { schema: { id: schema.id, version: schema.version }, redacted },
+    }, SCHEMA_IDS.error);
+    const named = carriesSecret(construct, this.init.secretValues) ? null : construct;
+    throw new ParleyRedactionUnchecked(schema, redacted, named, `${problem}${named === null ? "" : `: the schema uses ${named}`}; reported as ${REDACTION_UNCHECKED_CODE}`);
   }
 
   private sidecar(source: number, text: string) {

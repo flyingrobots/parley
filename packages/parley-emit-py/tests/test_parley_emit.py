@@ -396,7 +396,8 @@ class TestInv(unittest.TestCase):
             attempt("undeclared", lambda: run.read_input("typo.txt"))
             attempt("stdin", lambda: run.read_input("-"))
             attempt("tree", lambda: run.read_input("src"))
-            # A later read replaces the earlier record; so does a later run.input.
+            # A later read replaces the earlier record; so does a later run.input or
+            # run.input_unreadable.
             self.put(os.path.join(run.cwd, "twice.txt"), "first")
             run.read_input("twice.txt")
             self.put(os.path.join(run.cwd, "twice.txt"), "second")
@@ -404,11 +405,14 @@ class TestInv(unittest.TestCase):
             self.put(os.path.join(run.cwd, "supplied.txt"), "on disk")
             run.read_input("supplied.txt")
             run.input("supplied.txt", "supplied later")
+            self.put(os.path.join(run.cwd, "retracted.txt"), "on disk")
+            run.read_input("retracted.txt")
+            run.input_unreadable("retracted.txt", "input.retracted")
             run.finalise_inputs()
             attempt("settled", lambda: run.read_input("rel.txt"))
 
         decl = [{"path": "rel.txt"}, {"path": absolute}, {"path": "-", "role": "stdin"}, {"path": "src", "role": "tree"},
-                {"path": "twice.txt"}, {"path": "supplied.txt"}]
+                {"path": "twice.txt"}, {"path": "supplied.txt"}, {"path": "retracted.txt"}]
         o = run_count(d, env, ["count"], body, inputs=decl)
         self.assertEqual(o.status, 0)
         self.assertEqual(refused, ["undeclared", "stdin", "tree", "settled"])
@@ -418,6 +422,8 @@ class TestInv(unittest.TestCase):
         self.assertEqual(got["-"], "input.unread")
         self.assertEqual(got["twice.txt"], hashlib.sha256(b"second").hexdigest())
         self.assertEqual(got["supplied.txt"], hashlib.sha256(b"supplied later").hexdigest())
+        self.assertEqual(got["retracted.txt"], "input.retracted")
+        self.assertIsNone(self.inv_of(o))
         assert_valid(self, o)
 
 

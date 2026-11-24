@@ -249,9 +249,10 @@ describe("PE-2 inv", () => {
       writeFileSync(join(run.cwd, "twice.txt"), "first"); run.readInput("twice.txt");
       writeFileSync(join(run.cwd, "twice.txt"), "second"); run.readInput("twice.txt");
       writeFileSync(join(run.cwd, "supplied.txt"), "on disk"); run.readInput("supplied.txt"); run.input("supplied.txt", "supplied later");
+      writeFileSync(join(run.cwd, "retracted.txt"), "on disk"); run.readInput("retracted.txt"); run.inputUnreadable("retracted.txt", "input.retracted");
       run.finaliseInputs();
       attempt("settled", () => run.readInput("rel.txt"));
-    }, {}, [{ path: "rel.txt" }, { path: abs }, { path: "-", role: "stdin" }, { path: "src", role: "tree" }, { path: "twice.txt" }, { path: "supplied.txt" }], {});
+    }, {}, [{ path: "rel.txt" }, { path: abs }, { path: "-", role: "stdin" }, { path: "src", role: "tree" }, { path: "twice.txt" }, { path: "supplied.txt" }, { path: "retracted.txt" }], {});
     expect(r.status).toBe(0);
     expect(refused).toEqual(["undeclared", "stdin", "tree", "settled"]);
     const got = Object.fromEntries(inputsOf(r).inputs.map((i) => [i.path, i.sha256 ?? i.error]));
@@ -260,6 +261,8 @@ describe("PE-2 inv", () => {
     expect(got["-"]).toBe("input.unread");
     expect(got["twice.txt"]).toBe(digestOf("second"));
     expect(got["supplied.txt"]).toBe(digestOf("supplied later"));
+    expect(got["retracted.txt"]).toBe("input.retracted");
+    expect(inputsOf(r).inv).toBeUndefined();
     expect(r.violations).toEqual([]);
   });
 });

@@ -810,6 +810,154 @@ class TestRedactionConflict(unittest.TestCase):
         self.assertEqual(lines[-1]["status"], 4)
 
 
+UNCHECKED_SECRET = "8675309"
+CONTROL = {"type": "object", "required": ["value"], "properties": {"value": {"type": "integer"}}}
+# The reviewers' variants: `value` is an integer in every one, and each adds one construct outside
+# the checker's subset. The second item is wording the error line must not carry.
+UNEVALUABLE = {
+    "format_date_time": ({"type": "object", "required": ["value"], "properties": {"value": {"type": "integer"}, "when": {"type": "string", "format": "date-time"}}}, ["date-time", "format"]),
+    "multiple_of": ({"type": "object", "required": ["value"], "properties": {"value": {"type": "integer"}, "step": {"type": "number", "multipleOf": 0.5}}}, ["multipleOf"]),
+    "unique_items": ({"type": "object", "required": ["value"], "properties": {"value": {"type": "integer"}, "tags": {"type": "array", "uniqueItems": True}}}, ["uniqueItems"]),
+    "ref_into_defs": ({"type": "object", "required": ["value"], "properties": {"value": {"$ref": "#/$defs/n"}}, "$defs": {"n": {"type": "integer"}}}, ["$ref", "$defs"]),
+    "empty_defs": ({"type": "object", "required": ["value"], "properties": {"value": {"type": "integer"}}, "$defs": {}}, ["$defs"]),
+}
+
+
+def unchecked_tool(schema, *more):
+    return {"commands": {"count": {
+        "intent": "count", "effects": {"reads": [], "writes": [], "network": False, "idempotent": True},
+        "secrets": ["--token"],
+        "emits": [{"id": "t.count", "version": "1.0.0", "schema": schema}, *more],
+    }}}
+
+
+class TestRedactionUnchecked(unittest.TestCase):
+    """A record redaction changed, under a schema document the writer holds and cannot evaluate,
+    is withheld like a conflict (spec section 5.3, flyingrobots/parley#131, decided on
+    flyingrobots/parley#144): the writer cannot show the redacted record is valid. Every case is
+    a real run through `main`."""
+
+    every_line = staticmethod(TestRedactionConflict.every_line)
+    assert_gapless = TestRedactionConflict.assert_gapless
+    said = staticmethod(TestRedactionConflict.said)
+
+    def assert_withheld(self, o, redacted):
+        self.assertEqual(o.status, 4)
+        self.assertEqual([x for x in self.every_line(o) if x["event"] == "result"], [])
+        self.assertFalse(any("value" in x for x in self.every_line(o)))
+        self.assertNotIn(UNCHECKED_SECRET, o.everything)
+        self.assertEqual([(x["event"], x["code"]) for x in o.stderr.objs], [("error", "redaction.schema_unchecked")])
+        e = o.stderr.objs[0]
+        self.assertEqual(e["detail"], {"schema": {"id": "t.count", "version": "1.0.0"}, "redacted": redacted})
+        self.assertIn("t.count@1.0.0", e["problem"])
+        for p in redacted:
+            self.assertIn(p, e["problem"])
+        self.assertEqual([(x["seq"], x["code"]) for x in o.receipt_lines if x["event"] == "error"], [(e["seq"], "redaction.schema_unchecked")])
+        self.assertEqual((o.receipt_lines[-1]["event"], o.receipt_lines[-1]["status"]), ("end", 4))
+        self.assert_gapless(o)
+        assert_valid(self, o)
+        return e
+
+    def test_the_control_inside_the_subset_is_a_conflict_as_before(self):
+        d, _, env = scratch_free(UNCHECKED_SECRET)
+        o = run_count(d, env, ["count", "--token", UNCHECKED_SECRET], lambda run: run.result({"event": "result", "value": 8675309}, T_COUNT), unchecked_tool(CONTROL))
+        self.assertEqual(o.status, 4)
+        self.assertEqual([x["code"] for x in o.stderr.objs], ["redaction.schema_conflict"])
+
+    def test_each_unevaluable_schema_withholds_the_result_with_status_4_and_one_unchecked_error(self):
+        for name, (schema, words) in UNEVALUABLE.items():
+            with self.subTest(name):
+                d, _, env = scratch_free(UNCHECKED_SECRET)
+                raised = []
+
+                def body(run):
+                    try:
+                        run.result({"event": "result", "value": 8675309}, T_COUNT)
+                    except Exception as e:
+                        raised.append(e)
+                        raise
+
+                o = run_count(d, env, ["count", "--token", UNCHECKED_SECRET], body, unchecked_tool(schema))
+                e = self.assert_withheld(o, ["/value"])
+                # No value, no validator message and no part of the schema on the line: not even
+                # the name of the construct, which is in the exception alone.
+                for leak in words + ["integer", "does not implement"]:
+                    self.assertNotIn(leak, self.said(e))
+                u = raised[0]
+                self.assertIsInstance(u, pe.ParleyRedactionUnchecked)
+                self.assertIsInstance(u, pe.ParleyRedactionConflict)
+                self.assertEqual(u.schema, {"id": "t.count", "version": "1.0.0"})
+                self.assertEqual(u.redacted, ["/value"])
+                self.assertEqual(u.pointers, [])
+                self.assertNotIn(UNCHECKED_SECRET, str(u))
+                self.assertEqual(u.construct, pe.schema_subset_gap(schema))
+                self.assertIn(u.construct, str(u))
+
+    def test_an_unchanged_record_and_a_type_with_no_schema_document_are_written(self):
+        d, _, env = scratch_free(UNCHECKED_SECRET)
+
+        def body(run):
+            run.result({"event": "result", "value": 7}, T_COUNT)
+            run.result({"event": "result", "n": 8675309, "note": "saw " + UNCHECKED_SECRET}, ("t.loose", "1.0.0"))
+
+        o = run_count(d, env, ["count", "--token", UNCHECKED_SECRET], body, unchecked_tool(UNEVALUABLE["ref_into_defs"][0], {"id": "t.loose", "version": "1.0.0"}))
+        self.assertEqual(o.status, 0)
+        self.assertEqual(o.stderr.objs, [])
+        self.assertEqual([(x.get("value"), x.get("n"), x.get("note")) for x in o.stdout.objs if x["event"] == "result"], [(7, None, None), (None, "[redacted]", "saw [redacted]")])
+        self.assertNotIn(UNCHECKED_SECRET, o.everything)
+        self.assert_gapless(o)
+
+    def test_a_redaction_in_a_free_string_is_withheld_too(self):
+        d, _, env = scratch_free(UNCHECKED_SECRET)
+        schema = {"type": "object", "properties": {"note": {"type": "string"}, "when": {"type": "string", "format": "date-time"}}}
+        o = run_count(d, env, ["count", "--token", UNCHECKED_SECRET], lambda run: run.result({"event": "result", "note": "saw " + UNCHECKED_SECRET}, T_COUNT), unchecked_tool(schema))
+        self.assert_withheld(o, ["/note"])
+
+    def test_with_receipt_extra_neither_copy_is_written_whichever_copy_the_secret_is_in(self):
+        schema = UNEVALUABLE["multiple_of"][0]
+        d, _, env = scratch_free(UNCHECKED_SECRET)
+        o = run_count(d, env, ["count", "--token", UNCHECKED_SECRET], lambda run: run.result({"event": "result", "step": 1}, T_COUNT, receipt_extra={"value": 8675309}), unchecked_tool(schema))
+        self.assert_withheld(o, ["/value"])
+        d, _, env = scratch_free(UNCHECKED_SECRET)
+        o = run_count(d, env, ["count", "--token", UNCHECKED_SECRET], lambda run: run.result({"event": "result", "value": 8675309}, T_COUNT, receipt_extra={"step": 1}), unchecked_tool(schema))
+        self.assert_withheld(o, ["/value"])
+
+    def test_a_handler_that_catches_the_refusal_carries_on_and_end_0_cannot_undo_status_4(self):
+        d, _, env = scratch_free(UNCHECKED_SECRET)
+        ended = []
+
+        def body(run):
+            try:
+                run.result({"event": "result", "value": 8675309}, T_COUNT)
+            except pe.ParleyRedactionUnchecked:
+                pass
+            run.result({"event": "result", "value": 7}, T_COUNT)
+            self.assertTrue(run.redaction_refused)
+            ended.append(run.end(0))
+
+        o = run_count(d, env, ["count", "--token", UNCHECKED_SECRET], body, unchecked_tool(UNEVALUABLE["empty_defs"][0]))
+        self.assertEqual(ended, [4])
+        self.assertEqual(o.status, 4)
+        self.assertEqual([x["value"] for x in o.stdout.objs if x["event"] == "result"], [7])
+        self.assertEqual([x["code"] for x in o.stderr.objs], ["redaction.schema_unchecked"])
+        self.assertNotIn(UNCHECKED_SECRET, o.everything)
+        self.assert_gapless(o)
+
+    def test_human_renders_the_refusal_as_prose_and_the_receipt_holds_the_error(self):
+        d, _, env = scratch_free(UNCHECKED_SECRET)
+        o = run_count(d, env, ["count", "--human", "--token", UNCHECKED_SECRET], lambda run: run.result({"event": "result", "value": 8675309}, T_COUNT), unchecked_tool(UNEVALUABLE["ref_into_defs"][0]))
+        self.assertEqual(o.status, 4)
+        self.assertTrue(o.stderr.text.startswith("error redaction.schema_unchecked: "))
+        receipts = os.path.join(d, ".parley", "receipts")
+        with open(os.path.join(receipts, next(f for f in os.listdir(receipts) if f.endswith(".jsonl"))), encoding="utf-8") as f:
+            text = f.read()
+        self.assertNotIn(UNCHECKED_SECRET, o.stdout.text + o.stderr.text + text)
+        lines = [json.loads(line) for line in text.splitlines()]
+        self.assertEqual([x for x in lines if x["event"] == "result"], [])
+        self.assertEqual([x["code"] for x in lines if x["event"] == "error"], ["redaction.schema_unchecked"])
+        self.assertEqual(lines[-1]["status"], 4)
+
+
 class TestStartupFailure(unittest.TestCase):
     def test_no_writable_location(self):
         d, state, env = scratch()

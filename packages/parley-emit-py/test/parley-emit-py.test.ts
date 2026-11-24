@@ -213,6 +213,30 @@ describe("parley-emit-py: secrets, the counter and stray output, checked by the 
     expect(violations(c)).toEqual([]);
   }, SLOW);
 
+  test("PY-24h a result redaction changed under a schema the writer cannot evaluate: the process exits 4 with one redaction.schema_unchecked error, and the doctor passes", () => {
+    // The reviewers' variants: `value` is an integer in each, beside one construct outside the checker's subset.
+    const variants: Record<string, unknown> = {
+      "format date-time": { type: "object", required: ["value"], properties: { value: { type: "integer" }, when: { type: "string", format: "date-time" } } },
+      multipleOf: { type: "object", required: ["value"], properties: { value: { type: "integer" }, step: { type: "number", multipleOf: 0.5 } } },
+      uniqueItems: { type: "object", required: ["value"], properties: { value: { type: "integer" }, tags: { type: "array", uniqueItems: true } } },
+      "$ref into $defs": { type: "object", required: ["value"], properties: { value: { $ref: "#/$defs/n" } }, $defs: { n: { type: "integer" } } },
+      "an empty $defs": { type: "object", required: ["value"], properties: { value: { type: "integer" } }, $defs: {} },
+    };
+    for (const [name, schema] of Object.entries(variants)) {
+      const c = py(join(PKG, "tests", "fixtures", "typed_secret_tool.py"), ["count", "--token", "8675309"], scratch(), { TYPED_SECRET_SCHEMA: JSON.stringify(schema) });
+      expect([name, c.status]).toEqual([name, 4]);
+      const { text } = receiptOf(c);
+      expect(c.stdout + c.stderr + text).not.toContain("8675309");
+      expect(objs(c.stdout).map((o) => o.event)).toEqual(["run", "end"]);
+      expect(objs(c.stdout).at(-1)).toMatchObject({ event: "end", status: 4 });
+      expect(objs(c.stderr)).toEqual([expect.objectContaining({ event: "error", code: "redaction.schema_unchecked", detail: { schema: { id: "typed-secret-tool.count", version: "1.0.0" }, redacted: ["/value"] } })]);
+      expect(objs(text).filter((o) => o.event === "result")).toEqual([]);
+      const seqs = [...new Set([...objs(c.stdout), ...objs(c.stderr), ...objs(text)].map((o) => o.seq as number))].sort((a, b) => a - b);
+      expect(seqs).toEqual(seqs.map((_, i) => i));
+      expect(violations(c)).toEqual([]);
+    }
+  }, SLOW);
+
   test("PY-7a ten thousand results keep one gapless seq counter, and the doctor passes", () => {
     const at = scratch([]);
     const c = py(join(PKG, "tests", "fixtures", "many.py"), ["emit", "10000"], at);

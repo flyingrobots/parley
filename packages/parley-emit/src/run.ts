@@ -85,6 +85,38 @@ export class ParleyRedactionConflict extends Error {
   }
 }
 
+/** The code of the error a writer reports in place of a record redaction changed whose schema document it holds and cannot evaluate (spec §5.3, flyingrobots/parley#144). */
+export const REDACTION_UNCHECKED_CODE = "redaction.schema_unchecked";
+
+/**
+ * Thrown by an emission whose record redaction changed, under a schema document the writer holds
+ * and cannot evaluate: one that uses a construct outside the bounded checker (check.ts). The
+ * writer cannot show the redacted record is valid under its declared schema, so it withholds it
+ * exactly as it withholds a conflict (spec §5.3, flyingrobots/parley#144): the structured error
+ * `redaction.schema_unchecked` is already reported, nothing of the record was written, no `seq`
+ * was taken and the run will end with status 4.
+ *
+ * It is a `ParleyRedactionConflict`, so a handler or a `main` that already treats the conflict
+ * needs no second branch; `pointers` is empty, because no field was shown to be invalid.
+ * `redacted` is the JSON Pointer of each value the scrub replaced. `construct` names the first
+ * thing in the schema the checker does not implement, as `schemaSubsetGap` reports it; it is in
+ * this exception and its message only, never on the error line, which carries no part of the
+ * schema. It is left out (`null`, and absent from the message) if it would carry a declared
+ * secret value. The message never carries a value.
+ */
+export class ParleyRedactionUnchecked extends ParleyRedactionConflict {
+  /** The JSON Pointer of each value the scrub replaced. */
+  readonly redacted: readonly string[];
+  /** The first construct in the schema the writer's checker does not implement, or `null` when naming it would disclose a declared secret. */
+  readonly construct: string | null;
+  constructor(schema: SchemaRef, redacted: readonly string[], construct: string | null, message: string) {
+    super(schema, [], message);
+    this.name = "ParleyRedactionUnchecked";
+    this.redacted = [...redacted];
+    this.construct = construct;
+  }
+}
+
 export interface RunInit {
   tool: string; v: string; id: string; session?: string; dryRun: boolean;
   stdout: Sink; stderr: Sink; receiptFd: number; receiptPath: string; receiptDir: string;

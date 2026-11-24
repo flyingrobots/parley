@@ -52,41 +52,92 @@ export function bookkeepingFor(cwd: string, env: Record<string, string | undefin
 }
 
 /**
- * Whether a `.gitignore` line is a negation that can match the directory `receipts` beside it.
- * With `*` in force nothing under `receipts/` can be staged unless the directory itself is
- * re-included, because git cannot re-include a file whose parent directory is excluded
- * (gitignore(5)). Conservative: a pattern this cannot evaluate (an inner `/`, a backslash, a
- * class no regex accepts) is taken to match, and the match ignores case, as git does where
- * `core.ignorecase` is set.
+ * Whether a `.gitignore` line is a negation that can match the directory `receipts` beside it, or
+ * a line this writer cannot evaluate exactly, which §5.2 says counts as one that does. With `*`
+ * in force nothing under `receipts/` can be staged unless the directory itself is re-included,
+ * because git cannot re-include a file whose parent directory is excluded (gitignore(5)).
+ *
+ * The rule, the same in the Python writer:
+ *
+ *   - A line holding a NUL byte is not evaluated. git reads a pattern as a C string, so the
+ *     pattern it sees ends at the NUL; this writer does not guess at the rest.
+ *   - Otherwise only a line that starts with `!` is a negation. Trailing spaces, one trailing
+ *     `/`, one leading `/` and any leading double star with its slash are taken off.
+ *   - What is left is not evaluated when it holds a `/`, a backslash, or any character outside
+ *     printable ASCII (a tab, a control character, any non-ASCII letter: how git folds the case
+ *     of those is its own question), or a bracket expression that is unterminated or holds
+ *     `[:`, `[=` or `[.`.
+ *   - Anything else is matched against `receipts` as git's wildmatch reads one path component:
+ *     `*` any run, `?` one character, a bracket expression a set (`!` or `^` first negates it,
+ *     the first member is literal even when it is `]`, `a-z` is a range, and a `-` after a range
+ *     or beside either bracket is literal), everything else itself. The match ignores case, as
+ *     git does where `core.ignorecase` is set, which only ever adds matches.
+ *
+ * Exported for the package's own tests, not from the index.
  */
-function negationReachesReceipts(line: string): boolean {
+export function negationReachesReceipts(line: string): boolean {
+  if (line.includes("\u0000")) return true;
   if (!line.startsWith("!")) return false;
   let pat = line.slice(1).replace(/ +$/, "");
   if (pat.endsWith("/")) pat = pat.slice(0, -1);
   if (pat.startsWith("/")) pat = pat.slice(1);
   while (pat.startsWith("**/")) pat = pat.slice(3);
   if (pat.includes("/") || pat.includes("\\")) return true;
-  try { return new RegExp(`^${globRegex(pat)}$`, "i").test("receipts"); } catch { return true; }
+  if (!/^[\x20-\x7e]*$/.test(pat)) return true;
+  const glob = parseGlob(pat);
+  return glob === null ? true : globMatches(glob, 0, "receipts", 0);
 }
 
-/** One path component's glob as a regex source: `*` and `**` any run, `?` one character, a bracket a class (`!` or `^` negating it); everything else literal. The caller has already refused a backslash. */
-function globRegex(pat: string): string {
-  let out = "";
+/** One element of a path component's glob: any run, any one character, or a set of characters given as inclusive ranges. */
+type GlobToken = { readonly kind: "star" } | { readonly kind: "any" } | { readonly kind: "set"; readonly negated: boolean; readonly ranges: readonly (readonly [string, string])[] };
+
+/** A glob of printable ASCII with no `/` and no backslash, as tokens; `null` when it holds a bracket expression this writer does not evaluate. */
+function parseGlob(pat: string): GlobToken[] | null {
+  const out: GlobToken[] = [];
+  const special = (j: number): boolean => pat[j] === "[" && (pat[j + 1] === ":" || pat[j + 1] === "=" || pat[j + 1] === ".");
   for (let i = 0; i < pat.length; i++) {
     const c = pat[i]!;
-    if (c === "*") out += ".*";
-    else if (c === "?") out += ".";
-    else if (c === "[") {
-      const j = pat.indexOf("]", i + 2);
-      if (j === -1) { out += "\\["; continue; }
-      let body = pat.slice(i + 1, j);
-      const neg = body.startsWith("!") || body.startsWith("^");
-      if (neg) body = body.slice(1);
-      out += `[${neg ? "^" : ""}${body.replace(/[\]\\]/g, "\\$&")}]`;
-      i = j;
-    } else out += c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (c === "*") { if (out.at(-1)?.kind !== "star") out.push({ kind: "star" }); continue; }
+    if (c === "?") { out.push({ kind: "any" }); continue; }
+    if (c !== "[") { out.push({ kind: "set", negated: false, ranges: [[c, c]] }); continue; }
+    let j = i + 1;
+    const negated = pat[j] === "!" || pat[j] === "^";
+    if (negated) j += 1;
+    const ranges: [string, string][] = [];
+    let prev: string | null = null;
+    for (let first = true; ; first = false) {
+      if (j >= pat.length) return null; // unterminated
+      const m = pat[j]!;
+      if (m === "]" && !first) break;
+      if (special(j)) return null;
+      if (m === "-" && prev !== null && j + 1 < pat.length && pat[j + 1] !== "]") {
+        if (special(j + 1)) return null;
+        ranges.push([prev, pat[j + 1]!]);
+        prev = null;
+        j += 2;
+      } else { ranges.push([m, m]); prev = m; j += 1; }
+    }
+    out.push({ kind: "set", negated, ranges });
+    i = j;
   }
   return out;
+}
+
+/** Whether the tokens from `ti` match `text` from `si` to its end, ignoring case. `text` is lower case. */
+function globMatches(glob: readonly GlobToken[], ti: number, text: string, si: number): boolean {
+  if (ti === glob.length) return si === text.length;
+  const tok = glob[ti]!;
+  if (tok.kind === "star") {
+    for (let k = si; k <= text.length; k++) if (globMatches(glob, ti + 1, text, k)) return true;
+    return false;
+  }
+  if (si >= text.length) return false;
+  if (tok.kind === "set") {
+    const c = text[si]!, up = c.toUpperCase();
+    const inside = tok.ranges.some(([lo, hi]) => (lo <= c && c <= hi) || (lo <= up && up <= hi));
+    if (inside === tok.negated) return false;
+  }
+  return globMatches(glob, ti + 1, text, si + 1);
 }
 
 /**
@@ -107,7 +158,9 @@ function hygiene(parleyDir: string, nonce: string): string | null {
   const lines = readFileSync(file, "utf8").split(/\r?\n/);
   if (!lines.includes("*")) return `${file} exists without a line consisting of *`;
   const negation = lines.find(negationReachesReceipts);
-  return negation === undefined ? null : `${file} has a line consisting of *, but its negation ${negation} can re-include receipts/, where git add would stage a receipt`;
+  if (negation === undefined) return null;
+  if (!negation.startsWith("!")) return `${file} has a line consisting of *, but also a line holding a NUL byte, which this writer cannot rule out as a negation that re-includes receipts/, where git add would stage a receipt`;
+  return `${file} has a line consisting of *, but its negation ${negation} can re-include receipts/, or cannot be evaluated by this writer and so counts as one that can; git add would then stage a receipt`;
 }
 
 function reserve(receiptDir: string, run: string): { receiptPath: string; fd: number } {

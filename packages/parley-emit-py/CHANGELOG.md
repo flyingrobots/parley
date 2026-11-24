@@ -62,6 +62,18 @@ The writer stamps neither message, so no emitted line changes. `--vendor-info` r
   same way and a record of a type declared with no `schema` document, which spec §5.3 exempts,
   are written as before. Writer-built records are never checked.
 - `run.error` marks the run as having reported an error once the line is out, not before.
+- **A `.parley/.gitignore` negation the writer cannot evaluate exactly counts as one that
+  matches** (spec §5.2). The check for a negation that can re-include `receipts/` read a bracket
+  expression holding a POSIX class, such as `![[:alpha:]]eceipts`, as a different pattern, and compared a line holding a NUL byte whole where git
+  stops at the NUL. With `*` and `!*.jsonl` beside any of those, the receipt stayed under
+  `.parley/receipts/` and `git add` staged it. The rule now, the same in the TypeScript and the
+  Python writer: a line holding a NUL byte, and a negation holding an inner `/`, a backslash, any
+  character outside printable ASCII, or a bracket expression that is unterminated or holds `[:`,
+  `[=` or `[.`, is not evaluated and sends the receipt to the state directory with the
+  `receipt.relocated` warning. Everything else is matched as git's wildmatch reads one path
+  component, ignoring case. This relocates for a few lines git would not match (`!receipts`
+  followed by a tab, `!receiptſ`), which is the direction the spec asks for. The cases run real
+  git as the oracle.
 
 ### Added
 

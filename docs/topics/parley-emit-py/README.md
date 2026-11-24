@@ -24,7 +24,11 @@ derivation, and the README's last section names every place it differs.
 3. Replace `sys.stdout` and `sys.stderr` with capturing objects (§1.2). Resolve the running
    command's declared credential sources; a resolver that raises means not present.
 4. Reserve the receipt (§3.1, §5, §5.2): `.parley/.gitignore` holding `*`, and no negation that
-   can re-include `receipts/` (flyingrobots/parley#109), created whole if absent and never
+   can re-include `receipts/` (flyingrobots/parley#109; a negation the writer cannot evaluate
+   exactly counts as one, by the rule `_negation_reaches_receipts` states and the TypeScript
+   writer shares: an inner `/`, a backslash, a character outside printable ASCII, a bracket
+   expression that is unterminated or holds `[:`, `[=` or `[.`, or a line holding a NUL byte),
+   created whole if absent and never
    overwritten, then `.parley/receipts/<run>.jsonl` opened exclusively; otherwise the
    state directory `$XDG_STATE_HOME/parley/<repo-hash>/receipts/`, keyed as `parley-read` looks for
    it. With neither, `startup.receipt_unwritable` or `startup.secret_in_path`, exit 3.

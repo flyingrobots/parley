@@ -520,13 +520,33 @@ def _unlink_safe(p: str) -> None:
         pass
 
 
+_PRINTABLE_ASCII = re.compile(r"[\x20-\x7e]*\Z")
+
+
 def _negation_reaches_receipts(line: str) -> bool:
     """Whether a `.gitignore` line is a negation that can match the directory `receipts` beside
-    it. With `*` in force nothing under `receipts/` can be staged unless the directory itself is
-    re-included, because git cannot re-include a file whose parent directory is excluded
-    (gitignore(5)). Conservative: a pattern this cannot evaluate (an inner `/`, a backslash, a
-    class no regex accepts) is taken to match, and the match ignores case, as git does where
-    `core.ignorecase` is set."""
+    it, or a line this writer cannot evaluate exactly, which spec section 5.2 says counts as one
+    that does. With `*` in force nothing under `receipts/` can be staged unless the directory
+    itself is re-included, because git cannot re-include a file whose parent directory is
+    excluded (gitignore(5)).
+
+    The rule, the same in the TypeScript writer:
+
+    - A line holding a NUL byte is not evaluated. git reads a pattern as a C string, so the
+      pattern it sees ends at the NUL; this writer does not guess at the rest.
+    - Otherwise only a line that starts with `!` is a negation. Trailing spaces, one trailing
+      `/`, one leading `/` and any leading `**/` are taken off.
+    - What is left is not evaluated when it holds a `/`, a backslash, or any character outside
+      printable ASCII (a tab, a control character, any non-ASCII letter: how git folds the case
+      of those is its own question), or a bracket expression that is unterminated or holds `[:`,
+      `[=` or `[.`.
+    - Anything else is matched against `receipts` as git's wildmatch reads one path component:
+      `*` any run, `?` one character, a bracket expression a set (`!` or `^` first negates it,
+      the first member is literal even when it is `]`, `a-z` is a range, and a `-` after a range
+      or beside either bracket is literal), everything else itself. The match ignores case, as
+      git does where `core.ignorecase` is set, which only ever adds matches."""
+    if "\x00" in line:
+        return True
     if not line.startswith("!"):
         return False
     pat = line[1:].rstrip(" ")
@@ -538,37 +558,83 @@ def _negation_reaches_receipts(line: str) -> bool:
         pat = pat[3:]
     if "/" in pat or "\\" in pat:
         return True
-    try:
-        return re.fullmatch(_glob_regex(pat), "receipts", re.IGNORECASE) is not None
-    except re.error:
+    if not _PRINTABLE_ASCII.match(pat):
         return True
+    glob = _parse_glob(pat)
+    return True if glob is None else _glob_matches(glob, 0, "receipts", 0)
 
 
-def _glob_regex(pat: str) -> str:
-    """One path component's glob as a regex: `*` and `**` any run, `?` one character, a bracket
-    a class (`!` or `^` negating it); everything else literal. The caller has already refused a
-    backslash, so no escape reaches here."""
-    out, i = "", 0
-    while i < len(pat):
+def _parse_glob(pat: str) -> Optional[List[Any]]:
+    """A glob of printable ASCII with no `/` and no backslash, as tokens: `"*"` any run, `"?"` any
+    one character, or `(negated, ranges)` a set of characters given as inclusive ranges. None
+    when it holds a bracket expression this writer does not evaluate."""
+    out: List[Any] = []
+    n = len(pat)
+
+    def special(j: int) -> bool:
+        return pat[j:j + 1] == "[" and pat[j + 1:j + 2] in (":", "=", ".")
+
+    i = 0
+    while i < n:
         c = pat[i]
         if c == "*":
-            out += ".*"
+            if not out or out[-1] != "*":
+                out.append("*")
         elif c == "?":
-            out += "."
-        elif c == "[":
-            j = pat.find("]", i + 2)
-            if j == -1:
-                out += re.escape(c)
-            else:
-                body = pat[i + 1:j]
-                neg = body[:1] in ("!", "^")
-                body = body[1:] if neg else body
-                out += "[" + ("^" if neg else "") + body.replace("]", "\\]") + "]"
-                i = j
+            out.append("?")
+        elif c != "[":
+            out.append((False, [(c, c)]))
         else:
-            out += re.escape(c)
+            j = i + 1
+            negated = pat[j:j + 1] in ("!", "^")
+            if negated:
+                j += 1
+            ranges: List[Tuple[str, str]] = []
+            prev: Optional[str] = None
+            first = True
+            while True:
+                if j >= n:
+                    return None  # unterminated
+                m = pat[j]
+                if m == "]" and not first:
+                    break
+                if special(j):
+                    return None
+                if m == "-" and prev is not None and j + 1 < n and pat[j + 1] != "]":
+                    if special(j + 1):
+                        return None
+                    ranges.append((prev, pat[j + 1]))
+                    prev = None
+                    j += 2
+                else:
+                    ranges.append((m, m))
+                    prev = m
+                    j += 1
+                first = False
+            out.append((negated, ranges))
+            i = j
         i += 1
     return out
+
+
+def _glob_matches(glob: Sequence[Any], ti: int, text: str, si: int) -> bool:
+    """Whether the tokens from `ti` match `text` from `si` to its end, ignoring case. `text` is
+    lower case."""
+    if ti == len(glob):
+        return si == len(text)
+    tok = glob[ti]
+    if tok == "*":
+        return any(_glob_matches(glob, ti + 1, text, k) for k in range(si, len(text) + 1))
+    if si >= len(text):
+        return False
+    if tok != "?":
+        negated, ranges = tok
+        c = text[si]
+        up = c.upper()
+        inside = any(lo <= c <= hi or lo <= up <= hi for lo, hi in ranges)
+        if inside == negated:
+            return False
+    return _glob_matches(glob, ti + 1, text, si + 1)
 
 
 def _hygiene(parley_dir: str, nonce: str) -> Optional[str]:
@@ -597,7 +663,9 @@ def _hygiene(parley_dir: str, nonce: str) -> Optional[str]:
         return f"{f} exists without a line consisting of *"
     for line in lines:
         if _negation_reaches_receipts(line):
-            return f"{f} has a line consisting of *, but its negation {line} can re-include receipts/, where git add would stage a receipt"
+            if not line.startswith("!"):
+                return f"{f} has a line consisting of *, but also a line holding a NUL byte, which this writer cannot rule out as a negation that re-includes receipts/, where git add would stage a receipt"
+            return f"{f} has a line consisting of *, but its negation {line} can re-include receipts/, or cannot be evaluated by this writer and so counts as one that can; git add would then stage a receipt"
     return None
 
 

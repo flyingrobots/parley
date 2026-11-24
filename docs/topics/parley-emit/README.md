@@ -37,7 +37,10 @@ it. This page is the reference for what the package does on `main`; the package
 2. Reserve the receipt: `.parley/.gitignore` with a line `*`, created whole and linked into
    place if absent; then `.parley/receipts/<run>.jsonl` opened exclusively. On a user's ignore
    file (one without `*`, or with a negation that can re-include `receipts/`,
-   flyingrobots/parley#109), a working-directory path carrying a secret value, an unwritable directory or
+   flyingrobots/parley#109; a negation the writer cannot evaluate exactly counts as one, as
+   `negationReachesReceipts` in `src/location.ts` states: an inner `/`, a backslash, a character
+   outside printable ASCII, a bracket expression that is unterminated or holds `[:`, `[=` or
+   `[.`, or a line holding a NUL byte), a working-directory path carrying a secret value, an unwritable directory or
    a failed reservation, the state directory keyed by a digest of the repository root. With
    neither, one `startup.failed` line on stderr (`startup.receipt_unwritable`, or
    `startup.secret_in_path` when the state path would carry the secret too) and exit 3 (§3.2, §5,

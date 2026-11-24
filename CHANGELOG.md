@@ -149,7 +149,11 @@ Each package's own changelog is the record; this is the summary.
 
 - **A fold no longer hides a run whose result differs** (`@flyingrobots/parley-read` 0.2.0,
   flyingrobots/parley#133). It emits `parley.query` and `parley.lens` at 1.1.0 and ships 1.0.0
-  beside them, so it validates the lines of both versions.
+  beside them, so it validates the lines of both versions. **One known exception:** the reader
+  parses numbers as doubles, so two results that differ only in an integer beyond 2^53 compare
+  equal and still fold, and such an integer is not returned exactly. That falls short of what the
+  `parley.lens` 1.1.0 description says a fold is; the description is right and the reader is to
+  meet it (flyingrobots/parley#159).
 - **A record that redaction made invalid is never published** (`@flyingrobots/parley-emit` 0.4.0,
   `parley_emit.py` 0.3.0, flyingrobots/parley#131): the writers implement the §5.3 sentences above
   for a tool's record the scrub changed, with a `redaction.schema_conflict` error and status 4.

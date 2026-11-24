@@ -17,7 +17,10 @@ commit of that release, and carry the wording the pre-freeze review settled
 
 ### Fixed
 
-- **Two runs whose results differ no longer fold.** The fold compared `inv`, the outcome, the
+- **Two runs whose results differ no longer fold**, with one known exception: results that differ
+  only in an integer beyond 2^53 still compare equal, because a record is parsed into doubles, and
+  such an integer is not returned exactly (flyingrobots/parley#159; stated under "What it does not
+  do" in the README). The fold compared `inv`, the outcome, the
   `end` statuses, the diagnostic codes and `resolved`, and no result, so two successful runs of
   one invocation that answered 1 and 2 came back as one run with `folded: {others: 1}` under every
   view and every budget. Runs now fold only when every result record is equal too: the tool's own

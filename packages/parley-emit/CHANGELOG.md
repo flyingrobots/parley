@@ -8,7 +8,8 @@ on its own; the spec and each message schema move separately (spec §4.4).
 ## [0.3.0] — 2026-11-24
 
 A declared file input can be read through the run, so the receipt records the bytes the tool read
-(flyingrobots/parley#132). No change to the spec or to the schemas the package ships.
+(flyingrobots/parley#132), and a `receiptExtra` field can no longer contradict the record
+(flyingrobots/parley#130). No change to the spec or to the schemas the package ships.
 
 ### Added
 
@@ -33,6 +34,12 @@ A declared file input can be read through the run, so the receipt records the by
   declared file the tool does not read through the writer, and does not supply with `run.input`,
   is still digested when the inputs are finalised, and can describe bytes the tool did not read.
   The documentation now says so. A tool gets the fix by calling `run.readInput`.
+- **A `receiptExtra` field can no longer contradict the record** (flyingrobots/parley#130).
+  `run.result({ value: 1 }, schema, { value: 2 })` used to put `1` on stdout and `2` in the
+  receipt under one `seq`, against spec §1.3 (copies agree on every field they share). The call now
+  throws `TypeError` before either copy is written. Equal shared values are accepted and written
+  from the record; receipt-only fields are unchanged. **BREAKING for a tool that relied on the
+  overwrite**, which was already non-conforming.
 
 ## [0.2.4] — 2026-11-23
 

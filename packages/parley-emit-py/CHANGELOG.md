@@ -13,7 +13,8 @@ release's digest is recorded on its GitHub release (tag `parley-emit-py-vX.Y.Z`)
 ## [0.2.0] — 2026-11-24
 
 A declared file input can be read through the run, so the receipt records the bytes the tool read
-(flyingrobots/parley#132). The schemas it embeds and the `--vendor-info` line's shape are
+(flyingrobots/parley#132), and a `receipt_extra` field can no longer contradict the record
+(flyingrobots/parley#130). The schemas it embeds and the `--vendor-info` line's shape are
 unchanged. **The file's digest moves with the file, so a tool that vendors it copies the new file
 and re-pins the copy by the SHA-256 that `--vendor-info` prints.**
 
@@ -39,6 +40,12 @@ and re-pins the copy by the SHA-256 that `--vendor-info` prints.**
   a declared file the tool does not read through the writer, and does not supply with `run.input`,
   is still digested when the inputs are finalised, and can describe bytes the tool did not read.
   The documentation now says so. A tool gets the fix by calling `run.read_input`.
+- **A `receipt_extra` field can no longer contradict the record** (flyingrobots/parley#130).
+  `run.result({"value": 1}, schema, {"value": 2})` used to put `1` on stdout and `2` in the
+  receipt under one `seq`, against spec §1.3. The call now raises `ValueError` before either copy
+  is written. Equal shared values are accepted and written from the record; receipt-only fields
+  are unchanged. **BREAKING for a tool that relied on the overwrite**, which was already
+  non-conforming.
 
 ## [0.1.2] — 2026-11-22
 

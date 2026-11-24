@@ -7,6 +7,13 @@ the entry under it names each schema version it releases, and those are separate
 
 ## [Unreleased]
 
+### Fixed
+
+- The repository ignores Python bytecode (`__pycache__/`, `*.pyc`). The Python writer's release
+  workflow runs the file's tests before the release gate, the tests leave bytecode beside the
+  file, and the gate refused the run with `gate.dirty_tree`. Found by the first dry run of that
+  workflow on a runner, before any tag was pushed (flyingrobots/parley#148).
+
 ## [0.2.1] — 2026-11-24
 
 The second release of the schemas, with spec `0.2.1`. It releases two schema versions, and the

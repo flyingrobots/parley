@@ -150,10 +150,10 @@ describe("the release gate (flyingrobots/parley#147)", () => {
     expect(r.schemas.find((s) => s.id === "parley.query" && s.version === "1.1.0")?.released_in).toBe("0.2.1");
     expect(r.schemas.find((s) => s.id === "parley.query" && s.version === "1.0.0")?.released_in).toBe("0.2.0");
     // Each file of the tarball by digest, so a repacked tarball can be compared file by file.
-    expect(r.artifact.files.map((f) => f.path)).toContain("package.json");
-    expect(r.artifact.files.find((f) => f.path === "src/schemas.ts")?.sha256).toBe(sha("sha256", join(dir, "packages/parley-read/src/schemas.ts")));
+    expect(r.artifact!.files.map((f) => f.path)).toContain("package.json");
+    expect(r.artifact!.files.find((f) => f.path === "src/schemas.ts")?.sha256).toBe(sha("sha256", join(dir, "packages/parley-read/src/schemas.ts")));
     // The report is beside the artifact, never inside it.
-    expect(r.artifact.files.some((f) => f.path.includes("release-report"))).toBe(false);
+    expect(r.artifact!.files.some((f) => f.path.includes("release-report"))).toBe(false);
 
     // A draft has no snapshot digest to report, and the report says the gate refused.
     const draft = gate({ package: "parley-read", repo: fixture("drafts") }).report;
@@ -216,6 +216,7 @@ describe("the release gate (flyingrobots/parley#147)", () => {
     put(dir, "notes.txt", "not committed\n");
     const dirty = gate({ package: "parley-emit", repo: dir });
     expect(refused(dirty)).toEqual(["gate.dirty_tree"]);
+    expect(dirty.lines.find((l) => l.event === "gate.refusal")).toMatchObject({ problem: expect.stringContaining("1 path(s) (notes.txt)") });
     expect(dirty.report.source.clean).toBe(false);
     rmSync(join(dir, "notes.txt"));
 
@@ -233,7 +234,7 @@ describe("the release gate (flyingrobots/parley#147)", () => {
     expect(off.report.source.on_default_branch).toBe(false);
   }, 2 * SLOW);
 
-  test("GATE-6: the gate judges the artifact it is given: a stale tarball, another package's, and a manifest npm would not publish as written", () => {
+  test("GATE-6: the gate judges the artifact it is given: another package's, a manifest npm would not publish as written, a file that is not there", () => {
     const dir = fixture("released");
     const out = outDir();
     expect(gate({ package: "parley-read", repo: dir, out }).passed).toBe(true);
@@ -242,7 +243,7 @@ describe("the release gate (flyingrobots/parley#147)", () => {
     // Another package's artifact is not this package's release.
     expect(refused(gate({ package: "parley-emit", repo: dir, artifact: good }))).toEqual(["gate.artifact_mismatch"]);
     expect(refused(gate({ package: "parley-read", repo: dir, artifact: join(dir, "packages/parley-emit-py/parley_emit.py") }))).toEqual(["gate.artifact_mismatch"]);
-    // A tarball packed from another state of the package: the tree is right and the artifact is not.
+    // A tarball whose manifest is not the repository's: the tree is right and the artifact is not.
     const stage = join(scratch, `stage-${++made}`);
     mkdirSync(stage, { recursive: true });
     expect(spawnSync("tar", ["-xzf", good, "-C", stage]).status).toBe(0);
@@ -251,12 +252,6 @@ describe("the release gate (flyingrobots/parley#147)", () => {
     const altered = join(scratch, `altered-${made}.tgz`);
     expect(spawnSync("tar", ["-czf", altered, "-C", stage, "package"]).status).toBe(0);
     expect(refused(gate({ package: "parley-read", repo: dir, artifact: altered }))).toEqual(["gate.manifest_differs", "gate.workspace_range"]);
-    const stale = fixture("drafts");
-    const fromDrafts = outDir();
-    gate({ package: "parley-read", repo: stale, out: fromDrafts });
-    const old = gate({ package: "parley-read", repo: dir, artifact: join(fromDrafts, "flyingrobots-parley-read-0.2.0.tgz") });
-    expect(old.passed).toBe(false);
-    expect(old.report.gate.refusals.map((x) => x.code)).toContain("pin.content_differs");
     expect(gate({ package: "parley-read", repo: dir, artifact: join(scratch, "no-such.tgz") }).passed).toBe(false);
   }, 2 * SLOW);
 

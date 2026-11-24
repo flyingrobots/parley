@@ -1,0 +1,505 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flyingrobots.dev/parley/tooling/parley.tooling.release_gate/1.0.0",
+  "title": "release-gate output line",
+  "description": "One of the gate's own lines of output from scripts/release-gate.ts. The gate also passes through the lines of the checker it runs, which carry their own stamp, parley.tooling.release_check, and validate against scripts/release-check.schema.json. Tooling output, not a protocol message; lives beside the script rather than under schemas/.",
+  "type": "object",
+  "required": [
+    "event",
+    "_schema"
+  ],
+  "properties": {
+    "_schema": {
+      "$ref": "#/$defs/stamp"
+    },
+    "event": {
+      "type": "string"
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "event": {
+          "const": "gate.artifact"
+        },
+        "package": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 of the artifact's bytes; null when the file could not be read."
+        },
+        "packed": {
+          "type": "boolean",
+          "description": "Whether this run built the artifact, or it already existed."
+        },
+        "_schema": {
+          "$ref": "#/$defs/stamp"
+        }
+      },
+      "required": [
+        "package",
+        "version",
+        "file",
+        "path",
+        "sha256",
+        "packed"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "properties": {
+        "event": {
+          "const": "gate.frozen_since"
+        },
+        "ref": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "description": "The reference released snapshots are compared with, beside the baseline; null when there is none."
+        },
+        "commit": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "how": {
+          "enum": [
+            "given",
+            "derived",
+            "none"
+          ],
+          "description": "given with --frozen-since, derived from the package's release tags, or none."
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1
+        },
+        "_schema": {
+          "$ref": "#/$defs/stamp"
+        }
+      },
+      "required": [
+        "ref",
+        "commit",
+        "how",
+        "note"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "properties": {
+        "event": {
+          "const": "gate.refusal"
+        },
+        "package": {
+          "type": "string",
+          "minLength": 1
+        },
+        "code": {
+          "$ref": "#/$defs/code"
+        },
+        "problem": {
+          "type": "string",
+          "minLength": 1
+        },
+        "_schema": {
+          "$ref": "#/$defs/stamp"
+        }
+      },
+      "required": [
+        "package",
+        "code",
+        "problem"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "properties": {
+        "event": {
+          "const": "gate.consumer"
+        },
+        "passed": {
+          "type": "boolean"
+        },
+        "dir": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The directory the package was installed into."
+        },
+        "installed": {
+          "type": "boolean",
+          "description": "Whether this run installed into it, or judged a directory as it was found."
+        },
+        "reader": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "required": [
+            "name",
+            "version",
+            "integrity"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "version": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "integrity": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "description": "The packed package as the lockfile records it."
+        },
+        "dependency": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "required": [
+            "name",
+            "version",
+            "resolved",
+            "integrity"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "version": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "resolved": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "integrity": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "description": "The dependency as it resolved: the exact version and the registry's integrity."
+        },
+        "smoke": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "required": [
+            "ran",
+            "bundles",
+            "records",
+            "validated",
+            "invalid",
+            "writer_path"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "ran": {
+              "type": "boolean"
+            },
+            "bundles": {
+              "type": "integer"
+            },
+            "records": {
+              "type": "integer"
+            },
+            "validated": {
+              "type": "integer"
+            },
+            "invalid": {
+              "type": "integer"
+            },
+            "writer_path": {
+              "type": "string",
+              "description": "Where the reader's own import of the dependency resolved."
+            }
+          }
+        },
+        "refusals": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "code",
+              "problem"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "enum": [
+                  "consumer.unreadable",
+                  "consumer.inside_workspace",
+                  "consumer.install_failed",
+                  "consumer.reader_differs",
+                  "consumer.dependency_missing",
+                  "consumer.dependency_linked",
+                  "consumer.dependency_not_from_registry",
+                  "consumer.dependency_differs",
+                  "consumer.smoke_failed"
+                ]
+              },
+              "problem": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "_schema": {
+          "$ref": "#/$defs/stamp"
+        }
+      },
+      "required": [
+        "passed",
+        "dir",
+        "installed",
+        "reader",
+        "dependency",
+        "smoke",
+        "refusals"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "properties": {
+        "event": {
+          "const": "gate.result"
+        },
+        "package": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "passed": {
+          "type": "boolean"
+        },
+        "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "blocking": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "version",
+              "code"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "version": {
+                "type": "string",
+                "minLength": 1
+              },
+              "code": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "description": "The schema identities that stand between this artifact and a stable release, with the checker's code for each."
+        },
+        "refusals": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "report": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Where the release report was written; null without --out."
+        },
+        "_schema": {
+          "$ref": "#/$defs/stamp"
+        }
+      },
+      "required": [
+        "package",
+        "version",
+        "passed",
+        "file",
+        "sha256",
+        "blocking",
+        "refusals",
+        "report"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "properties": {
+        "event": {
+          "const": "gate.help"
+        },
+        "usage": {
+          "type": "string",
+          "minLength": 1
+        },
+        "intent": {
+          "type": "string",
+          "minLength": 1
+        },
+        "packages": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "exit": {
+          "type": "object",
+          "required": [
+            "0",
+            "1",
+            "2"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "0": {
+              "type": "string"
+            },
+            "1": {
+              "type": "string"
+            },
+            "2": {
+              "type": "string"
+            }
+          }
+        },
+        "_schema": {
+          "$ref": "#/$defs/stamp"
+        }
+      },
+      "required": [
+        "usage",
+        "intent",
+        "packages",
+        "exit"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "properties": {
+        "event": {
+          "const": "error"
+        },
+        "code": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$"
+        },
+        "problem": {
+          "type": "string",
+          "minLength": 1
+        },
+        "_schema": {
+          "$ref": "#/$defs/stamp"
+        }
+      },
+      "required": [
+        "code",
+        "problem"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "$defs": {
+    "stamp": {
+      "type": "object",
+      "required": [
+        "id",
+        "version"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "const": "parley.tooling.release_gate"
+        },
+        "version": {
+          "const": "1.0.0"
+        }
+      }
+    },
+    "code": {
+      "description": "Why the gate refuses, beside what the checker refuses. The consumer.* codes are the clean consumer's (scripts/clean-consumer.schema.json).",
+      "enum": [
+        "gate.tag_mismatch",
+        "gate.changelog_heading_missing",
+        "gate.not_on_default_branch",
+        "gate.dirty_tree",
+        "gate.artifact_mismatch",
+        "gate.manifest_differs",
+        "gate.workspace_range",
+        "consumer.unreadable",
+        "consumer.inside_workspace",
+        "consumer.install_failed",
+        "consumer.reader_differs",
+        "consumer.dependency_missing",
+        "consumer.dependency_linked",
+        "consumer.dependency_not_from_registry",
+        "consumer.dependency_differs",
+        "consumer.smoke_failed"
+      ]
+    }
+  }
+}

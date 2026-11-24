@@ -1,0 +1,273 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flyingrobots.dev/parley/tooling/parley.tooling.clean_consumer/1.0.0",
+  "title": "clean-consumer output line",
+  "description": "One line of output from scripts/clean-consumer.ts. Tooling output, not a protocol message; lives beside the script rather than under schemas/.",
+  "type": "object",
+  "required": [
+    "event",
+    "_schema"
+  ],
+  "properties": {
+    "_schema": {
+      "$ref": "#/$defs/stamp"
+    },
+    "event": {
+      "type": "string"
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "event": {
+          "const": "consumer.result"
+        },
+        "passed": {
+          "type": "boolean"
+        },
+        "dir": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The directory the package was installed into."
+        },
+        "installed": {
+          "type": "boolean",
+          "description": "Whether this run installed into it, or judged a directory as it was found."
+        },
+        "reader": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "required": [
+            "name",
+            "version",
+            "integrity"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "version": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "integrity": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "description": "The packed package as the lockfile records it."
+        },
+        "dependency": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "required": [
+            "name",
+            "version",
+            "resolved",
+            "integrity"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "version": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "resolved": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "integrity": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "description": "The dependency as it resolved: the exact version and the registry's integrity."
+        },
+        "smoke": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "required": [
+            "ran",
+            "bundles",
+            "records",
+            "validated",
+            "invalid",
+            "writer_path"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "ran": {
+              "type": "boolean"
+            },
+            "bundles": {
+              "type": "integer"
+            },
+            "records": {
+              "type": "integer"
+            },
+            "validated": {
+              "type": "integer"
+            },
+            "invalid": {
+              "type": "integer"
+            },
+            "writer_path": {
+              "type": "string",
+              "description": "Where the reader's own import of the dependency resolved."
+            }
+          }
+        },
+        "refusals": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "code",
+              "problem"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "enum": [
+                  "consumer.unreadable",
+                  "consumer.inside_workspace",
+                  "consumer.install_failed",
+                  "consumer.reader_differs",
+                  "consumer.dependency_missing",
+                  "consumer.dependency_linked",
+                  "consumer.dependency_not_from_registry",
+                  "consumer.dependency_differs",
+                  "consumer.smoke_failed"
+                ]
+              },
+              "problem": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "_schema": {
+          "$ref": "#/$defs/stamp"
+        }
+      },
+      "required": [
+        "passed",
+        "dir",
+        "installed",
+        "reader",
+        "dependency",
+        "smoke",
+        "refusals"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "properties": {
+        "event": {
+          "const": "consumer.help"
+        },
+        "usage": {
+          "type": "string",
+          "minLength": 1
+        },
+        "intent": {
+          "type": "string",
+          "minLength": 1
+        },
+        "exit": {
+          "type": "object",
+          "required": [
+            "0",
+            "1",
+            "2"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "0": {
+              "type": "string"
+            },
+            "1": {
+              "type": "string"
+            },
+            "2": {
+              "type": "string"
+            }
+          }
+        },
+        "_schema": {
+          "$ref": "#/$defs/stamp"
+        }
+      },
+      "required": [
+        "usage",
+        "intent",
+        "exit"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "properties": {
+        "event": {
+          "const": "error"
+        },
+        "code": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$"
+        },
+        "problem": {
+          "type": "string",
+          "minLength": 1
+        },
+        "_schema": {
+          "$ref": "#/$defs/stamp"
+        }
+      },
+      "required": [
+        "code",
+        "problem"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "$defs": {
+    "stamp": {
+      "type": "object",
+      "required": [
+        "id",
+        "version"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "const": "parley.tooling.clean_consumer"
+        },
+        "version": {
+          "const": "1.0.0"
+        }
+      }
+    }
+  }
+}

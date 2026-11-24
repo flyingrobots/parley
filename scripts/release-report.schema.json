@@ -1,0 +1,511 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flyingrobots.dev/parley/tooling/parley.tooling.release_report/1.0.0",
+  "title": "release report",
+  "description": "What one release of one package is, written by scripts/release-gate.ts beside the artifact and attached to the GitHub release: a JSON document, not a line. It is never inside the artifact it describes. Tooling output, not a protocol message.",
+  "type": "object",
+  "required": [
+    "_schema",
+    "package",
+    "tag",
+    "source",
+    "spec_release",
+    "schema_source",
+    "schemas",
+    "artifact",
+    "gate",
+    "consumer"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "_schema": {
+      "type": "object",
+      "required": [
+        "id",
+        "version"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "const": "parley.tooling.release_report"
+        },
+        "version": {
+          "const": "1.0.0"
+        }
+      }
+    },
+    "package": {
+      "type": "object",
+      "required": [
+        "name",
+        "version",
+        "directory"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "directory": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "tag": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "The tag the release was started by; null when the gate ran before a tag existed."
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "commit",
+        "tree",
+        "on_default_branch",
+        "clean"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "commit": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "tree": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "on_default_branch": {
+          "type": "boolean"
+        },
+        "clean": {
+          "type": "boolean",
+          "description": "The working tree was the commit's."
+        }
+      }
+    },
+    "spec_release": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "required": [
+        "version",
+        "date"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "type": "string"
+        },
+        "date": {
+          "type": "string"
+        }
+      },
+      "description": "The latest dated heading of the root changelog at the commit."
+    },
+    "schema_source": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "The commit the artifact's bundled schemas were copied from, as the artifact states it."
+    },
+    "schemas": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "version",
+          "declared",
+          "snapshot",
+          "snapshot_sha256",
+          "released_in"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "version": {
+            "type": "string",
+            "minLength": 1
+          },
+          "declared": {
+            "type": "boolean",
+            "description": "The artifact's code stamps this pair on a line."
+          },
+          "snapshot": {
+            "type": "string",
+            "minLength": 1
+          },
+          "snapshot_sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "SHA-256 of the released snapshot file in the tree; null for a draft."
+          },
+          "released_in": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The root changelog release whose dated entry names the pair; null for a draft."
+          }
+        }
+      }
+    },
+    "artifact": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "required": [
+        "file",
+        "bytes",
+        "sha256",
+        "sha1",
+        "integrity",
+        "files"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "sha1": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$",
+          "description": "What npm prints as shasum."
+        },
+        "integrity": {
+          "type": "string",
+          "pattern": "^sha512-",
+          "description": "What a lockfile records, and what npm prints as integrity."
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "path",
+              "sha256"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          }
+        }
+      },
+      "description": "Null when the artifact could not be read."
+    },
+    "gate": {
+      "type": "object",
+      "required": [
+        "phase",
+        "passed",
+        "checker",
+        "base",
+        "base_commit",
+        "frozen_since",
+        "frozen_since_commit",
+        "frozen_since_how",
+        "refusals"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "phase": {
+          "const": "publication"
+        },
+        "passed": {
+          "type": "boolean"
+        },
+        "checker": {
+          "type": "object",
+          "required": [
+            "id",
+            "version"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "const": "parley.tooling.release_check"
+            },
+            "version": {
+              "type": "string"
+            }
+          }
+        },
+        "base": {
+          "type": "string"
+        },
+        "base_commit": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "frozen_since": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "frozen_since_commit": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "frozen_since_how": {
+          "enum": [
+            "given",
+            "derived",
+            "none"
+          ]
+        },
+        "refusals": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "package",
+              "code",
+              "problem"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "package": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "code": {
+                "type": "string",
+                "minLength": 1
+              },
+              "problem": {
+                "type": "string",
+                "minLength": 1
+              },
+              "id": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "consumer": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "required": [
+        "passed",
+        "dir",
+        "installed",
+        "reader",
+        "dependency",
+        "smoke",
+        "refusals"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "passed": {
+          "type": "boolean"
+        },
+        "dir": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The directory the package was installed into."
+        },
+        "installed": {
+          "type": "boolean",
+          "description": "Whether this run installed into it, or judged a directory as it was found."
+        },
+        "reader": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "required": [
+            "name",
+            "version",
+            "integrity"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "version": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "integrity": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "description": "The packed package as the lockfile records it."
+        },
+        "dependency": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "required": [
+            "name",
+            "version",
+            "resolved",
+            "integrity"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "version": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "resolved": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "integrity": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "description": "The dependency as it resolved: the exact version and the registry's integrity."
+        },
+        "smoke": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "required": [
+            "ran",
+            "bundles",
+            "records",
+            "validated",
+            "invalid",
+            "writer_path"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "ran": {
+              "type": "boolean"
+            },
+            "bundles": {
+              "type": "integer"
+            },
+            "records": {
+              "type": "integer"
+            },
+            "validated": {
+              "type": "integer"
+            },
+            "invalid": {
+              "type": "integer"
+            },
+            "writer_path": {
+              "type": "string",
+              "description": "Where the reader's own import of the dependency resolved."
+            }
+          }
+        },
+        "refusals": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "code",
+              "problem"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "enum": [
+                  "consumer.unreadable",
+                  "consumer.inside_workspace",
+                  "consumer.install_failed",
+                  "consumer.reader_differs",
+                  "consumer.dependency_missing",
+                  "consumer.dependency_linked",
+                  "consumer.dependency_not_from_registry",
+                  "consumer.dependency_differs",
+                  "consumer.smoke_failed"
+                ]
+              },
+              "problem": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      },
+      "description": "The clean-consumer result, when the gate ran with --consumer and reached it."
+    }
+  }
+}

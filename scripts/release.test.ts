@@ -211,8 +211,8 @@ describe("REL-8 the release workflows", () => {
     const gateOf = (file: string) => runs(workflow(file).jobs.gate!).find((r) => /release-gate/.test(r)) ?? "";
     expect(gateOf("release-parley-read.yml")).toContain("--consumer");
     expect(gateOf("release-parley-emit.yml")).not.toContain("--consumer");
-    // The Python file goes to no registry.
-    expect(Object.keys(workflow("release-parley-emit-py.yml").jobs).sort()).toEqual(["gate", "release"]);
+    // The Python file goes to no registry: beside its dry run, its only jobs are the gate and the release.
+    expect(Object.keys(workflow("release-parley-emit-py.yml").jobs).filter((n) => !n.startsWith("dry-run")).sort()).toEqual(["gate", "release"]);
   });
 
   test("RELEASE.md and the release pages say the tag is pushed only after the gate exits 0", () => {

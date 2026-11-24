@@ -509,3 +509,31 @@ same line stamped 1.1.0, which isolates the field from the version `const`:
 {"probe":"P7.validate","line":"lens folded without stands_for","1.0.0 line under 1.0.0":"valid","the same 1.0.0 line under 1.1.0":["/_schema/version must be equal to constant"],"restamped 1.1.0 under 1.1.0":"valid"}
 {"probe":"P7.reader_with_both","lens_1_0_0_line":"validated","lens_1_0_0_line_with_string_fold":"validated","query_1_0_0_line_with_string_fold":"validated","query_1_1_0_line_with_string_fold":"invalid"}
 ```
+
+## Addendum, 2026-11-24: one sentence this review passed was wrong
+
+This is an addition to a dated record. Nothing above it was changed.
+
+Row L12 above rated the reworded `runs[].folded` sentence freezable. That sentence ended
+"compared without the envelope's t, seq, run and session". A later review, of the release pull
+request for spec `0.2.1` (flyingrobots/parley#158), found the case this review did not try: a
+record of the tool's own with a top-level `session` field. `session` is identity only on the
+protocol lines whose schemas define it (`parley.run.bootstrap`, `parley.receipt.head`,
+`parley.query` and `parley.lens`), and the writers do not refuse it in a tool's payload. Two runs
+of one invocation whose results were `{"session":"alice-login-1","value":1}` and
+`{"session":"bob-login-2","value":1}` were folded into one section with `folded.others: 1`.
+
+What was changed, before anything was merged, tagged or published:
+
+- The reader compares a tool's own record, a `page` and a decision record without `t`, `seq` and
+  `run` only. It compares a read's own `lens` also without its `session` and the `query` it
+  names, so two reads made in different sessions still fold (RD-110l).
+- The sentence in `schemas/parley.lens.schema.json`, its snapshot
+  `schemas/released/parley.lens/1.1.0.schema.json` and `schemas/parley.graphql` now reads: "and a
+  read's own lens without its session and the query it names, compared without the envelope's t,
+  seq and run (flyingrobots/parley#133). A top-level session on a record of the tool's own or on
+  a page is that record's own field and is compared (flyingrobots/parley#146)."
+
+The owner decided on 2026-11-24 that `parley.lens` is 1.1.0 and not 2.0.0, recorded on
+flyingrobots/parley#146. This correction does not reopen that: the version had not been released
+when the sentence was corrected.

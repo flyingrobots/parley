@@ -79,7 +79,12 @@ the package changelogs say which were published.
   `end` status, diagnostic codes and head's `resolved` are equal, and whose result records are
   equal one for one in `seq` order. A read's own `lens` and a record the protocol does not define
   are results; a sidecar is compared by `bytes` and `sha256`; a run the window does not show to be
-  unredacted never folds. Decision records are compared under the views named above.
+  unredacted never folds. Records are compared without the envelope's `t`, `seq` and `run`, and a
+  read's own `lens` also without its `session` and the `query` it names. A top-level `session` on
+  a tool's own record or on a `page` is that record's own field and is compared. As first
+  snapshotted for this release the sentence said every record was compared without `session`; a
+  review of the release found that false of a tool's record, and the sentence, the snapshot and
+  the reader were corrected before anything was merged or published (flyingrobots/parley#146). Decision records are compared under the views named above.
 - `runs[].folded` and `stands_for` state the order: the latest `t` among a run's records in the
   window, then the greater run id, a run with no dated record last.
 - `stands_for` names runs and not their records' `seq`. A schema cannot check its length against

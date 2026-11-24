@@ -63,6 +63,10 @@ this repository until the root `CHANGELOG.md` releases them; it still reads 1.0.
   writer to find them in its own copy: `@flyingrobots/parley-emit` 0.3.0 ships 1.0.0 of
   both messages and no 1.1.0.
 - A read's own receipt records `v` `0.2.0`.
+- The dependency on `@flyingrobots/parley-emit` is `^0.4.0`, up from `^0.3.0`, so the range admits
+  the version in the repository (flyingrobots/parley#131). A read emits no record redaction can
+  make invalid that it did not before; a record it would have published invalid is now refused by
+  the writer, and the read ends with status 4.
 
 ## [0.1.2] — 2026-11-24
 

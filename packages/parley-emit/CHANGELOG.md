@@ -5,6 +5,44 @@ on its own; the spec and each message schema move separately (spec §4.4).
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-11-24
+
+The writer no longer publishes a record that redaction made invalid under its declared schema
+(flyingrobots/parley#131, spec §5.3). **A run that used to end with status 0 and an invalid line
+now ends with status 4 and a structured error**, which is the point of the change.
+
+### Fixed
+
+- **A record redaction made invalid is never published.** When a result's integer field equalled
+  a declared secret, the writer replaced it with the string `[redacted]`, published the record
+  under its original schema and ended with status 0; a string field with a `pattern`, an `enum`,
+  a `format` or a length bound broke the same way, and so did a tool's own `error` whose `code` or
+  typed field the secret landed in. A tool's record in which the scrub replaced something is now
+  validated, as stdout or stderr and the receipt would each receive it (`receiptExtra` included),
+  against the schema document for its declared pair, before any copy is written and before a
+  `seq` is taken. When the redaction made it invalid, nothing of the record is written anywhere
+  and the counter has no gap. The writer emits one `error` with the code
+  `redaction.schema_conflict`, whose `problem` and `detail` (`{schema: {id, version}, at,
+  redacted}`) name each field by JSON Pointer and the schema pair. It carries no value, no text
+  from the checker and no part of the schema. The call throws `ParleyRedactionConflict`, which
+  `main` does not report a second time, and the run ends with status 4 whatever the handler
+  passes to `end`, by the mechanism a sink failure uses.
+- Scope, stated: only a failure the redaction caused is refused. A record that was already
+  invalid in the same way, a record of a type declared with no `schema` document, and a schema
+  outside the checker's subset are written as before. Writer-built records (the head, `end`,
+  `redaction`, `sidecar`, `receipt.inputs`, discovery lines and the writer's own diagnostics) are
+  never checked: their scalars are not scrubbed and their identity fields are skipped.
+- `run.error` marks the run as having reported an error once the line is out, not before, so an
+  error the writer refused does not count as reported.
+
+### Added
+
+- `ParleyRedactionConflict` (with `schema` and `pointers`), `REDACTION_CONFLICT_CODE` and
+  `run.redactionRefused`.
+- `checkRecord` returns `pointers` beside `errors` when a record fails: the JSON Pointer of each
+  error, in the same order, and for a missing or disallowed property, that property. A key
+  containing `/` or `~` is now escaped in the path an error names (RFC 6901).
+
 ### Changed
 
 - `src/schemas.ts` re-synced: it now holds the draft `parley.query` 1.1.0 and `parley.lens` 1.1.0

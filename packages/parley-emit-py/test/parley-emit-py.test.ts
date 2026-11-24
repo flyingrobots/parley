@@ -199,6 +199,20 @@ describe("parley-emit-py: secrets, the counter and stray output, checked by the 
     expectLoadsClean({ status: 0, stdout: "", stderr: "", ...at }, 2);
   }, SLOW);
 
+  test("PY-23h a result redaction made invalid: the process exits 4, the result reaches no stream, and the doctor passes", () => {
+    const c = py(join(PKG, "tests", "fixtures", "typed_secret_tool.py"), ["count", "--token", "8675309"], scratch());
+    expect(c.status).toBe(4);
+    const { text } = receiptOf(c);
+    expect(c.stdout + c.stderr + text).not.toContain("8675309");
+    expect(objs(c.stdout).map((o) => o.event)).toEqual(["run", "end"]);
+    expect(objs(c.stdout).at(-1)).toMatchObject({ event: "end", status: 4 });
+    expect(objs(c.stderr)).toEqual([expect.objectContaining({ event: "error", code: "redaction.schema_conflict", detail: { schema: { id: "typed-secret-tool.count", version: "1.0.0" }, at: ["/value"], redacted: ["/value"] } })]);
+    expect(objs(text).filter((o) => o.event === "result")).toEqual([]);
+    const seqs = [...new Set([...objs(c.stdout), ...objs(c.stderr), ...objs(text)].map((o) => o.seq as number))].sort((a, b) => a - b);
+    expect(seqs).toEqual(seqs.map((_, i) => i));
+    expect(violations(c)).toEqual([]);
+  }, SLOW);
+
   test("PY-7a ten thousand results keep one gapless seq counter, and the doctor passes", () => {
     const at = scratch([]);
     const c = py(join(PKG, "tests", "fixtures", "many.py"), ["emit", "10000"], at);

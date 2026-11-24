@@ -14,7 +14,7 @@ and the first publish.
    there first if they moved. A version that ships a draft schema stamps lines with a pair whose
    bytes may still change (spec §4.5), so release the schema first.
 2. Set `version` in `packages/parley-read/package.json` to the same number. Its dependency on
-   `@flyingrobots/parley-emit` is a caret range (`^0.3.0` for 0.2.0), never `workspace:*`: npm
+   `@flyingrobots/parley-emit` is a caret range (`^0.4.0` for 0.2.0), never `workspace:*`: npm
    publishes a `workspace:` range verbatim, and no installer outside this repository can resolve
    it. The range must admit the version of `packages/parley-emit` in the repository, so the
    workspace still links the local copy; `scripts/release.test.ts` checks both.

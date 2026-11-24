@@ -108,13 +108,14 @@ and `count files --human` printed `2 file(s)` and nothing else, exit 0.
 | --- | --- |
 | `define_tool(name=, version=, commands=, retention=, sources=None, human=None)` | Checks the declaration: a non-empty name and version, at least one command, an intent and the four effects per command, a SemVer version on every emitted and error type, a positive retention count. `commands` maps a name to `{intent, effects, secrets?, emits: [{id, version, schema?}], errors?}` |
 | `main(tool, argv, handler, *, cwd, env, home, stdout, stderr, session, now, inputs, resolved)` | Runs one invocation and returns the exit status. `argv` is `[tool.name, *sys.argv[1:]]`; `handler(run, args)` is called with the arguments that remain once the writer's flags and the command, the first argument, are set aside (see [Arguments and flags](#arguments-and-flags)). Nothing raised inside escapes as a traceback |
-| `Run` | `result(record, schema, receipt_extra=None)`, `page(cursor, has_more, record=None, receipt_extra=None)`, `step(decision, because, detail=...)`, `warning(code, problem, **fields)`, `error(code, problem, receipt_extra=None, **fields)`, `read_input(path)`, `input(path, data)`, `input_unreadable(path, code="input.unreadable")`, `finalise_inputs()`, `end(status=None)`; `id`, `cwd`, `receipt_path`, `receipt_dir`, `dry_run`, `ended`, `status`, `sink_failed`. A schema is `("id", "version")` or `{"id": ..., "version": ...}`; diagnostic fields are `remedy`, `remedy_target`, `measured`, `limit`, `retryable` and `detail` |
+| `Run` | `result(record, schema, receipt_extra=None)`, `page(cursor, has_more, record=None, receipt_extra=None)`, `step(decision, because, detail=...)`, `warning(code, problem, **fields)`, `error(code, problem, receipt_extra=None, **fields)`, `read_input(path)`, `input(path, data)`, `input_unreadable(path, code="input.unreadable")`, `finalise_inputs()`, `end(status=None)`; `id`, `cwd`, `receipt_path`, `receipt_dir`, `dry_run`, `ended`, `status`, `sink_failed`, `redaction_refused`. A schema is `("id", "version")` or `{"id": ..., "version": ...}`; diagnostic fields are `remedy`, `remedy_target`, `measured`, `limit`, `retryable` and `detail` |
 | `check_record(value, schema)`, `validate_line(line, extra=None)`, `schema_subset_gap(schema)` | The bounded JSON Schema checker (below) |
 | `SCHEMAS`, `SCHEMA_SOURCE`, `schema_for(pair)`, `schema_text_digests()` | The embedded schemas and their pins |
 | `compute_inv`, `canonical`, `digest_tree`, `digest_input`, `sha256` | The `inv` derivation and its parts |
 | `classify_secrets`, `collect_secret_values`, `redact_argv`, `scrub`, `REDACTED` | Redaction |
 | `repo_root`, `state_base`, `state_receipt_dir`, `bookkeeping_for` | Receipt placement, keyed exactly as `parley-read` looks for it |
 | `ulid`, `FdSink`, `ParleyClosed`, `SCHEMA_IDS`, `SIDECAR_THRESHOLD` | Run ids, the default sink, the error raised after `end`, the writer's schema pairs, the sidecar threshold |
+| `ParleyRedactionConflict`, `REDACTION_CONFLICT_CODE` | The error raised when redaction made a record invalid under its declared schema, and the code of the `error` line the writer emits for it ([below](#a-record-redaction-made-invalid)) |
 
 ## What the writer does for you
 
@@ -124,12 +125,12 @@ and `count files --human` printed `2 file(s)` and nothing else, exit 0.
 | §5, §5.2 | `.parley/receipts/<run>.jsonl` under the initial working directory, after `.parley/.gitignore` holds a line `*` (created whole under a temporary name and linked into place if absent, never overwritten). The receipt goes to `$XDG_STATE_HOME/parley/<repo-hash>/receipts/` instead, with a `receipt.relocated` warning, when the ignore file is a user's (without `*`, or with a negation that can re-include `receipts/`, such as `!receipts/` or `!*/`; a negation the writer cannot evaluate counts as one) or when the working-directory path would carry a declared secret value; an unwritable working directory falls back silently (the bootstrap line says where). No writable location is `startup.receipt_unwritable`; a state path that would carry the secret too is `startup.secret_in_path`; both exit 3 |
 | §1.3 | One counter per run, under a lock, so threads emitting at once cannot share or skip a `seq`. A record is serialised before it takes a `seq`, so one that is not JSON is raised to the tool and leaves no gap |
 | §2.2 | `inv` exactly as the TypeScript writer derives it (below) |
-| §5.3 | Declared flags, variables and sources replaced with `[redacted]` in `argv`, `resolved`, `inputs` and every later record before any copy leaves the process; longest secret first; a number or boolean whose JSON form is a secret becomes `[redacted]`; a key carrying one is renamed. The head's `redacted` says where; a later surfacing gets a `redaction` event; `end.redacted` aggregates. The envelope, the writer's own identity fields and the schema document a `schema` line publishes (the tool's static declaration, flyingrobots/parley#111) are never scrubbed, a run id or receipt path carrying a secret is never chosen, and a session carrying one is `startup.secret_in_identity`, exit 3 |
+| §5.3 | Declared flags, variables and sources replaced with `[redacted]` in `argv`, `resolved`, `inputs` and every later record before any copy leaves the process; longest secret first; a number or boolean whose JSON form is a secret becomes `[redacted]`; a key carrying one is renamed. The head's `redacted` says where; a later surfacing gets a `redaction` event; `end.redacted` aggregates. The envelope, the writer's own identity fields and the schema document a `schema` line publishes (the tool's static declaration, flyingrobots/parley#111) are never scrubbed, a run id or receipt path carrying a secret is never chosen, and a session carrying one is `startup.secret_in_identity`, exit 3. A record of the tool's that redaction made invalid under its declared schema is not published: one `redaction.schema_conflict` error replaces it and the run ends with status 4 ([below](#a-record-redaction-made-invalid), flyingrobots/parley#131) |
 | §5 | A receipt record over 65,536 bytes is stored as `<run>/<seq>.json` beside the receipt with a `sidecar` event in its place; if the sidecar cannot be written the record stays inline and the run closes with a `sink.sidecar_failed` error and status 4 |
 | §5.1 | Retention by count, **per tool** (below) |
 | §4.1, §4.2 | `--schema` and `<command> --help` are runs that emit `command` and `schema` lines and close with `end` |
 | §4.3 | `--dry-run` marks the bootstrap line and head and performs no retention deletion; the handler reads `run.dry_run` |
-| §6, §3.2 | An exception from the handler becomes `uncaught.exception` with the traceback in the receipt copy only (`detail.traceback`), status 2. `SystemExit` with a non-zero code is `uncaught.exit`; `KeyboardInterrupt` is `uncaught.exception`; both close a complete failed receipt with status 2. A raise from `resolved` or `inputs` before the bootstrap line is `startup.arguments_invalid`, exit 3, with the reserved receipt removed. A source resolver that raises means not present. A raising renderer is one `human.renderer_failed` warning and the default rendering from then on. A failure inside the writer itself is `uncaught.writer_failure` after the bootstrap line and `startup.writer_failed` before it |
+| §6, §3.2 | An exception from the handler becomes `uncaught.exception` with the traceback in the receipt copy only (`detail.traceback`), status 2. `SystemExit` with a non-zero code is `uncaught.exit`; `KeyboardInterrupt` is `uncaught.exception`; both close a complete failed receipt with status 2. A raise from `resolved` or `inputs` before the bootstrap line is `startup.arguments_invalid`, exit 3, with the reserved receipt removed. A source resolver that raises means not present. A raising renderer is one `human.renderer_failed` warning and the default rendering from then on. A failure inside the writer itself is `uncaught.writer_failure` after the bootstrap line and `startup.writer_failed` before it. A `ParleyRedactionConflict` is the exception: the writer already reported it, so it adds no `uncaught.exception` and the run closes with status 4 |
 | §5.4, §3.3 | stdout and stderr are written with `os.write` on descriptors 1 and 2, the whole line: a partial write continues, and `EAGAIN` on a descriptor someone left non-blocking waits a millisecond and retries. A closed reader (`EPIPE`, `BrokenPipeError`) is a sink failure: an `error` line on the sinks still working and status 4, never a traceback. After `end` nothing is written; emitting raises `ParleyClosed` |
 | §1.2 | Stray output is captured into the receipt (below) |
 | §1.1 | `--human` (alias `--humanize`) renders stdout and stderr through the tool's `human` function, falling back to one line per event; the bootstrap line and a successful `end` render as nothing; the receipt is unchanged |
@@ -317,7 +318,8 @@ A Python tool has no ajv, and spec §4.4 asks every program to validate its sche
 output in its own tests. `validate_line(line, extra)` checks one emitted line against the schema
 for its exact advertised pair: an embedded schema, or a tool-owned schema passed in `extra` keyed by
 `(id, version)`. A pair it has no schema for is reported, never validated. Under it,
-`check_record(value, schema)` implements the constructs the protocol's own schemas use (`type`,
+`check_record(value, schema)`, whose result carries the JSON Pointer of each error in `pointers`
+beside the text in `errors`, implements the constructs the protocol's own schemas use (`type`,
 `const`, `enum`, `required`, `properties`, `additionalProperties`, `items`, the length, size and
 range bounds, `pattern`, the `json-pointer` format, `not`, `anyOf`, `allOf`, `oneOf`,
 `if`/`then`/`else`) and **reports** a keyword it does not implement, walking the whole schema
@@ -325,6 +327,37 @@ before any value, rather than ignoring it. Patterns are ECMAScript patterns read
 `$` is the end of input and `.` excludes the four ECMAScript line terminators, as in JSON Schema.
 The suite checks it agrees with ajv on more than seven hundred samples of eleven of the
 schemas and their single-field mutations, and that every embedded schema is inside the subset.
+
+## A record redaction made invalid
+
+Redaction can break a record's own schema: an integer field that equals a declared secret becomes
+the string `[redacted]`, and a string with a `pattern`, an `enum`, a `format` or a length bound
+may no longer meet it. The writer does not publish such a record (spec §5.3,
+flyingrobots/parley#131), by the same rule as the TypeScript writer.
+
+| Rule | What the writer does |
+| --- | --- |
+| What is checked | A record the tool emits (`result`, `page`, `step`, `warning`, `error`) in which the scrub replaced something. It is validated with the bounded checker against the schema document for its declared pair: an embedded one, or the `schema` the tool declared on the emitted or error type |
+| When | Before stdout, stderr or the receipt gets any byte of it, and before a `seq` is taken. With `receipt_extra`, the stream copy and the receipt copy are both checked first |
+| On a conflict | Nothing of the record is written anywhere. One `error` with the code `redaction.schema_conflict` goes to stderr and the receipt, and the call raises `ParleyRedactionConflict` |
+| What the error says | Each field by JSON Pointer and the schema's `id` and `version`, in `problem` and in `detail` (`schema`, `at`, `redacted`). Never the value, the checker's message or any part of the schema |
+| Exit status | 4, whatever the handler passes to `end`: a record the writer would not write is output it could not write (spec §3.4). `run.redaction_refused` is then true |
+| What is not checked | A record redaction left valid; one that was already invalid in the same way before redaction; a type with no schema document; a schema outside the checker's subset; every writer-built record |
+
+`main` does not report the raised `ParleyRedactionConflict` again as `uncaught.exception`. A
+handler may catch it and carry on: later records are written, and the status stays 4. Its
+`schema`, `pointers` and message are safe to log.
+
+Captured from a tool that declares `"secrets": ["--token"]` and an integer `value`, run with
+`--token 42` and emitting `{"event": "result", "value": 42}`. stdout carried the bootstrap line
+and `end` with status 4, stderr this one line, and the process exited 4:
+
+```json
+{"event":"error","t":1795548595145,"seq":2,"run":"01M87GJGY87QGJ02SQAM5Z52B4","code":"redaction.schema_conflict","problem":"the result record was not published: replacing a declared secret at /value left it invalid under t.count@1.0.0 at /value","remedy":"keep a declared secret out of any field whose schema the literal [redacted] cannot satisfy: leave the field out, or declare it as an unconstrained string; the run will close with status 4","detail":{"schema":{"id":"t.count","version":"1.0.0"},"at":["/value"],"redacted":["/value"]},"_schema":{"id":"parley.error","version":"2.0.0"}}
+```
+
+To avoid it, keep a declared secret out of typed fields: leave the field out, or declare it as a
+string with no `pattern`, `enum`, `format` or length bound.
 
 ## What a receipt can contain
 

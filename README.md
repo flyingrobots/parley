@@ -20,9 +20,9 @@ digest names ([#51](https://github.com/flyingrobots/parley/issues/51)).
 > seventeen message schemas are released and immutable ([CHANGELOG.md](CHANGELOG.md),
 > [schemas/](schemas/README.md)); two of them, `parley.query` and `parley.lens`, also have a draft
 > 1.1.0. Two writers implement it: the TypeScript library
-> [`@flyingrobots/parley-emit`](packages/parley-emit/README.md) 0.3.0, which
+> [`@flyingrobots/parley-emit`](packages/parley-emit/README.md) 0.4.0, which
 > also appends to the shared history stream when one is configured, and
-> [`parley_emit.py`](packages/parley-emit-py/README.md) 0.2.0, one vendorable Python file pinned
+> [`parley_emit.py`](packages/parley-emit-py/README.md) 0.3.0, one vendorable Python file pinned
 > by its SHA-256. The reader library, [`@flyingrobots/parley-read`](packages/parley-read/README.md)
 > 0.2.0 (0.1.1 is the latest release), loads a repository's receipt bundles and answers recorded
 > reads. Both libraries are on npm

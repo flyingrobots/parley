@@ -6,7 +6,7 @@ import { basename, join, resolve } from "node:path";
 import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 import { doctor } from "../../../scripts/doctor.ts";
-import { checkRecord, defineTool, main, schemaSubsetGap, SCHEMA_SOURCE, SCHEMAS, transformDigest, ulid, writeWholeLine, historyDays, declaredProjection, findSuspectedSecret, isHistoryRefusal, refuse, refuseSuspectedSecrets, SECRET_PATTERNS, HISTORY_DEFAULT_DAYS, HISTORY_MAX_DAYS, type HistoryTransform, type MainOptions, type Run, type Sink, type ToolSpec } from "../src/index.ts";
+import { checkRecord, defineTool, main, ParleyRedactionConflict, schemaSubsetGap, SCHEMA_SOURCE, SCHEMAS, transformDigest, ulid, writeWholeLine, historyDays, declaredProjection, findSuspectedSecret, isHistoryRefusal, refuse, refuseSuspectedSecrets, SECRET_PATTERNS, HISTORY_DEFAULT_DAYS, HISTORY_MAX_DAYS, type HistoryTransform, type MainOptions, type Run, type Sink, type ToolSpec } from "../src/index.ts";
 import { inspectSegment } from "../../../scripts/doctor.ts";
 import { retain } from "../src/tool.ts";
 
@@ -44,7 +44,8 @@ function tool(over: Partial<ToolSpec> = {}): ToolSpec {
   });
 }
 
-function scratch() {
+function scratch() { return scratchAnywhere(); }
+function scratchAnywhere() {
   const dir = mkdtempSync(join(tmpdir(), "parley-emit-"));
   const state = mkdtempSync(join(tmpdir(), "parley-state-"));
   return { dir, state, env: { XDG_STATE_HOME: state } as Record<string, string> };
@@ -2302,4 +2303,236 @@ describe("PE-25 refuseSuspectedSecrets", () => {
     expect(r.objs.filter((o) => o.event === "receipt.step" && typeof o.decision === "string" && (o.decision as string).startsWith("line ")).length).toBe(LINES - LINES / 100);
     expect(r.text.includes(PLANTED)).toBe(false);
   }, 60_000);
+});
+
+// A record that redaction made invalid under its declared schema is never published
+// (flyingrobots/parley#131, spec §5.3). The writer validates the scrubbed record before any copy
+// is written and before a seq is taken, and reports one structured error in its place.
+describe("PE-29 a record redaction made invalid is never published (flyingrobots/parley#131)", () => {
+  const PAIR = { id: "t.count", version: "1.0.0" };
+  const TYPED_PAIR = { id: "t.typed", version: "1.0.0" };
+  const PATTERN = "^[a-z]{3}-[0-9]+$";
+  const TYPED = {
+    $schema: "https://json-schema.org/draft/2020-12/schema",
+    type: "object",
+    required: ["event", "t", "seq", "run", "_schema"],
+    properties: {
+      event: { const: "result" },
+      ref: { type: "string", pattern: PATTERN },
+      mode: { enum: ["fast", "slow"] },
+      count: { type: "integer" },
+      note: { type: "string" },
+      _schema: { type: "object", required: ["id", "version"], additionalProperties: false, properties: { id: { const: "t.typed" }, version: { const: "1.0.0" } } },
+    },
+  };
+  const typed = { commands: { count: { intent: "count", effects: { reads: [], writes: [], network: false, idempotent: true }, secrets: ["--token", "T_TOKEN"], emits: [{ ...TYPED_PAIR, schema: TYPED }, { id: "t.loose", version: "1.0.0" }] } } };
+  /**
+   * A scratch directory whose paths carry none of the given secrets. These cases use short
+   * secrets such as `42`, and a temporary directory's random name holds one about once in a few
+   * hundred runs; the writer then relocates the receipt or fails at startup (§5.3), which is
+   * right and is not what these cases are about.
+   */
+  const scratch = (...secrets: string[]) => {
+    for (let i = 0; i < 64; i++) {
+      const s = scratchAnywhere();
+      if (!secrets.some((v) => s.dir.includes(v) || s.state.includes(v))) return s;
+    }
+    throw new Error(`no temporary directory free of ${secrets.join(", ")} could be made`);
+  };
+  type R = Awaited<ReturnType<typeof runCount>>;
+  const everyLine = (r: R) => [...r.stdout.objs, ...r.stderr.objs, ...r.receiptLines];
+  const expectGapless = (r: R) => {
+    const seqs = [...new Set(everyLine(r).map((o) => o.seq as number))].sort((a, b) => a - b);
+    expect(seqs).toEqual(seqs.map((_, i) => i));
+  };
+  const conflicts = (r: R) => r.stderr.objs.filter((o) => o.code === "redaction.schema_conflict") as { event: string; seq: number; code: string; problem: string; remedy: string; detail: { schema: { id: string; version: string }; at: string[]; redacted: string[] } }[];
+  /** Everything the error says, outside its envelope: the text a secret or a validator message would have to be in. */
+  const said = (e: { problem: string; remedy: string; detail: unknown }) => `${e.problem}\n${e.remedy}\n${JSON.stringify(e.detail)}`;
+
+  test("an integer field equal to a declared secret: the result is not published and the run ends with status 4 and one structured error", async () => {
+    const { dir, env } = scratch("42");
+    let thrown: unknown;
+    const r = await runCount(dir, env, ["count", "--token", "42"], (run) => {
+      try { run.result({ event: "result", value: 42 }, PAIR); } catch (e) { thrown = e; throw e; }
+    });
+    expect(r.status).toBe(4);
+    expect(thrown).toBeInstanceOf(ParleyRedactionConflict);
+    // Nothing of the record reached any sink, in either form.
+    expect(everyLine(r).filter((o) => o.event === "result")).toEqual([]);
+    expect(everyLine(r).some((o) => "value" in o)).toBe(false);
+    const errs = r.stderr.objs.filter((o) => o.event === "error");
+    expect(errs.length).toBe(1);
+    const [e] = conflicts(r);
+    expect(e).toMatchObject({ event: "error", code: "redaction.schema_conflict", detail: { schema: PAIR, at: ["/value"], redacted: ["/value"] } });
+    expect(e!.problem).toContain("/value");
+    expect(e!.problem).toContain("t.count@1.0.0");
+    // No value, no validator message, no schema fragment.
+    expect(said(e!)).not.toContain("42");
+    for (const leak of ["integer", "is string", "minimum", "not integer"]) expect(said(e!)).not.toContain(leak);
+    // The receipt holds the same error and still ends; the counter has no hole where the record would have been.
+    expect(r.receiptLines.filter((o) => o.event === "error").map((o) => o.seq)).toEqual([e!.seq]);
+    expect(r.receiptLines.at(-1)).toMatchObject({ event: "end", status: 4 });
+    expectGapless(r);
+    expect(r.violations).toEqual([]);
+  });
+
+  test("a distinctive numeric secret appears on no stream and in no receipt line", async () => {
+    const { dir, env } = scratch("8675309");
+    const r = await runCount(dir, env, ["count", "--token", "8675309"], (run) => { run.result({ event: "result", value: 8675309 }, PAIR); });
+    expect(r.status).toBe(4);
+    expect(r.stdout.text + r.stderr.text + r.receipt).not.toContain("8675309");
+    expect(conflicts(r).length).toBe(1);
+    expect(r.violations).toEqual([]);
+  });
+
+  test("a string field whose pattern or enum [redacted] breaks is refused the same way, naming each field", async () => {
+    const { dir, env } = scratch("abc-123", "fast");
+    const r = await runCount(dir, { ...env, T_TOKEN: "fast" }, ["count", "--token", "abc-123"], (run) => {
+      run.result({ event: "result", ref: "abc-123", mode: "fast", note: "kept" }, TYPED_PAIR);
+    }, typed);
+    expect(r.status).toBe(4);
+    const [e] = conflicts(r);
+    expect(e!.detail).toEqual({ schema: TYPED_PAIR, at: ["/ref", "/mode"], redacted: ["/ref", "/mode"] });
+    expect(e!.problem).toContain("/ref");
+    expect(e!.problem).toContain("/mode");
+    expect(e!.problem).toContain("t.typed@1.0.0");
+    for (const leak of ["abc-123", "fast", "slow", PATTERN, "[a-z]", "does not match", "must be one of"]) expect(said(e!)).not.toContain(leak);
+    expect(everyLine(r).filter((o) => o.event === "result")).toEqual([]);
+    expect(r.stdout.text + r.stderr.text + r.receipt).not.toContain("abc-123");
+    expectGapless(r);
+    expect(r.violations).toEqual([]);
+  });
+
+  test("a redaction that leaves the record valid is written as before, with its redaction event", async () => {
+    const { dir, env } = scratch("abc-123");
+    const r = await runCount(dir, env, ["count", "--token", "abc-123"], (run) => {
+      run.result({ event: "result", ref: "xyz-9", mode: "slow", note: "saw abc-123" }, TYPED_PAIR);
+    }, typed);
+    expect(r.status).toBe(0);
+    const out = r.stdout.objs.find((o) => o.event === "result")!;
+    expect(out).toMatchObject({ ref: "xyz-9", mode: "slow", note: "saw [redacted]" });
+    expect(r.receiptLines.find((o) => o.event === "redaction")).toMatchObject({ in: out.seq, at: "/note" });
+    expect(r.stderr.objs).toEqual([]);
+    expect(checkRecord(out, TYPED)).toEqual({ ok: true });
+    expectGapless(r);
+    expect(r.violations).toEqual([]);
+  });
+
+  test("with receiptExtra, neither copy is written when either would be invalid", async () => {
+    const { dir, env } = scratch("42");
+    // The stream copy alone is valid; the receipt copy carries the typed field the secret lands in.
+    const r = await runCount(dir, env, ["count", "--token", "42"], (run) => { run.result({ event: "result", note: "fine" }, TYPED_PAIR, { count: 42 }); }, typed);
+    expect(r.status).toBe(4);
+    expect(everyLine(r).filter((o) => o.event === "result")).toEqual([]);
+    expect(conflicts(r)[0]!.detail).toEqual({ schema: TYPED_PAIR, at: ["/count"], redacted: ["/count"] });
+    expectGapless(r);
+    expect(r.violations).toEqual([]);
+    // And the other way round: the receipt-only field is fine and the shared record is not.
+    const s = scratch("42");
+    const r2 = await runCount(s.dir, s.env, ["count", "--token", "42"], (run) => { run.result({ event: "result", count: 42 }, TYPED_PAIR, { note: "fine" }); }, typed);
+    expect(r2.status).toBe(4);
+    expect(everyLine(r2).filter((o) => o.event === "result")).toEqual([]);
+    expect(conflicts(r2).length).toBe(1);
+    expectGapless(r2);
+  });
+
+  test("a handler that catches the refusal carries on: later records follow with no gap, and end(0) cannot bring the status back from 4", async () => {
+    const { dir, env } = scratch("42");
+    const r = await runCount(dir, env, ["count", "--token", "42"], (run) => {
+      try { run.result({ event: "result", value: 42 }, PAIR); } catch (e) { if (!(e instanceof ParleyRedactionConflict)) throw e; expect(e.message).not.toContain("42"); expect(e.pointers).toEqual(["/value"]); expect(e.schema).toEqual(PAIR); }
+      run.result({ event: "result", value: 7 }, PAIR);
+      // Like a sink failure, the refusal forces 4 whatever the handler asks for (spec §3.4).
+      expect(run.end(0)).toBe(4);
+    });
+    expect(r.status).toBe(4);
+    expect(r.stdout.objs.at(-1)).toMatchObject({ event: "end", status: 4 });
+    expect(r.stdout.objs.filter((o) => o.event === "result").map((o) => o.value)).toEqual([7]);
+    expect(r.stderr.objs.map((o) => o.code)).toEqual(["redaction.schema_conflict"]);
+    expectGapless(r);
+    expect(r.violations).toEqual([]);
+  });
+
+  test("a tool's own error whose code or typed field the secret lands in is refused, not published invalid", async () => {
+    const { dir, env } = scratch("42", "true");
+    const r = await runCount(dir, { ...env, T_TOKEN: "true" }, ["count", "--token", "42"], (run) => {
+      try { run.error({ code: "http.42", problem: "the fetch failed" }); } catch (e) { if (!(e instanceof ParleyRedactionConflict)) throw e; }
+      run.error({ code: "fetch.failed", problem: "the fetch failed", retryable: true });
+    });
+    expect(r.status).toBe(4);
+    const cs = conflicts(r);
+    expect(cs.map((c) => c.detail)).toEqual([
+      { schema: { id: "parley.error", version: "2.0.0" }, at: ["/code"], redacted: ["/code"] },
+      { schema: { id: "parley.error", version: "2.0.0" }, at: ["/retryable"], redacted: ["/retryable"] },
+    ]);
+    expect(r.stderr.objs.map((o) => o.code)).toEqual(["redaction.schema_conflict", "redaction.schema_conflict"]);
+    expectGapless(r);
+    expect(r.violations).toEqual([]);
+  });
+
+  test("the error's own text is scrubbed without looping when the secret is the field's name", async () => {
+    const { dir, env } = scratch("value");
+    // The key `value` is renamed by the scrub, so the required field is missing, and the pointer
+    // the error would print is itself the secret.
+    const r = await runCount(dir, env, ["count", "--token", "value"], (run) => { run.result({ event: "result", value: 7 }, PAIR); });
+    expect(r.status).toBe(4);
+    const cs = conflicts(r);
+    expect(cs.length).toBe(1);
+    expect(cs[0]!.detail.schema).toEqual(PAIR);
+    expect(cs[0]!.detail.at).toContain("/[redacted]");
+    expect(said(cs[0]!)).not.toContain("value");
+    expect(r.stderr.objs.length).toBe(1);
+    expect(r.receiptLines.filter((o) => o.event === "redaction" && o.in === cs[0]!.seq).length).toBeGreaterThan(0);
+    expectGapless(r);
+    expect(r.violations).toEqual([]);
+  });
+
+  test("scope: a record already invalid for another reason, and a type with no schema document, are written as before", async () => {
+    const { dir, env } = scratch("abc-123");
+    const r = await runCount(dir, env, ["count", "--token", "abc-123"], (run) => {
+      // `count` was never an integer; the redaction in `note` did not make the record invalid.
+      run.result({ event: "result", count: "many", note: "saw abc-123" }, TYPED_PAIR);
+      // No schema document is declared for t.loose, so there is nothing to validate against.
+      run.result({ event: "result", n: "abc-123" }, { id: "t.loose", version: "1.0.0" });
+    }, typed);
+    expect(r.status).toBe(0);
+    expect(r.stdout.objs.filter((o) => o.event === "result").map((o) => [o.note, o.n])).toEqual([["saw [redacted]", undefined], [undefined, "[redacted]"]]);
+    expect(r.stderr.objs).toEqual([]);
+    expectGapless(r);
+  });
+
+  test("in a real process the exit status is 4 and stdout carries end with status 4", () => {
+    const { dir, env } = scratch("8675309");
+    const script = join(dir, "typed.ts");
+    writeFileSync(script, `import { defineTool, main } from ${JSON.stringify(resolve(import.meta.dir, "../src/index.ts"))};
+const schema = { type: "object", required: ["value"], properties: { value: { type: "integer" } } };
+const tool = defineTool({ name: "t", version: "0.0.1", commands: { count: { intent: "count", effects: { reads: [], writes: [], network: false, idempotent: true }, secrets: ["--token"], emits: [{ id: "t.count", version: "1.0.0", schema }] } }, retention: { count: 10 } });
+process.exit(await main(tool, ["t", ...process.argv.slice(2)], (run) => { run.result({ event: "result", value: 8675309 }, { id: "t.count", version: "1.0.0" }); }));`);
+    const p = Bun.spawnSync(["bun", script, "count", "--token", "8675309"], { cwd: dir, env: { ...process.env, ...env } });
+    const out = p.stdout.toString(), err = p.stderr.toString();
+    expect(p.exitCode).toBe(4);
+    const outObjs = out.trimEnd().split("\n").map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(outObjs.map((o) => o.event)).toEqual(["run", "end"]);
+    expect(outObjs.at(-1)).toMatchObject({ status: 4 });
+    const errObjs = err.trimEnd().split("\n").map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(errObjs.map((o) => o.code)).toEqual(["redaction.schema_conflict"]);
+    const receipt = readFileSync((outObjs[0] as { paths: { receipt: string } }).paths.receipt, "utf8");
+    expect(out + err + receipt).not.toContain("8675309");
+    expect(doctor({ stdout: out, stderr: err, receipt, receiptPresent: true }, SCHEMAS_DIR).filter((v) => v.event === "doctor.violation")).toEqual([]);
+  }, 30_000);
+
+  test("--human: the refusal is rendered as prose and the receipt holds the structured error", async () => {
+    const { dir, env } = scratch("8675309");
+    const s = streams();
+    const status = await main(tool(), ["t", "count", "--human", "--token", "8675309"], async (run) => { run.result({ event: "result", value: 8675309 }, PAIR); }, { cwd: dir, env, ...s });
+    expect(status).toBe(4);
+    expect(s.stderr.text).toStartWith("error redaction.schema_conflict: ");
+    expect(s.stdout.text + s.stderr.text).not.toContain("8675309");
+    const receipts = join(dir, ".parley", "receipts");
+    const text = readFileSync(join(receipts, readdirSync(receipts).find((f) => f.endsWith(".jsonl"))!), "utf8");
+    expect(text).not.toContain("8675309");
+    const lines = text.trimEnd().split("\n").map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(lines.filter((o) => o.event === "result")).toEqual([]);
+    expect(lines.filter((o) => o.event === "error").map((o) => o.code)).toEqual(["redaction.schema_conflict"]);
+    expect(doctor({ receipt: text }, SCHEMAS_DIR).filter((v) => v.event === "doctor.violation")).toEqual([]);
+  });
 });

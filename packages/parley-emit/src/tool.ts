@@ -7,7 +7,7 @@ import { historyBookkeeping, historyDays, historyProjection, isHistoryFailure, i
 import { computeInv, type InputDecl } from "./inv.ts";
 import { bookkeepingFor, chooseLocation, isLocationFailure, type Bookkeeping } from "./location.ts";
 import { carriesSecret, classifySecrets, collectSecretValues, redactArgv, scrub } from "./redact.ts";
-import { Run, SCHEMA_IDS, type Record_, type SchemaRef, type Sink } from "./run.ts";
+import { ParleyRedactionConflict, Run, SCHEMA_IDS, type Record_, type SchemaRef, type Sink } from "./run.ts";
 import { SCHEMAS } from "./schemas.ts";
 import { ulid } from "./ulid.ts";
 
@@ -214,13 +214,14 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
   // The projection of §8 exists only when there is both a stream to narrow and a transform to
   // narrow it with: a transform with no stream configured changes nothing, as the stream itself
   // changes nothing when it is not configured.
+  const schemas = declaredSchemas(spec);
   const projection: HistoryProjection | undefined = history !== undefined && historyConfig.transform !== undefined
-    ? historyProjection({ transform: historyConfig.transform, name: historyConfig.name }, declaredSchemas(spec))
+    ? historyProjection({ transform: historyConfig.transform, name: historyConfig.name }, schemas)
     : undefined;
 
   const run = new Run({
     tool: spec.name, v: spec.version, id, session, dryRun, stdout, stderr, receiptFd: location.fd, receiptPath: location.receiptPath, receiptDir: location.receiptDir,
-    secretValues, now, cwd, command: commandName ?? discovery!, resolved, inputs, headRedacted, human: human ? spec.human ?? (() => null) : undefined, history, projection,
+    secretValues, now, cwd, command: commandName ?? discovery!, resolved, inputs, headRedacted, human: human ? spec.human ?? (() => null) : undefined, history, projection, schemas,
   });
 
   run.bootstrap(inv);
@@ -245,7 +246,7 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
   if (discovery) {
     try { discover(run, spec, discovery, commandName, bookkeeping); } catch (e) {
       const err = e instanceof Error ? e : new Error(String(e));
-      if (!run.ended) run.error({ code: "uncaught.exception", problem: `uncaught ${err.name} during discovery: ${err.message || "(no message)"}`, remedy: `this is a defect in the tool's declaration; report it with the receipt at ${run.receiptPath}` }, { detail: { stack: err.stack } });
+      if (!run.ended && !(e instanceof ParleyRedactionConflict)) run.error({ code: "uncaught.exception", problem: `uncaught ${err.name} during discovery: ${err.message || "(no message)"}`, remedy: `this is a defect in the tool's declaration; report it with the receipt at ${run.receiptPath}` }, { detail: { stack: err.stack } });
     }
     release();
     return run.ended ? run.status ?? 4 : run.end();
@@ -256,7 +257,10 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
   } catch (e) {
     if (run.ended) { release(); return 4; }
     const err = e instanceof Error ? e : new Error(String(e));
-    run.error({ code: "uncaught.exception", problem: `uncaught ${err.name}: ${err.message || "(no message)"}`, remedy: `this is a defect in the tool; report it with the receipt at ${run.receiptPath}` }, { detail: { stack: err.stack } });
+    // A record redaction made invalid was already reported by the writer, under its own code and
+    // without the value (§5.3, flyingrobots/parley#131); an uncaught.exception beside it would
+    // say the same thing twice. The run closes with 4.
+    if (!(e instanceof ParleyRedactionConflict)) run.error({ code: "uncaught.exception", problem: `uncaught ${err.name}: ${err.message || "(no message)"}`, remedy: `this is a defect in the tool; report it with the receipt at ${run.receiptPath}` }, { detail: { stack: err.stack } });
   } finally {
     release();
   }
@@ -264,7 +268,8 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
 }
 
 /**
- * Every schema document this writer can re-validate a projected line against, by `id@version`:
+ * Every schema document this writer can validate a line against, by `id@version`, whether a
+ * projected line (§8) or a record redaction changed (§5.3):
  * the drafts the package ships (spec §4.5) and the schemas the tool declared on its own emitted
  * and error types (§4.2). A pair outside this map cannot be re-validated, and the stream is not
  * where an unchecked projection goes.

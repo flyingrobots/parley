@@ -28,7 +28,7 @@ import time
 import traceback
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple, Union
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 SPEC_VERSION = "0.2.0"
 
 REDACTED = "[redacted]"
@@ -81,6 +81,31 @@ class ParleyClosed(RuntimeError):
 
     def __init__(self) -> None:
         super().__init__("the run has ended; nothing may follow end (spec section 3.3)")
+
+
+# The code of the error a writer reports in place of a record redaction made invalid
+# (spec section 5.3, flyingrobots/parley#131).
+REDACTION_CONFLICT_CODE = "redaction.schema_conflict"
+
+
+class ParleyRedactionConflict(RuntimeError):
+    """Raised by an emission whose record redaction made invalid under its declared schema (spec
+    section 5.3, flyingrobots/parley#131). By the time it is raised the writer has already
+    reported the structured error, written nothing of the record and taken no `seq` for it, and
+    the run will end with status 4. It is raised, like every other refusal to emit, because the
+    call has no record to return a `seq` for and the handler should not carry on as though its
+    answer had been delivered; `main` does not report it a second time. A handler may catch it
+    and continue: the status stays 4.
+
+    The message names the fields by JSON Pointer and the schema pair. It never carries a value, a
+    validator's message or any part of the schema, so it is safe to log. `schema` is the declared
+    pair as `{"id", "version"}` and `pointers` the JSON Pointer of each field that no longer
+    validates, as scrubbed."""
+
+    def __init__(self, schema: Mapping[str, str], pointers: Sequence[str], message: str) -> None:
+        super().__init__(message)
+        self.schema: Dict[str, str] = {"id": schema["id"], "version": schema["version"]}
+        self.pointers: List[str] = list(pointers)
 
 
 # ---- the embedded schemas ------------------------------------------------------------------
@@ -610,12 +635,28 @@ _SUBSCHEMA = ("items", "not", "if", "then", "else", "additionalProperties")
 _SUBSCHEMA_LISTS = ("anyOf", "allOf", "oneOf")
 
 
+class _Issue(str):
+    """One failure's sentence, which also knows where in the record it is about."""
+
+    at: str
+
+    def __new__(cls, message: str, at: str) -> "_Issue":
+        self = super().__new__(cls, message)
+        self.at = at
+        return self
+
+
 class CheckResult:
-    """`ok` when the value satisfies the schema; otherwise `errors` says where. `unsupported` names
-    a construct the checker does not implement, in which case nothing was established."""
+    """`ok` when the value satisfies the schema; otherwise `errors` says where. `pointers` is the
+    JSON Pointer (RFC 6901) of each error, in the same order: the place in the record the error is
+    about, and for a missing or disallowed property, that property. A pointer is a location and
+    nothing else, so it is safe to print where an error's text, which can quote the schema, is not
+    (flyingrobots/parley#131). `unsupported` names a construct the checker does not implement, in
+    which case nothing was established and `pointers` is empty."""
 
     def __init__(self, ok: bool, errors: Sequence[str] = (), unsupported: Optional[str] = None):
         self.ok, self.errors, self.unsupported = ok, list(errors), unsupported
+        self.pointers: List[str] = [e.at for e in self.errors if isinstance(e, _Issue)]
 
     def __repr__(self) -> str:
         return f"CheckResult(ok={self.ok!r}, errors={self.errors!r}, unsupported={self.unsupported!r})"
@@ -685,6 +726,15 @@ def validate_line(line: Mapping[str, Any], extra: Optional[Mapping[Tuple[str, st
     if doc is None:
         return CheckResult(False, [f"no schema for {pair[0]}@{pair[1]}"], f"no schema for {pair[0]}@{pair[1]}")
     return check_record(line, doc)
+
+
+def _token(key: Any) -> str:
+    """One RFC 6901 reference token: `~` and `/` inside a key are escaped."""
+    return _escape_pointer(key if isinstance(key, str) else _json_key(key))
+
+
+def _fail(errors: List[str], path: str, message: str, where: Optional[str] = None) -> None:
+    errors.append(_Issue(f"{_at(path)} {message}", _at(path if where is None else where)))
 
 
 def _at(path: str) -> str:
@@ -776,7 +826,7 @@ def _validate(schema: Any, value: Any, path: str, errors: List[str]) -> None:
     if schema is True or schema is None:
         return
     if schema is False:
-        errors.append(f"{_at(path)} is not allowed here")
+        _fail(errors, path, f"is not allowed here")
         return
     if not isinstance(schema, dict):
         raise _Unsupported("a schema that is not an object or a boolean")
@@ -787,19 +837,19 @@ def _validate(schema: Any, value: Any, path: str, errors: List[str]) -> None:
     if "type" in s:
         types = s["type"] if isinstance(s["type"], list) else [s["type"]]
         if not any(_is_type(value, t) for t in types):
-            errors.append(f"{_at(path)} is {_kind(value)}, not {' or '.join(types)}")
+            _fail(errors, path, f"is {_kind(value)}, not {' or '.join(types)}")
     if "const" in s and not _same(value, s["const"]):
-        errors.append(f"{_at(path)} must be {_dumps(s['const'])}")
+        _fail(errors, path, f"must be {_dumps(s['const'])}")
     if "enum" in s and not any(_same(value, o) for o in s["enum"]):
-        errors.append(f"{_at(path)} must be one of {_dumps(s['enum'])}")
+        _fail(errors, path, f"must be one of {_dumps(s['enum'])}")
     if "not" in s and _satisfies(s["not"], value):
-        errors.append(f"{_at(path)} must not match the excluded shape")
+        _fail(errors, path, f"must not match the excluded shape")
     for sub in s.get("allOf", []):
         _validate(sub, value, path, errors)
     if "anyOf" in s and not any(_satisfies(sub, value) for sub in s["anyOf"]):
-        errors.append(f"{_at(path)} matches none of the allowed shapes")
+        _fail(errors, path, f"matches none of the allowed shapes")
     if "oneOf" in s and sum(1 for sub in s["oneOf"] if _satisfies(sub, value)) != 1:
-        errors.append(f"{_at(path)} must match exactly one of the allowed shapes")
+        _fail(errors, path, f"must match exactly one of the allowed shapes")
     if "if" in s:
         branch = s.get("then") if _satisfies(s["if"], value) else s.get("else")
         if branch is not None:
@@ -808,30 +858,30 @@ def _validate(schema: Any, value: Any, path: str, errors: List[str]) -> None:
     if isinstance(value, str):
         n = len(value)
         if isinstance(s.get("minLength"), int) and n < s["minLength"]:
-            errors.append(f"{_at(path)} is shorter than {s['minLength']}")
+            _fail(errors, path, f"is shorter than {s['minLength']}")
         if isinstance(s.get("maxLength"), int) and n > s["maxLength"]:
-            errors.append(f"{_at(path)} is longer than {s['maxLength']}")
+            _fail(errors, path, f"is longer than {s['maxLength']}")
         if isinstance(s.get("pattern"), str) and not _js_regex(s["pattern"]).search(value):
-            errors.append(f"{_at(path)} does not match {s['pattern']}")
+            _fail(errors, path, f"does not match {s['pattern']}")
         if isinstance(s.get("format"), str):
             f = _FORMATS.get(s["format"])
             if f is None:
                 raise _Unsupported(f"format {s['format']}")
             if not f.match(value):
-                errors.append(f"{_at(path)} is not a {s['format']}")
+                _fail(errors, path, f"is not a {s['format']}")
 
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         for key, bad, word in (("minimum", lambda x, b: x < b, "below"), ("maximum", lambda x, b: x > b, "above"),
                                ("exclusiveMinimum", lambda x, b: x <= b, "not above"), ("exclusiveMaximum", lambda x, b: x >= b, "not below")):
             b = s.get(key)
             if isinstance(b, (int, float)) and not isinstance(b, bool) and bad(value, b):
-                errors.append(f"{_at(path)} is {word} {b}")
+                _fail(errors, path, f"is {word} {b}")
 
     if isinstance(value, (list, tuple)):
         if isinstance(s.get("minItems"), int) and len(value) < s["minItems"]:
-            errors.append(f"{_at(path)} has fewer than {s['minItems']} items")
+            _fail(errors, path, f"has fewer than {s['minItems']} items")
         if isinstance(s.get("maxItems"), int) and len(value) > s["maxItems"]:
-            errors.append(f"{_at(path)} has more than {s['maxItems']} items")
+            _fail(errors, path, f"has more than {s['maxItems']} items")
         if "items" in s:
             if isinstance(s["items"], list):
                 raise _Unsupported("items as a tuple")
@@ -842,20 +892,20 @@ def _validate(schema: Any, value: Any, path: str, errors: List[str]) -> None:
         if isinstance(s.get("required"), list):
             for k in s["required"]:
                 if k not in value:
-                    errors.append(f"{_at(path)} is missing {k}")
+                    _fail(errors, path, f"is missing {k}", f"{path}/{_token(k)}")
         if isinstance(s.get("minProperties"), int) and len(value) < s["minProperties"]:
-            errors.append(f"{_at(path)} has fewer than {s['minProperties']} properties")
+            _fail(errors, path, f"has fewer than {s['minProperties']} properties")
         if isinstance(s.get("maxProperties"), int) and len(value) > s["maxProperties"]:
-            errors.append(f"{_at(path)} has more than {s['maxProperties']} properties")
+            _fail(errors, path, f"has more than {s['maxProperties']} properties")
         props = s.get("properties") or {}
         ap = s.get("additionalProperties")
         for k, v in value.items():
             if k in props:
-                _validate(props[k], v, f"{path}/{k}", errors)
+                _validate(props[k], v, f"{path}/{_token(k)}", errors)
             elif ap is False:
-                errors.append(f"{_at(path)} must not carry {k}")
+                _fail(errors, path, f"must not carry {k}", f"{path}/{_token(k)}")
             elif ap is not None and ap is not True:
-                _validate(ap, v, f"{path}/{k}", errors)
+                _validate(ap, v, f"{path}/{_token(k)}", errors)
 
 
 # ---- sinks ---------------------------------------------------------------------------------
@@ -1002,7 +1052,15 @@ class Run:
     def __init__(self, *, tool: str, v: str, id: str, session: Optional[str], dry_run: bool, stdout: Any, stderr: Any,
                  receipt_fd: int, receipt_path: str, receipt_dir: str, secret_values: Set[str], now: Callable[[], int],
                  cwd: str, command: str, resolved: Any, inputs: List[Record], head_redacted: bool,
-                 human: Optional[Callable[[Record], Optional[str]]]):
+                 human: Optional[Callable[[Record], Optional[str]]],
+                 schemas: Optional[Mapping[Tuple[str, str], Any]] = None):
+        # Every schema document the writer holds, by `(id, version)`: the embedded ones and the
+        # ones the tool declared. A record redaction changed is validated against its own pair's
+        # document before it is written (spec section 5.3, flyingrobots/parley#131).
+        self._schemas: Mapping[Tuple[str, str], Any] = schemas or {}
+        # A record was withheld because redaction made it invalid: like a sink failure, the run
+        # closes with 4 (spec sections 3.4, 5.3).
+        self._output_refused = False
         self.id, self.tool, self.v, self.session = id, tool, v, session
         self.dry_run, self.receipt_path, self.receipt_dir, self.cwd = dry_run, receipt_path, receipt_dir, cwd
         self._stdout, self._stderr, self._fd = stdout, stderr, receipt_fd
@@ -1037,11 +1095,17 @@ class Run:
     def sink_failed(self) -> bool:
         return bool(self._failed) or self._sidecar_failed
 
+    @property
+    def redaction_refused(self) -> bool:
+        """True when a record was withheld because redaction made it invalid under its declared
+        schema (spec section 5.3): the run closes with 4."""
+        return self._output_refused
+
     # -- emission ------------------------------------------------------------------------------
 
-    def _next(self) -> Tuple[int, int]:
+    def _next(self, t: Optional[int] = None) -> Tuple[int, int]:
         self._seq += 1
-        return self._seq, max(0, int(self._now()))
+        return self._seq, max(0, int(self._now())) if t is None else t
 
     def _envelope(self, payload: Record, schema: SchemaRef, at: Tuple[int, int]) -> Record:
         sid, ver = _pair(schema)
@@ -1142,7 +1206,16 @@ class Run:
                 for k, v in extra.items():
                     if k in scrubbed and json.dumps(v, sort_keys=True) != json.dumps(scrubbed[k], sort_keys=True):
                         raise ValueError(f"receipt_extra[{k!r}] differs from the record's {k!r}; the copies of an event must agree on every field they share (spec section 1.3)")
-            at = self._next()
+            # A tool's record the scrub changed is validated as each sink would receive it, before
+            # any copy is written and before a seq is taken (spec section 5.3,
+            # flyingrobots/parley#131). A writer-built record is never checked: its scalars are not
+            # scrubbed and its identity fields are skipped, and the error this raises is itself
+            # writer-built, so it cannot raise another.
+            t: Optional[int] = None
+            if not writer and (found or extra_found):
+                t = max(0, int(self._now()))
+                self._refuse_redaction_conflict(to, payload, receipt_extra, scrubbed, extra, schema, (self._seq + 1, t), found + extra_found)
+            at = self._next(t)
             rec = self._envelope(scrubbed, schema, at)
             self._depth += 1
             try:
@@ -1167,6 +1240,58 @@ class Run:
                 msg, self._renderer_warning = self._renderer_warning, None
                 self.writer_warning("human.renderer_failed", f"the tool's --human renderer raised: {msg}; the default rendering is used for the rest of the run", remedy="fix the renderer; the receipt is complete regardless")
             return at[0]
+
+    def _copies(self, to: Mapping[str, bool], payload: Mapping[str, Any], extra: Optional[Mapping[str, Any]], schema: SchemaRef, at: Tuple[int, int]) -> List[Record]:
+        """The copies of one event as the sinks would receive them: the stream copy, and the
+        receipt copy when it carries more."""
+        out: List[Record] = []
+        if to.get("stdout") or to.get("stderr") or not extra:
+            out.append(self._envelope(dict(payload), schema, at))
+        if to.get("receipt") and extra:
+            out.append(self._envelope({**payload, **{k: v for k, v in extra.items() if k not in payload}}, schema, at))
+        return out
+
+    def _refuse_redaction_conflict(self, to: Mapping[str, bool], payload: Record, receipt_extra: Optional[Record], scrubbed: Record,
+                                   extra: Optional[Record], schema: SchemaRef, at: Tuple[int, int], redacted: List[str]) -> None:
+        """Refuse a record that redaction made invalid under its declared schema (spec section
+        5.3, flyingrobots/parley#131). Called before a seq is taken, with the seq and time the
+        record would get. Each copy is checked as scrubbed and as the tool handed it over; a
+        failure the scrubbed copy has and the original did not is one redaction caused. A record
+        already invalid in the same way is not this rule's business and is written as before, as
+        is one whose pair has no schema document here or whose schema is outside the checker's
+        subset: nothing can be established about it.
+
+        On a conflict nothing of the record is written. One writer-built error names each field
+        by JSON Pointer and the schema pair, and deliberately nothing the checker said: a
+        validator's message can quote the schema or the value, and the value is the secret or
+        sits beside it. The run is marked to close with 4, since a record the writer would not
+        write is an output it could not write (spec section 3.4), and the refusal is raised."""
+        sid, ver = _pair(schema)
+        doc = self._schemas.get((sid, ver))
+        if doc is None:
+            return
+        after = self._copies(to, scrubbed, extra, schema, at)
+        before = self._copies(to, payload, receipt_extra, schema, at)
+        pointers: List[str] = []
+        for now_, then in zip(after, before):
+            verdict = check_record(now_, doc)
+            if verdict.ok or verdict.unsupported is not None:
+                continue
+            was = check_record(then, doc)
+            already = set() if (was.ok or was.unsupported is not None) else set(zip(was.pointers, was.errors))
+            for p, e in zip(verdict.pointers, verdict.errors):
+                if (p, e) not in already and p not in pointers:
+                    pointers.append(p)
+        if not pointers:
+            return
+        problem = f"the {payload.get('event')} record was not published: replacing a declared secret at {', '.join(redacted)} left it invalid under {sid}@{ver} at {', '.join(pointers)}"
+        self._output_refused = True
+        self._emit({"stderr": True, "receipt": True},
+                   {"event": "error", "code": REDACTION_CONFLICT_CODE, "problem": problem,
+                    "remedy": "keep a declared secret out of any field whose schema the literal [redacted] cannot satisfy: leave the field out, or declare it as an unconstrained string; the run will close with status 4",
+                    "detail": {"schema": {"id": sid, "version": ver}, "at": pointers, "redacted": list(redacted)}},
+                   SCHEMA_IDS["error"], writer=True)
+        raise ParleyRedactionConflict({"id": sid, "version": ver}, pointers, f"{problem}; reported as {REDACTION_CONFLICT_CODE}")
 
     def _sidecar(self, source: int, text: str) -> None:
         rel = f"{self.id}/{source}.json"
@@ -1260,8 +1385,9 @@ class Run:
         """A structured error (spec section 6). The run then closes with status 2 unless `end` is
         given another non-zero status."""
         d = _diagnostic(code, problem, fields)
+        seq = self._emit({"stderr": True, "receipt": True}, {"event": "error", **d}, SCHEMA_IDS["error"], receipt_extra)
         self._error_reported = True
-        return self._emit({"stderr": True, "receipt": True}, {"event": "error", **d}, SCHEMA_IDS["error"], receipt_extra)
+        return seq
 
     def input(self, path: str, data: Union[bytes, str]) -> None:
         """Supply the bytes of a declared input the writer cannot read itself, such as stdin. For a
@@ -1345,7 +1471,8 @@ class Run:
 
     def end(self, status: Optional[int] = None) -> int:
         """Close the run (spec section 3.3). Status defaults to 2 when an error was reported, else 0;
-        a sink failure forces 4. Returns the exit status the process should exit with."""
+        a sink failure, or a record withheld because redaction made it invalid (section 5.3),
+        forces 4. Returns the exit status the process should exit with."""
         with self._lock:
             if self._closed:
                 return 4 if self._final is None else self._final
@@ -1358,7 +1485,9 @@ class Run:
             except Exception:
                 pass  # an unreadable input is already recorded; nothing else can fail here
             s = status if status is not None else (2 if self._error_reported else 0)
-            if self.sink_failed:
+            # A record withheld because redaction made it invalid is an output the writer could not
+            # write (spec sections 3.4, 5.3): it forces 4 exactly as a sink failure does.
+            if self.sink_failed or self._output_refused:
                 s = 4
             at = self._next()
             rec = self._envelope(self._scrub_payload({"event": "end", "status": s, "receipt": self.receipt_path, "redacted": self._redacted_any}, [], True), SCHEMA_IDS["end"], at)
@@ -1606,7 +1735,8 @@ def _main(tool: Tool, argv: List[str], handler: Callable[[Run, List[str]], Any],
     run = Run(tool=tool.name, v=tool.version, id=run_id, session=session, dry_run=dry_run, stdout=stdout, stderr=stderr,
               receipt_fd=location.fd, receipt_path=location.receipt_path, receipt_dir=location.receipt_dir,
               secret_values=secret_values, now=now, cwd=cwd, command=command_name or discovery or "", resolved=resolved_v,
-              inputs=decls, head_redacted=head_redacted, human=(tool.human or (lambda _l: None)) if human else None)
+              inputs=decls, head_redacted=head_redacted, human=(tool.human or (lambda _l: None)) if human else None,
+              schemas=_declared_schemas(tool))
     state["run"] = run
 
     run._bootstrap(inv)
@@ -1638,8 +1768,8 @@ def _main(tool: Tool, argv: List[str], handler: Callable[[Run, List[str]], Any],
     if discovery:
         try:
             _discover(run, tool, discovery, command_name, bookkeeping)
-        except ParleyClosed:
-            pass
+        except (ParleyClosed, ParleyRedactionConflict):
+            pass  # a conflict was already reported by the writer; the run closes with 4
         except Exception as e:
             if not run.ended:
                 run.error("uncaught.exception", f"uncaught {type(e).__name__} during discovery: {str(e) or '(no message)'}",
@@ -1657,6 +1787,12 @@ def _main(tool: Tool, argv: List[str], handler: Callable[[Run, List[str]], Any],
         if code not in (None, 0):
             run.error("uncaught.exit", f"the tool called sys.exit({code!r}) inside its handler instead of returning or calling run.end",
                       remedy="end the run with run.end(status) and return; the writer owns the exit status (spec section 3.4)")
+    except ParleyRedactionConflict:
+        # Already reported by the writer, under its own code and without the value (spec section
+        # 5.3, flyingrobots/parley#131); an uncaught.exception beside it would say the same thing
+        # twice. The run closes with 4.
+        if run.ended:
+            return run.status if run.status is not None else 4
     except BaseException as e:  # KeyboardInterrupt included: it still closes a complete failed receipt
         if run.ended:
             capture.release()
@@ -1667,6 +1803,18 @@ def _main(tool: Tool, argv: List[str], handler: Callable[[Run, List[str]], Any],
     finally:
         capture.release()
     return (run.status if run.status is not None else 4) if run.ended else run.end()
+
+
+def _declared_schemas(tool: Tool) -> Dict[Tuple[str, str], Any]:
+    """Every schema document this writer can validate a record against, by `(id, version)`: the
+    embedded ones and those the tool declared on its emitted and error types (spec section 4.2).
+    A pair outside this map cannot be checked."""
+    out: Dict[Tuple[str, str], Any] = {(s["id"], s["version"]): s["schema"] for s in SCHEMAS}
+    for c in tool.commands.values():
+        for t in list(c.get("emits", [])) + list(c.get("errors") or []):
+            if t.get("schema") is not None:
+                out[(t["id"], t["version"])] = t["schema"]
+    return out
 
 
 def _discover(run: Run, tool: Tool, discovery: str, command_name: Optional[str], bookkeeping: List[Record]) -> None:

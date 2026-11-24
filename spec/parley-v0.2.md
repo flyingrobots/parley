@@ -371,7 +371,7 @@ named exceptions to the two-copy guarantee.
 | `0` | The command completed and succeeded. |
 | `2` | The command failed and reported a structured error (§6), a usage error found after the bootstrap line included (§3.2). |
 | `3` | Setup failed before the bootstrap line, a usage error found there included; the only output is the §3.2 diagnostic. |
-| `4` | Protocol output, receipt writing or finalisation failed, including a failure while writing the bootstrap line. Whatever remained possible through working sinks was preserved, subject to the immutable `end`: a run whose bootstrap write failed still closes its receipt with `end` carrying `4`, since the receipt was created first (§3.1). |
+| `4` | Protocol output, receipt writing or finalisation failed, including a failure while writing the bootstrap line. Whatever remained possible through working sinks was preserved, subject to the immutable `end`: a run whose bootstrap write failed still closes its receipt with `end` carrying `4`, since the receipt was created first (§3.1). A record withheld because redaction left it invalid under its declared schema (§5.3) is protocol output that could not be written, and gives this status too. |
 | signal-derived | Termination by signal: the documented exception. Terminal output may be absent. |
 | other | Tool-owned and documented by the tool. A tool **MUST NOT** redefine `0`, `2`, `3` or `4`. |
 
@@ -738,6 +738,22 @@ receipt naming where, after the record it names:
 stored record a sidecar holds, by its `source`) and `at` is a JSON Pointer within it. The `end`
 event's `redacted` flag (§3.3) is `true` whenever the head carries `redacted` or any `redaction`
 event was emitted, so a replay decision has one place to look.
+
+**Redaction and the declared schema.** Replacing a value can leave a record invalid under the
+schema it declares (§4.5): an integer field that held the secret now holds the string
+`[redacted]`, or a string with a `pattern`, an `enum`, a `format` or a length bound no longer
+meets it. A program **MUST NOT** publish a record that redaction made invalid under its declared
+schema, on any stream or in the receipt, in its redacted form or its original one. It checks the
+redacted record, as each stream and the receipt would receive it, before any copy leaves the
+process; a record that fails gets no `seq` and is written nowhere. In its place the program
+reports a structured error (§6) that names each affected field by JSON Pointer and the schema by
+its `id` and `version`. That error **MUST NOT** carry the value, the text of a validator's message
+or any part of the schema: a validator's message can quote the value it rejected, and here that
+value is the secret or sits beside it. The withheld record is output the program could not write,
+so the run closes with status `4` (§3.4). Privacy and the contract both hold and the answer is
+lost: a program neither admits `[redacted]` where its schema does not, nor leaves a typed value
+unredacted. A program that holds no schema document for the record's pair cannot make this check,
+and the rule asks nothing of it for that record.
 
 A schema checks the shape of `redacted`, not its truth. Whether an indexed element contains
 `[redacted]`, whether a pointer resolves, and whether a `[redacted]` marker in the head has a

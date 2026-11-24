@@ -86,6 +86,18 @@ def scratch():
     return d, state, {"XDG_STATE_HOME": state}
 
 
+def scratch_free(*secrets):
+    """A scratch directory whose paths carry none of the given secrets. The redaction-conflict cases
+    use short secrets such as `42`, and a temporary directory's random name holds one about once in
+    a few hundred runs; the writer then relocates the receipt or fails at startup, which is right
+    and is not what those cases are about."""
+    for _ in range(64):
+        d, state, env = scratch()
+        if not any(v in d or v in state for v in secrets):
+            return d, state, env
+    raise RuntimeError("no temporary directory free of %s could be made" % ", ".join(secrets))
+
+
 class Outcome:
     def __init__(self, status, stdout, stderr, receipt_path):
         self.status, self.stdout, self.stderr, self.path = status, stdout, stderr, receipt_path
@@ -581,6 +593,221 @@ class TestRedaction(unittest.TestCase):
         self.assertEqual(o.status, 3)
         self.assertEqual([x["code"] for x in o.stderr.objs], ["startup.secret_in_identity"])
         self.assertNotIn("s3s", o.stderr.text)
+
+
+PATTERN = "^[a-z]{3}-[0-9]+$"
+T_TYPED = ("t.typed", "1.0.0")
+TYPED = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "required": ["event", "t", "seq", "run", "_schema"],
+    "properties": {
+        "event": {"const": "result"},
+        "ref": {"type": "string", "pattern": PATTERN},
+        "mode": {"enum": ["fast", "slow"]},
+        "count": {"type": "integer"},
+        "note": {"type": "string"},
+        "_schema": {"type": "object", "required": ["id", "version"], "additionalProperties": False,
+                    "properties": {"id": {"const": "t.typed"}, "version": {"const": "1.0.0"}}},
+    },
+}
+TYPED_TOOL = {"commands": {"count": {
+    "intent": "count", "effects": {"reads": [], "writes": [], "network": False, "idempotent": True},
+    "secrets": ["--token", "T_TOKEN"],
+    "emits": [{"id": "t.typed", "version": "1.0.0", "schema": TYPED}, {"id": "t.loose", "version": "1.0.0"}],
+}}}
+TYPED_EXTRA = {T_COUNT: RESULT, T_TYPED: TYPED}
+
+
+class TestRedactionConflict(unittest.TestCase):
+    """A record redaction made invalid under its declared schema is never published
+    (flyingrobots/parley#131, spec section 5.3): validated before any copy is written and before a
+    seq is taken, replaced by one structured error, and the run ends with status 4."""
+
+    @staticmethod
+    def every_line(o):
+        return o.stdout.objs + o.stderr.objs + o.receipt_lines
+
+    def assert_gapless(self, o):
+        seqs = sorted({x["seq"] for x in self.every_line(o)})
+        self.assertEqual(seqs, list(range(len(seqs))))
+
+    @staticmethod
+    def conflicts(o):
+        return [x for x in o.stderr.objs if x.get("code") == "redaction.schema_conflict"]
+
+    @staticmethod
+    def said(e):
+        """Everything the error says outside its envelope."""
+        return "\n".join([e["problem"], e["remedy"], json.dumps(e["detail"])])
+
+    def test_an_integer_field_equal_to_a_declared_secret_is_not_published(self):
+        d, _, env = scratch_free("42")
+        raised = []
+
+        def body(run):
+            try:
+                run.result({"event": "result", "value": 42}, T_COUNT)
+            except Exception as e:
+                raised.append(e)
+                raise
+
+        o = run_count(d, env, ["count", "--token", "42"], body)
+        self.assertEqual(o.status, 4)
+        self.assertIsInstance(raised[0], pe.ParleyRedactionConflict)
+        self.assertEqual([x for x in self.every_line(o) if x["event"] == "result"], [])
+        self.assertFalse(any("value" in x for x in self.every_line(o)))
+        self.assertEqual(len([x for x in o.stderr.objs if x["event"] == "error"]), 1)
+        (e,) = self.conflicts(o)
+        self.assertEqual(e["event"], "error")
+        self.assertEqual(e["detail"], {"schema": {"id": "t.count", "version": "1.0.0"}, "at": ["/value"], "redacted": ["/value"]})
+        self.assertIn("/value", e["problem"])
+        self.assertIn("t.count@1.0.0", e["problem"])
+        self.assertNotIn("42", self.said(e))
+        for leak in ("integer", "is string", "minimum", "not integer"):
+            self.assertNotIn(leak, self.said(e))
+        self.assertEqual([x["seq"] for x in o.receipt_lines if x["event"] == "error"], [e["seq"]])
+        self.assertEqual(o.receipt_lines[-1]["event"], "end")
+        self.assertEqual(o.receipt_lines[-1]["status"], 4)
+        self.assertEqual(o.stdout.objs[-1]["status"], 4)
+        self.assert_gapless(o)
+        assert_valid(self, o)
+
+    def test_a_distinctive_numeric_secret_appears_nowhere(self):
+        d, _, env = scratch_free("8675309")
+        o = run_count(d, env, ["count", "--token", "8675309"], lambda run: run.result({"event": "result", "value": 8675309}, T_COUNT))
+        self.assertEqual(o.status, 4)
+        self.assertNotIn("8675309", o.everything)
+        self.assertEqual(len(self.conflicts(o)), 1)
+        assert_valid(self, o)
+
+    def test_a_pattern_or_enum_the_marker_breaks_is_refused_naming_each_field(self):
+        d, _, env = scratch_free("abc-123", "fast")
+        o = run_count(d, {**env, "T_TOKEN": "fast"}, ["count", "--token", "abc-123"],
+                      lambda run: run.result({"event": "result", "ref": "abc-123", "mode": "fast", "note": "kept"}, T_TYPED), TYPED_TOOL)
+        self.assertEqual(o.status, 4)
+        (e,) = self.conflicts(o)
+        self.assertEqual(e["detail"], {"schema": {"id": "t.typed", "version": "1.0.0"}, "at": ["/ref", "/mode"], "redacted": ["/ref", "/mode"]})
+        for part in ("/ref", "/mode", "t.typed@1.0.0"):
+            self.assertIn(part, e["problem"])
+        for leak in ("abc-123", "fast", "slow", PATTERN, "[a-z]", "does not match", "must be one of"):
+            self.assertNotIn(leak, self.said(e))
+        self.assertEqual([x for x in self.every_line(o) if x["event"] == "result"], [])
+        self.assertNotIn("abc-123", o.everything)
+        self.assert_gapless(o)
+        assert_valid(self, o, TYPED_EXTRA)
+
+    def test_a_redaction_that_leaves_the_record_valid_is_written_as_before(self):
+        d, _, env = scratch_free("abc-123")
+        o = run_count(d, env, ["count", "--token", "abc-123"],
+                      lambda run: run.result({"event": "result", "ref": "xyz-9", "mode": "slow", "note": "saw abc-123"}, T_TYPED), TYPED_TOOL)
+        self.assertEqual(o.status, 0)
+        out = next(x for x in o.stdout.objs if x["event"] == "result")
+        self.assertEqual((out["ref"], out["mode"], out["note"]), ("xyz-9", "slow", "saw [redacted]"))
+        red = next(x for x in o.receipt_lines if x["event"] == "redaction")
+        self.assertEqual((red["in"], red["at"]), (out["seq"], "/note"))
+        self.assertEqual(o.stderr.objs, [])
+        self.assert_gapless(o)
+        assert_valid(self, o, TYPED_EXTRA)
+
+    def test_with_receipt_extra_neither_copy_is_written_when_either_would_be_invalid(self):
+        d, _, env = scratch_free("42")
+        o = run_count(d, env, ["count", "--token", "42"],
+                      lambda run: run.result({"event": "result", "note": "fine"}, T_TYPED, {"count": 42}), TYPED_TOOL)
+        self.assertEqual(o.status, 4)
+        self.assertEqual([x for x in self.every_line(o) if x["event"] == "result"], [])
+        self.assertEqual(self.conflicts(o)[0]["detail"], {"schema": {"id": "t.typed", "version": "1.0.0"}, "at": ["/count"], "redacted": ["/count"]})
+        self.assert_gapless(o)
+        assert_valid(self, o, TYPED_EXTRA)
+        d2, _, env2 = scratch_free("42")
+        o2 = run_count(d2, env2, ["count", "--token", "42"],
+                       lambda run: run.result({"event": "result", "count": 42}, T_TYPED, {"note": "fine"}), TYPED_TOOL)
+        self.assertEqual(o2.status, 4)
+        self.assertEqual([x for x in self.every_line(o2) if x["event"] == "result"], [])
+        self.assertEqual(len(self.conflicts(o2)), 1)
+        self.assert_gapless(o2)
+
+    def test_a_handler_that_catches_the_refusal_carries_on_and_end_0_cannot_undo_status_4(self):
+        d, _, env = scratch_free("42")
+        ended = []
+
+        def body(run):
+            try:
+                run.result({"event": "result", "value": 42}, T_COUNT)
+            except pe.ParleyRedactionConflict as e:
+                self.assertNotIn("42", str(e))
+                self.assertEqual(e.pointers, ["/value"])
+                self.assertEqual(e.schema, {"id": "t.count", "version": "1.0.0"})
+            run.result({"event": "result", "value": 7}, T_COUNT)
+            ended.append(run.end(0))
+
+        o = run_count(d, env, ["count", "--token", "42"], body)
+        self.assertEqual(ended, [4])
+        self.assertEqual(o.status, 4)
+        self.assertEqual(o.stdout.objs[-1]["status"], 4)
+        self.assertEqual([x["value"] for x in o.stdout.objs if x["event"] == "result"], [7])
+        self.assertEqual([x["code"] for x in o.stderr.objs], ["redaction.schema_conflict"])
+        self.assert_gapless(o)
+        assert_valid(self, o)
+
+    def test_a_tools_own_error_the_secret_lands_in_is_refused(self):
+        d, _, env = scratch_free("42", "true")
+
+        def body(run):
+            try:
+                run.error("http.42", "the fetch failed")
+            except pe.ParleyRedactionConflict:
+                pass
+            run.error("fetch.failed", "the fetch failed", retryable=True)
+
+        o = run_count(d, {**env, "T_TOKEN": "true"}, ["count", "--token", "42"], body)
+        self.assertEqual(o.status, 4)
+        err = {"id": "parley.error", "version": "2.0.0"}
+        self.assertEqual([c["detail"] for c in self.conflicts(o)],
+                         [{"schema": err, "at": ["/code"], "redacted": ["/code"]}, {"schema": err, "at": ["/retryable"], "redacted": ["/retryable"]}])
+        self.assertEqual([x["code"] for x in o.stderr.objs], ["redaction.schema_conflict"] * 2)
+        self.assert_gapless(o)
+        assert_valid(self, o)
+
+    def test_the_errors_own_text_is_scrubbed_without_looping(self):
+        d, _, env = scratch_free("value")
+        o = run_count(d, env, ["count", "--token", "value"], lambda run: run.result({"event": "result", "value": 7}, T_COUNT))
+        self.assertEqual(o.status, 4)
+        (c,) = self.conflicts(o)
+        self.assertEqual(c["detail"]["schema"], {"id": "t.count", "version": "1.0.0"})
+        self.assertIn("/[redacted]", c["detail"]["at"])
+        self.assertNotIn("value", self.said(c))
+        self.assertEqual(len(o.stderr.objs), 1)
+        self.assertTrue([x for x in o.receipt_lines if x["event"] == "redaction" and x["in"] == c["seq"]])
+        self.assert_gapless(o)
+        assert_valid(self, o)
+
+    def test_scope_an_already_invalid_record_and_an_undeclared_schema_are_written_as_before(self):
+        d, _, env = scratch_free("abc-123")
+
+        def body(run):
+            run.result({"event": "result", "count": "many", "note": "saw abc-123"}, T_TYPED)
+            run.result({"event": "result", "n": "abc-123"}, ("t.loose", "1.0.0"))
+
+        o = run_count(d, env, ["count", "--token", "abc-123"], body, TYPED_TOOL)
+        self.assertEqual(o.status, 0)
+        self.assertEqual([(x.get("note"), x.get("n")) for x in o.stdout.objs if x["event"] == "result"], [("saw [redacted]", None), (None, "[redacted]")])
+        self.assertEqual(o.stderr.objs, [])
+        self.assert_gapless(o)
+
+    def test_human_renders_the_refusal_as_prose_and_the_receipt_holds_the_error(self):
+        d, _, env = scratch_free("8675309")
+        o = run_count(d, env, ["count", "--human", "--token", "8675309"], lambda run: run.result({"event": "result", "value": 8675309}, T_COUNT))
+        self.assertEqual(o.status, 4)
+        self.assertTrue(o.stderr.text.startswith("error redaction.schema_conflict: "))
+        receipts = os.path.join(d, ".parley", "receipts")
+        with open(os.path.join(receipts, next(f for f in os.listdir(receipts) if f.endswith(".jsonl"))), encoding="utf-8") as f:
+            text = f.read()
+        self.assertNotIn("8675309", o.stdout.text + o.stderr.text + text)
+        lines = [json.loads(line) for line in text.splitlines()]
+        self.assertEqual([x for x in lines if x["event"] == "result"], [])
+        self.assertEqual([x["code"] for x in lines if x["event"] == "error"], ["redaction.schema_conflict"])
+        self.assertEqual(lines[-1]["status"], 4)
 
 
 class TestStartupFailure(unittest.TestCase):

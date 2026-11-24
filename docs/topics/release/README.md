@@ -35,6 +35,6 @@ The first release, `0.2.0` in the root changelog, released all seventeen schemas
 ## A package depends on a package here by range
 
 `@flyingrobots/parley-read` depends on `@flyingrobots/parley-emit` by a caret range that admits the
-version in the repository (`^0.3.0`), so Bun links the workspace copy inside the repository and an
+version in the repository (`^0.4.0`), so Bun links the workspace copy inside the repository and an
 installer outside it resolves the published one. A `workspace:` range would be published verbatim
 by npm and resolve nowhere. The dependency is published first.

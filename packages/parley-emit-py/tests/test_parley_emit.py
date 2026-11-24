@@ -86,6 +86,18 @@ def scratch():
     return d, state, {"XDG_STATE_HOME": state}
 
 
+def scratch_free(*secrets):
+    """A scratch directory whose paths carry none of the given secrets. The redaction-conflict cases
+    use short secrets such as `42`, and a temporary directory's random name holds one about once in
+    a few hundred runs; the writer then relocates the receipt or fails at startup, which is right
+    and is not what those cases are about."""
+    for _ in range(64):
+        d, state, env = scratch()
+        if not any(v in d or v in state for v in secrets):
+            return d, state, env
+    raise RuntimeError("no temporary directory free of %s could be made" % ", ".join(secrets))
+
+
 class Outcome:
     def __init__(self, status, stdout, stderr, receipt_path):
         self.status, self.stdout, self.stderr, self.path = status, stdout, stderr, receipt_path
@@ -630,7 +642,7 @@ class TestRedactionConflict(unittest.TestCase):
         return "\n".join([e["problem"], e["remedy"], json.dumps(e["detail"])])
 
     def test_an_integer_field_equal_to_a_declared_secret_is_not_published(self):
-        d, _, env = scratch()
+        d, _, env = scratch_free("42")
         raised = []
 
         def body(run):
@@ -662,7 +674,7 @@ class TestRedactionConflict(unittest.TestCase):
         assert_valid(self, o)
 
     def test_a_distinctive_numeric_secret_appears_nowhere(self):
-        d, _, env = scratch()
+        d, _, env = scratch_free("8675309")
         o = run_count(d, env, ["count", "--token", "8675309"], lambda run: run.result({"event": "result", "value": 8675309}, T_COUNT))
         self.assertEqual(o.status, 4)
         self.assertNotIn("8675309", o.everything)
@@ -670,7 +682,7 @@ class TestRedactionConflict(unittest.TestCase):
         assert_valid(self, o)
 
     def test_a_pattern_or_enum_the_marker_breaks_is_refused_naming_each_field(self):
-        d, _, env = scratch()
+        d, _, env = scratch_free("abc-123", "fast")
         o = run_count(d, {**env, "T_TOKEN": "fast"}, ["count", "--token", "abc-123"],
                       lambda run: run.result({"event": "result", "ref": "abc-123", "mode": "fast", "note": "kept"}, T_TYPED), TYPED_TOOL)
         self.assertEqual(o.status, 4)
@@ -686,7 +698,7 @@ class TestRedactionConflict(unittest.TestCase):
         assert_valid(self, o, TYPED_EXTRA)
 
     def test_a_redaction_that_leaves_the_record_valid_is_written_as_before(self):
-        d, _, env = scratch()
+        d, _, env = scratch_free("abc-123")
         o = run_count(d, env, ["count", "--token", "abc-123"],
                       lambda run: run.result({"event": "result", "ref": "xyz-9", "mode": "slow", "note": "saw abc-123"}, T_TYPED), TYPED_TOOL)
         self.assertEqual(o.status, 0)
@@ -699,7 +711,7 @@ class TestRedactionConflict(unittest.TestCase):
         assert_valid(self, o, TYPED_EXTRA)
 
     def test_with_receipt_extra_neither_copy_is_written_when_either_would_be_invalid(self):
-        d, _, env = scratch()
+        d, _, env = scratch_free("42")
         o = run_count(d, env, ["count", "--token", "42"],
                       lambda run: run.result({"event": "result", "note": "fine"}, T_TYPED, {"count": 42}), TYPED_TOOL)
         self.assertEqual(o.status, 4)
@@ -707,7 +719,7 @@ class TestRedactionConflict(unittest.TestCase):
         self.assertEqual(self.conflicts(o)[0]["detail"], {"schema": {"id": "t.typed", "version": "1.0.0"}, "at": ["/count"], "redacted": ["/count"]})
         self.assert_gapless(o)
         assert_valid(self, o, TYPED_EXTRA)
-        d2, _, env2 = scratch()
+        d2, _, env2 = scratch_free("42")
         o2 = run_count(d2, env2, ["count", "--token", "42"],
                        lambda run: run.result({"event": "result", "count": 42}, T_TYPED, {"note": "fine"}), TYPED_TOOL)
         self.assertEqual(o2.status, 4)
@@ -716,7 +728,7 @@ class TestRedactionConflict(unittest.TestCase):
         self.assert_gapless(o2)
 
     def test_a_handler_that_catches_the_refusal_carries_on_and_end_0_cannot_undo_status_4(self):
-        d, _, env = scratch()
+        d, _, env = scratch_free("42")
         ended = []
 
         def body(run):
@@ -739,7 +751,7 @@ class TestRedactionConflict(unittest.TestCase):
         assert_valid(self, o)
 
     def test_a_tools_own_error_the_secret_lands_in_is_refused(self):
-        d, _, env = scratch()
+        d, _, env = scratch_free("42", "true")
 
         def body(run):
             try:
@@ -758,7 +770,7 @@ class TestRedactionConflict(unittest.TestCase):
         assert_valid(self, o)
 
     def test_the_errors_own_text_is_scrubbed_without_looping(self):
-        d, _, env = scratch()
+        d, _, env = scratch_free("value")
         o = run_count(d, env, ["count", "--token", "value"], lambda run: run.result({"event": "result", "value": 7}, T_COUNT))
         self.assertEqual(o.status, 4)
         (c,) = self.conflicts(o)
@@ -771,7 +783,7 @@ class TestRedactionConflict(unittest.TestCase):
         assert_valid(self, o)
 
     def test_scope_an_already_invalid_record_and_an_undeclared_schema_are_written_as_before(self):
-        d, _, env = scratch()
+        d, _, env = scratch_free("abc-123")
 
         def body(run):
             run.result({"event": "result", "count": "many", "note": "saw abc-123"}, T_TYPED)
@@ -784,7 +796,7 @@ class TestRedactionConflict(unittest.TestCase):
         self.assert_gapless(o)
 
     def test_human_renders_the_refusal_as_prose_and_the_receipt_holds_the_error(self):
-        d, _, env = scratch()
+        d, _, env = scratch_free("8675309")
         o = run_count(d, env, ["count", "--human", "--token", "8675309"], lambda run: run.result({"event": "result", "value": 8675309}, T_COUNT))
         self.assertEqual(o.status, 4)
         self.assertTrue(o.stderr.text.startswith("error redaction.schema_conflict: "))

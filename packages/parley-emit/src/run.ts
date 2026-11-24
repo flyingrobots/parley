@@ -57,6 +57,34 @@ export class ParleyClosed extends Error {
   constructor() { super("the run has ended; nothing may follow end (spec §3.3)"); this.name = "ParleyClosed"; }
 }
 
+/** The code of the error a writer reports in place of a record redaction made invalid (spec §5.3, flyingrobots/parley#131). */
+export const REDACTION_CONFLICT_CODE = "redaction.schema_conflict";
+
+/**
+ * Thrown by an emission whose record redaction made invalid under its declared schema (spec
+ * §5.3, flyingrobots/parley#131). By the time it is thrown the writer has already reported the
+ * structured error, written nothing of the record and taken no `seq` for it, and the run will
+ * end with status 4. It is thrown, like every other refusal to emit, because the call has no
+ * record to return a `seq` for and the handler should not carry on as though its answer had been
+ * delivered; `main` does not report it a second time. A handler may catch it and continue: the
+ * status stays 4.
+ *
+ * The message names the fields by JSON Pointer and the schema pair. It never carries a value, a
+ * validator's message or any part of the schema, so it is safe to log.
+ */
+export class ParleyRedactionConflict extends Error {
+  /** The schema the record was declared under. */
+  readonly schema: SchemaRef;
+  /** The JSON Pointer of each field that no longer validates, as scrubbed. */
+  readonly pointers: readonly string[];
+  constructor(schema: SchemaRef, pointers: readonly string[], message: string) {
+    super(message);
+    this.name = "ParleyRedactionConflict";
+    this.schema = { id: schema.id, version: schema.version };
+    this.pointers = [...pointers];
+  }
+}
+
 export interface RunInit {
   tool: string; v: string; id: string; session?: string; dryRun: boolean;
   stdout: Sink; stderr: Sink; receiptFd: number; receiptPath: string; receiptDir: string;
@@ -67,6 +95,13 @@ export interface RunInit {
   history?: HistorySink;
   /** The projection applied to the stream copy, when a transform is configured (§8, informative). */
   projection?: HistoryProjection;
+  /**
+   * Every schema document the writer holds, by `id@version`: the ones the package ships and the
+   * ones the tool declared (§4.2). A record redaction changed is validated against its own pair's
+   * document before it is written (§5.3, flyingrobots/parley#131); a pair outside this map
+   * cannot be checked and is written as before.
+   */
+  schemas?: ReadonlyMap<string, Record<string, unknown>>;
 }
 
 type SinkName = "stdout" | "stderr" | "receipt";
@@ -82,6 +117,8 @@ export class Run {
   private redactedAny: boolean;
   private failedSinks = new Set<SinkName>();
   private sidecarFailed = false;
+  /** A record was withheld because redaction made it invalid: like a sink failure, the run closes with 4 (§3.4, §5.3). */
+  private outputRefused = false;
   private historyFailed = false;
   private projectionSeq: number | null = null;
   private projectionWarning: Diagnostic | null = null;
@@ -111,10 +148,12 @@ export class Run {
   get status(): number | null { return this.finalStatus; }
   /** True when any stream, the receipt or a sidecar could not be written: the run closes with 4. */
   get sinkFailed(): boolean { return this.failedSinks.size > 0 || this.sidecarFailed; }
+  /** True when a record was withheld because redaction made it invalid under its declared schema (§5.3): the run closes with 4. */
+  get redactionRefused(): boolean { return this.outputRefused; }
 
   // ---- emission -------------------------------------------------------------------------
 
-  private next(): { seq: number; t: number } { this.seq += 1; return { seq: this.seq, t: this.init.now() }; }
+  private next(t?: number): { seq: number; t: number } { this.seq += 1; return { seq: this.seq, t: t ?? this.init.now() }; }
 
   private envelope(payload: Record_, schema: SchemaRef, at: { seq: number; t: number }): Record_ {
     const { event, ...rest } = payload;
@@ -383,7 +422,16 @@ export class Run {
     if (extra) for (const k of Object.keys(extra)) {
       if (k in scrubbed && canonical(extra[k]) !== canonical(scrubbed[k])) throw new TypeError(`receiptExtra.${k} differs from the record's ${k}; the copies of an event must agree on every field they share (spec §1.3)`);
     }
-    const at = this.next();
+    // A tool's record the scrub changed is validated as each sink would receive it, before any
+    // copy is written and before a seq is taken (§5.3, flyingrobots/parley#131). A writer-built
+    // record is never checked: its scalars are not scrubbed and its identity fields are skipped,
+    // and the error this raises is itself writer-built, so it cannot raise another.
+    let t: number | undefined;
+    if (how.writer !== true && (found.length > 0 || extraFound.length > 0)) {
+      t = this.init.now();
+      this.refuseRedactionConflict(how, payload, receiptExtra, scrubbed, extra, schema, { seq: this.seq + 1, t }, [...found, ...extraFound]);
+    }
+    const at = this.next(t);
     const rec = this.envelope(scrubbed, schema, at);
     const human = this.init.human !== undefined;
     if (how.to.stdout) this.writeOrSkip("stdout", human ? this.prose(rec) : this.line(rec), how.deferFailures);
@@ -397,6 +445,56 @@ export class Run {
     }
     for (const at_ of [...found, ...extraFound]) this.redaction(at.seq, at_);
     return at.seq;
+  }
+
+  /** The copies of one event as the sinks would receive them: the stream copy, and the receipt copy when it carries more. */
+  private copies(how: Emit, payload: Record_, extra: Record_ | undefined, schema: SchemaRef, at: { seq: number; t: number }): Record_[] {
+    const out: Record_[] = [];
+    if (how.to.stdout || how.to.stderr || !extra) out.push(this.envelope(payload, schema, at));
+    if (how.to.receipt && extra) out.push(this.envelope({ ...payload, ...Object.fromEntries(Object.entries(extra).filter(([k]) => !(k in payload))) }, schema, at));
+    return out;
+  }
+
+  /**
+   * Refuse a record that redaction made invalid under its declared schema (§5.3,
+   * flyingrobots/parley#131). Called before a seq is taken, with the seq and time the record
+   * would get. Each copy is checked as scrubbed and as the tool handed it over; a failure the
+   * scrubbed copy has and the original did not is one redaction caused. A record that was already
+   * invalid in the same way is not this rule's business and is written as before, as is one whose
+   * pair has no schema document here or whose schema is outside the checker's subset: nothing
+   * can be established about it (check.ts).
+   *
+   * On a conflict nothing of the record is written. One writer-built error names each field by
+   * JSON Pointer and the schema pair, and deliberately nothing the checker said: a validator's
+   * message can quote the schema or the value, and the value is the secret or sits beside it.
+   * The run is marked to close with 4, since a record the writer would not write is an output it
+   * could not write (§3.4), and the refusal is thrown to the caller.
+   */
+  private refuseRedactionConflict(how: Emit, payload: Record_, receiptExtra: Record_ | undefined, scrubbed: Record_, extra: Record_ | undefined, schema: SchemaRef, at: { seq: number; t: number }, redacted: string[]): void {
+    const doc = this.init.schemas?.get(`${schema.id}@${schema.version}`);
+    if (doc === undefined) return;
+    const after = this.copies(how, scrubbed, extra, schema, at), before = this.copies(how, payload, receiptExtra, schema, at);
+    const pointers: string[] = [];
+    for (let i = 0; i < after.length; i++) {
+      const verdict = checkRecord(after[i], doc);
+      if (verdict.ok || "unsupported" in verdict) continue;
+      const was = checkRecord(before[i], doc);
+      const already = new Set(was.ok || "unsupported" in was ? [] : was.errors.map((e, j) => `${was.pointers[j]}\u0000${e}`));
+      verdict.errors.forEach((e, j) => {
+        const p = verdict.pointers[j]!;
+        if (!already.has(`${p}\u0000${e}`) && !pointers.includes(p)) pointers.push(p);
+      });
+    }
+    if (pointers.length === 0) return;
+    const pair = `${schema.id}@${schema.version}`;
+    const problem = `the ${String(payload.event)} record was not published: replacing a declared secret at ${redacted.join(", ")} left it invalid under ${pair} at ${pointers.join(", ")}`;
+    this.outputRefused = true;
+    this.emit({ to: { stderr: true, receipt: true }, writer: true }, {
+      event: "error", code: REDACTION_CONFLICT_CODE, problem,
+      remedy: "keep a declared secret out of any field whose schema the literal [redacted] cannot satisfy: leave the field out, or declare it as an unconstrained string; the run will close with status 4",
+      detail: { schema: { id: schema.id, version: schema.version }, at: pointers, redacted },
+    }, SCHEMA_IDS.error);
+    throw new ParleyRedactionConflict(schema, pointers, `${problem}; reported as ${REDACTION_CONFLICT_CODE}`);
   }
 
   private sidecar(source: number, text: string) {
@@ -501,8 +599,10 @@ export class Run {
 
   /** A structured error (§6). The run then closes with status 2 unless `end` is given another non-zero status. `receiptExtra` goes to the receipt copy only. */
   error(d: Diagnostic, receiptExtra?: Record_): number {
+    // Marked once the line is out: an error the writer refused to emit was not reported.
+    const seq = this.emit({ to: { stderr: true, receipt: true } }, { event: "error", ...this.diagnostic(d) }, SCHEMA_IDS.error, receiptExtra);
     this.errorReported = true;
-    return this.emit({ to: { stderr: true, receipt: true } }, { event: "error", ...this.diagnostic(d) }, SCHEMA_IDS.error, receiptExtra);
+    return seq;
   }
 
   private diagnostic(d: Diagnostic): Record_ {
@@ -586,8 +686,8 @@ export class Run {
   }
 
   /**
-   * Close the run (§3.3). Status defaults to 2 when an error was reported, else 0; a sink failure
-   * forces 4. Returns the exit status the process should exit with.
+   * Close the run (§3.3). Status defaults to 2 when an error was reported, else 0; a sink failure,
+   * or a record withheld because redaction made it invalid (§5.3), forces 4. Returns the exit status the process should exit with.
    */
   end(status?: number): number {
     if (this.closed) return this.finalStatus ?? 4;
@@ -595,7 +695,9 @@ export class Run {
     if (status === 0 && this.errorReported) throw new TypeError("a run that reported an error cannot end with status 0 (spec §3.4); a recovered condition is a warning");
     try { this.finaliseInputs(); } catch { /* an unreadable input is already recorded; nothing else can fail here */ }
     let s = status ?? (this.errorReported ? 2 : 0);
-    if (this.sinkFailed) s = 4;
+    // A record withheld because redaction made it invalid is an output the writer could not write
+    // (§3.4, §5.3): it forces 4 exactly as a sink failure does, whatever the handler asked for.
+    if (this.sinkFailed || this.outputRefused) s = 4;
     const at = this.next();
     const rec = this.envelope(this.scrubPayload({ event: "end", status: s, receipt: this.receiptPath, redacted: this.redactedAny }, [], true), SCHEMA_IDS.end, at);
     this.closed = true;

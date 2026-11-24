@@ -44,7 +44,8 @@ function tool(over: Partial<ToolSpec> = {}): ToolSpec {
   });
 }
 
-function scratch() {
+function scratch() { return scratchAnywhere(); }
+function scratchAnywhere() {
   const dir = mkdtempSync(join(tmpdir(), "parley-emit-"));
   const state = mkdtempSync(join(tmpdir(), "parley-state-"));
   return { dir, state, env: { XDG_STATE_HOME: state } as Record<string, string> };
@@ -2325,6 +2326,19 @@ describe("PE-29 a record redaction made invalid is never published (flyingrobots
     },
   };
   const typed = { commands: { count: { intent: "count", effects: { reads: [], writes: [], network: false, idempotent: true }, secrets: ["--token", "T_TOKEN"], emits: [{ ...TYPED_PAIR, schema: TYPED }, { id: "t.loose", version: "1.0.0" }] } } };
+  /**
+   * A scratch directory whose paths carry none of the given secrets. These cases use short
+   * secrets such as `42`, and a temporary directory's random name holds one about once in a few
+   * hundred runs; the writer then relocates the receipt or fails at startup (§5.3), which is
+   * right and is not what these cases are about.
+   */
+  const scratch = (...secrets: string[]) => {
+    for (let i = 0; i < 64; i++) {
+      const s = scratchAnywhere();
+      if (!secrets.some((v) => s.dir.includes(v) || s.state.includes(v))) return s;
+    }
+    throw new Error(`no temporary directory free of ${secrets.join(", ")} could be made`);
+  };
   type R = Awaited<ReturnType<typeof runCount>>;
   const everyLine = (r: R) => [...r.stdout.objs, ...r.stderr.objs, ...r.receiptLines];
   const expectGapless = (r: R) => {
@@ -2336,7 +2350,7 @@ describe("PE-29 a record redaction made invalid is never published (flyingrobots
   const said = (e: { problem: string; remedy: string; detail: unknown }) => `${e.problem}\n${e.remedy}\n${JSON.stringify(e.detail)}`;
 
   test("an integer field equal to a declared secret: the result is not published and the run ends with status 4 and one structured error", async () => {
-    const { dir, env } = scratch();
+    const { dir, env } = scratch("42");
     let thrown: unknown;
     const r = await runCount(dir, env, ["count", "--token", "42"], (run) => {
       try { run.result({ event: "result", value: 42 }, PAIR); } catch (e) { thrown = e; throw e; }
@@ -2363,7 +2377,7 @@ describe("PE-29 a record redaction made invalid is never published (flyingrobots
   });
 
   test("a distinctive numeric secret appears on no stream and in no receipt line", async () => {
-    const { dir, env } = scratch();
+    const { dir, env } = scratch("8675309");
     const r = await runCount(dir, env, ["count", "--token", "8675309"], (run) => { run.result({ event: "result", value: 8675309 }, PAIR); });
     expect(r.status).toBe(4);
     expect(r.stdout.text + r.stderr.text + r.receipt).not.toContain("8675309");
@@ -2372,7 +2386,7 @@ describe("PE-29 a record redaction made invalid is never published (flyingrobots
   });
 
   test("a string field whose pattern or enum [redacted] breaks is refused the same way, naming each field", async () => {
-    const { dir, env } = scratch();
+    const { dir, env } = scratch("abc-123", "fast");
     const r = await runCount(dir, { ...env, T_TOKEN: "fast" }, ["count", "--token", "abc-123"], (run) => {
       run.result({ event: "result", ref: "abc-123", mode: "fast", note: "kept" }, TYPED_PAIR);
     }, typed);
@@ -2390,7 +2404,7 @@ describe("PE-29 a record redaction made invalid is never published (flyingrobots
   });
 
   test("a redaction that leaves the record valid is written as before, with its redaction event", async () => {
-    const { dir, env } = scratch();
+    const { dir, env } = scratch("abc-123");
     const r = await runCount(dir, env, ["count", "--token", "abc-123"], (run) => {
       run.result({ event: "result", ref: "xyz-9", mode: "slow", note: "saw abc-123" }, TYPED_PAIR);
     }, typed);
@@ -2405,7 +2419,7 @@ describe("PE-29 a record redaction made invalid is never published (flyingrobots
   });
 
   test("with receiptExtra, neither copy is written when either would be invalid", async () => {
-    const { dir, env } = scratch();
+    const { dir, env } = scratch("42");
     // The stream copy alone is valid; the receipt copy carries the typed field the secret lands in.
     const r = await runCount(dir, env, ["count", "--token", "42"], (run) => { run.result({ event: "result", note: "fine" }, TYPED_PAIR, { count: 42 }); }, typed);
     expect(r.status).toBe(4);
@@ -2414,7 +2428,7 @@ describe("PE-29 a record redaction made invalid is never published (flyingrobots
     expectGapless(r);
     expect(r.violations).toEqual([]);
     // And the other way round: the receipt-only field is fine and the shared record is not.
-    const s = scratch();
+    const s = scratch("42");
     const r2 = await runCount(s.dir, s.env, ["count", "--token", "42"], (run) => { run.result({ event: "result", count: 42 }, TYPED_PAIR, { note: "fine" }); }, typed);
     expect(r2.status).toBe(4);
     expect(everyLine(r2).filter((o) => o.event === "result")).toEqual([]);
@@ -2423,7 +2437,7 @@ describe("PE-29 a record redaction made invalid is never published (flyingrobots
   });
 
   test("a handler that catches the refusal carries on: later records follow with no gap, and end(0) cannot bring the status back from 4", async () => {
-    const { dir, env } = scratch();
+    const { dir, env } = scratch("42");
     const r = await runCount(dir, env, ["count", "--token", "42"], (run) => {
       try { run.result({ event: "result", value: 42 }, PAIR); } catch (e) { if (!(e instanceof ParleyRedactionConflict)) throw e; expect(e.message).not.toContain("42"); expect(e.pointers).toEqual(["/value"]); expect(e.schema).toEqual(PAIR); }
       run.result({ event: "result", value: 7 }, PAIR);
@@ -2439,7 +2453,7 @@ describe("PE-29 a record redaction made invalid is never published (flyingrobots
   });
 
   test("a tool's own error whose code or typed field the secret lands in is refused, not published invalid", async () => {
-    const { dir, env } = scratch();
+    const { dir, env } = scratch("42", "true");
     const r = await runCount(dir, { ...env, T_TOKEN: "true" }, ["count", "--token", "42"], (run) => {
       try { run.error({ code: "http.42", problem: "the fetch failed" }); } catch (e) { if (!(e instanceof ParleyRedactionConflict)) throw e; }
       run.error({ code: "fetch.failed", problem: "the fetch failed", retryable: true });
@@ -2456,7 +2470,7 @@ describe("PE-29 a record redaction made invalid is never published (flyingrobots
   });
 
   test("the error's own text is scrubbed without looping when the secret is the field's name", async () => {
-    const { dir, env } = scratch();
+    const { dir, env } = scratch("value");
     // The key `value` is renamed by the scrub, so the required field is missing, and the pointer
     // the error would print is itself the secret.
     const r = await runCount(dir, env, ["count", "--token", "value"], (run) => { run.result({ event: "result", value: 7 }, PAIR); });
@@ -2473,7 +2487,7 @@ describe("PE-29 a record redaction made invalid is never published (flyingrobots
   });
 
   test("scope: a record already invalid for another reason, and a type with no schema document, are written as before", async () => {
-    const { dir, env } = scratch();
+    const { dir, env } = scratch("abc-123");
     const r = await runCount(dir, env, ["count", "--token", "abc-123"], (run) => {
       // `count` was never an integer; the redaction in `note` did not make the record invalid.
       run.result({ event: "result", count: "many", note: "saw abc-123" }, TYPED_PAIR);
@@ -2487,7 +2501,7 @@ describe("PE-29 a record redaction made invalid is never published (flyingrobots
   });
 
   test("in a real process the exit status is 4 and stdout carries end with status 4", () => {
-    const { dir, env } = scratch();
+    const { dir, env } = scratch("8675309");
     const script = join(dir, "typed.ts");
     writeFileSync(script, `import { defineTool, main } from ${JSON.stringify(resolve(import.meta.dir, "../src/index.ts"))};
 const schema = { type: "object", required: ["value"], properties: { value: { type: "integer" } } };
@@ -2507,7 +2521,7 @@ process.exit(await main(tool, ["t", ...process.argv.slice(2)], (run) => { run.re
   }, 30_000);
 
   test("--human: the refusal is rendered as prose and the receipt holds the structured error", async () => {
-    const { dir, env } = scratch();
+    const { dir, env } = scratch("8675309");
     const s = streams();
     const status = await main(tool(), ["t", "count", "--human", "--token", "8675309"], async (run) => { run.result({ event: "result", value: 8675309 }, PAIR); }, { cwd: dir, env, ...s });
     expect(status).toBe(4);

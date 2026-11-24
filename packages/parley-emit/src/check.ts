@@ -68,10 +68,19 @@ function walkSchema(node: unknown): string | null {
 export type CheckResult =
   /** The record satisfies the schema. */
   | { readonly ok: true }
-  /** The record does not satisfy it; `errors` names where, shortest path first. */
-  | { readonly ok: false; readonly errors: readonly string[] }
+  /**
+   * The record does not satisfy it; `errors` names where, shortest path first. `pointers` is the
+   * JSON Pointer (RFC 6901) of each error, in the same order: the place in the record the error
+   * is about, and for a missing or disallowed property, that property. A pointer is a location
+   * and nothing else, so it is safe to print where an error's text, which can quote the schema,
+   * is not (flyingrobots/parley#131).
+   */
+  | { readonly ok: false; readonly errors: readonly string[]; readonly pointers: readonly string[] }
   /** The schema uses a construct this checker does not implement, so nothing was established. */
   | { readonly ok: false; readonly errors: readonly string[]; readonly unsupported: string };
+
+/** One failure: where in the record, and the sentence about it. */
+interface Issue { readonly at: string; readonly message: string }
 
 /** The same refusal, raised from inside the walk of a value as a guard of last resort. */
 class Unsupported extends Error {
@@ -86,14 +95,17 @@ class Unsupported extends Error {
 export function checkRecord(value: unknown, schema: unknown): CheckResult {
   const gap = schemaSubsetGap(schema);
   if (gap !== null) return { ok: false, errors: [`the schema uses ${gap}, which this checker does not implement`], unsupported: gap };
-  const errors: string[] = [];
-  try { validate(schema, value, "", errors); }
+  const issues: Issue[] = [];
+  try { validate(schema, value, "", issues); }
   catch (e) {
     if (e instanceof Unsupported) return { ok: false, errors: [e.message], unsupported: e.keyword };
     throw e;
   }
-  return errors.length === 0 ? { ok: true } : { ok: false, errors };
+  return issues.length === 0 ? { ok: true } : { ok: false, errors: issues.map((i) => i.message), pointers: issues.map((i) => i.at) };
 }
+
+/** One RFC 6901 reference token: `~` and `/` inside a key are escaped, so a pointer names one place. */
+function token(key: string): string { return key.replace(/~/g, "~0").replace(/\//g, "~1"); }
 
 function at(path: string): string { return path === "" ? "/" : path; }
 
@@ -121,7 +133,7 @@ function same(a: unknown, b: unknown): boolean {
 }
 
 function satisfies(schema: unknown, value: unknown): boolean {
-  const scratch: string[] = [];
+  const scratch: Issue[] = [];
   validate(schema, value, "", scratch);
   return scratch.length === 0;
 }
@@ -130,52 +142,53 @@ function regex(pattern: string): RegExp {
   try { return new RegExp(pattern, "u"); } catch { return new RegExp(pattern); }
 }
 
-function validate(schema: unknown, value: unknown, path: string, errors: string[]): void {
+function validate(schema: unknown, value: unknown, path: string, errors: Issue[]): void {
+  const fail = (message: string, where = path): void => { errors.push({ at: at(where), message: `${at(path)} ${message}` }); };
   if (schema === true || schema === undefined) return;
-  if (schema === false) { errors.push(`${at(path)} is not allowed here`); return; }
+  if (schema === false) { fail(`is not allowed here`); return; }
   if (typeof schema !== "object" || Array.isArray(schema)) throw new Unsupported("a schema that is not an object or a boolean");
   const s = schema as Record<string, unknown>;
   for (const k of Object.keys(s)) if (!SUPPORTED.has(k)) throw new Unsupported(k);
 
   if (s.type !== undefined) {
     const types = Array.isArray(s.type) ? (s.type as string[]) : [s.type as string];
-    if (!types.some((t) => isType(value, t))) errors.push(`${at(path)} is ${kindOf(value)}, not ${types.join(" or ")}`);
+    if (!types.some((t) => isType(value, t))) fail(`is ${kindOf(value)}, not ${types.join(" or ")}`);
   }
-  if (s.const !== undefined && !same(value, s.const)) errors.push(`${at(path)} must be ${JSON.stringify(s.const)}`);
+  if (s.const !== undefined && !same(value, s.const)) fail(`must be ${JSON.stringify(s.const)}`);
   if (s.enum !== undefined) {
     const options = s.enum as unknown[];
-    if (!options.some((o) => same(value, o))) errors.push(`${at(path)} must be one of ${JSON.stringify(options)}`);
+    if (!options.some((o) => same(value, o))) fail(`must be one of ${JSON.stringify(options)}`);
   }
-  if (s.not !== undefined && satisfies(s.not, value)) errors.push(`${at(path)} must not match the excluded shape`);
+  if (s.not !== undefined && satisfies(s.not, value)) fail(`must not match the excluded shape`);
   if (s.allOf !== undefined) for (const sub of s.allOf as unknown[]) validate(sub, value, path, errors);
-  if (s.anyOf !== undefined && !(s.anyOf as unknown[]).some((sub) => satisfies(sub, value))) errors.push(`${at(path)} matches none of the allowed shapes`);
-  if (s.oneOf !== undefined && (s.oneOf as unknown[]).filter((sub) => satisfies(sub, value)).length !== 1) errors.push(`${at(path)} must match exactly one of the allowed shapes`);
+  if (s.anyOf !== undefined && !(s.anyOf as unknown[]).some((sub) => satisfies(sub, value))) fail(`matches none of the allowed shapes`);
+  if (s.oneOf !== undefined && (s.oneOf as unknown[]).filter((sub) => satisfies(sub, value)).length !== 1) fail(`must match exactly one of the allowed shapes`);
   if (s.if !== undefined) {
     const branch = satisfies(s.if, value) ? s.then : s.else;
     if (branch !== undefined) validate(branch, value, path, errors);
   }
 
   if (typeof value === "string") {
-    if (typeof s.minLength === "number" && [...value].length < s.minLength) errors.push(`${at(path)} is shorter than ${s.minLength}`);
-    if (typeof s.maxLength === "number" && [...value].length > s.maxLength) errors.push(`${at(path)} is longer than ${s.maxLength}`);
-    if (typeof s.pattern === "string" && !regex(s.pattern).test(value)) errors.push(`${at(path)} does not match ${s.pattern}`);
+    if (typeof s.minLength === "number" && [...value].length < s.minLength) fail(`is shorter than ${s.minLength}`);
+    if (typeof s.maxLength === "number" && [...value].length > s.maxLength) fail(`is longer than ${s.maxLength}`);
+    if (typeof s.pattern === "string" && !regex(s.pattern).test(value)) fail(`does not match ${s.pattern}`);
     if (typeof s.format === "string") {
       const f = FORMATS[s.format];
       if (f === undefined) throw new Unsupported(`format ${s.format}`);
-      if (!f.test(value)) errors.push(`${at(path)} is not a ${s.format}`);
+      if (!f.test(value)) fail(`is not a ${s.format}`);
     }
   }
 
   if (typeof value === "number") {
-    if (typeof s.minimum === "number" && value < s.minimum) errors.push(`${at(path)} is below ${s.minimum}`);
-    if (typeof s.maximum === "number" && value > s.maximum) errors.push(`${at(path)} is above ${s.maximum}`);
-    if (typeof s.exclusiveMinimum === "number" && value <= s.exclusiveMinimum) errors.push(`${at(path)} is not above ${s.exclusiveMinimum}`);
-    if (typeof s.exclusiveMaximum === "number" && value >= s.exclusiveMaximum) errors.push(`${at(path)} is not below ${s.exclusiveMaximum}`);
+    if (typeof s.minimum === "number" && value < s.minimum) fail(`is below ${s.minimum}`);
+    if (typeof s.maximum === "number" && value > s.maximum) fail(`is above ${s.maximum}`);
+    if (typeof s.exclusiveMinimum === "number" && value <= s.exclusiveMinimum) fail(`is not above ${s.exclusiveMinimum}`);
+    if (typeof s.exclusiveMaximum === "number" && value >= s.exclusiveMaximum) fail(`is not below ${s.exclusiveMaximum}`);
   }
 
   if (Array.isArray(value)) {
-    if (typeof s.minItems === "number" && value.length < s.minItems) errors.push(`${at(path)} has fewer than ${s.minItems} items`);
-    if (typeof s.maxItems === "number" && value.length > s.maxItems) errors.push(`${at(path)} has more than ${s.maxItems} items`);
+    if (typeof s.minItems === "number" && value.length < s.minItems) fail(`has fewer than ${s.minItems} items`);
+    if (typeof s.maxItems === "number" && value.length > s.maxItems) fail(`has more than ${s.maxItems} items`);
     if (s.items !== undefined) {
       if (Array.isArray(s.items)) throw new Unsupported("items as a tuple");
       value.forEach((item, i) => validate(s.items, item, `${path}/${i}`, errors));
@@ -185,14 +198,14 @@ function validate(schema: unknown, value: unknown, path: string, errors: string[
   if (value !== null && typeof value === "object" && !Array.isArray(value)) {
     const obj = value as Record<string, unknown>;
     const keys = Object.keys(obj);
-    if (Array.isArray(s.required)) for (const k of s.required as string[]) if (!Object.hasOwn(obj, k)) errors.push(`${at(path)} is missing ${k}`);
-    if (typeof s.minProperties === "number" && keys.length < s.minProperties) errors.push(`${at(path)} has fewer than ${s.minProperties} properties`);
-    if (typeof s.maxProperties === "number" && keys.length > s.maxProperties) errors.push(`${at(path)} has more than ${s.maxProperties} properties`);
+    if (Array.isArray(s.required)) for (const k of s.required as string[]) if (!Object.hasOwn(obj, k)) fail(`is missing ${k}`, `${path}/${token(k)}`);
+    if (typeof s.minProperties === "number" && keys.length < s.minProperties) fail(`has fewer than ${s.minProperties} properties`);
+    if (typeof s.maxProperties === "number" && keys.length > s.maxProperties) fail(`has more than ${s.maxProperties} properties`);
     const properties = (s.properties ?? {}) as Record<string, unknown>;
     for (const k of keys) {
-      if (Object.hasOwn(properties, k)) { validate(properties[k], obj[k], `${path}/${k}`, errors); continue; }
-      if (s.additionalProperties === false) errors.push(`${at(path)} must not carry ${k}`);
-      else if (s.additionalProperties !== undefined && s.additionalProperties !== true) validate(s.additionalProperties, obj[k], `${path}/${k}`, errors);
+      if (Object.hasOwn(properties, k)) { validate(properties[k], obj[k], `${path}/${token(k)}`, errors); continue; }
+      if (s.additionalProperties === false) fail(`must not carry ${k}`, `${path}/${token(k)}`);
+      else if (s.additionalProperties !== undefined && s.additionalProperties !== true) validate(s.additionalProperties, obj[k], `${path}/${token(k)}`, errors);
     }
   }
 }

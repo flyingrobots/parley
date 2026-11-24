@@ -1,5 +1,5 @@
 export { defineTool, main, type CommandSpec, type Effects, type EmittedType, type Handler, type InputDecl, type MainOptions, type ToolSpec } from "./tool.ts";
-export { DIGEST_KEYS, Run, ParleyClosed, SCHEMA_IDS, SIDECAR_THRESHOLD, type Diagnostic, type SchemaRef, type Sink } from "./run.ts";
+export { DIGEST_KEYS, Run, ParleyClosed, ParleyRedactionConflict, REDACTION_CONFLICT_CODE, SCHEMA_IDS, SIDECAR_THRESHOLD, type Diagnostic, type SchemaRef, type Sink } from "./run.ts";
 export { checkRecord, schemaSubsetGap, type CheckResult } from "./check.ts";
 export { REDACTED } from "./redact.ts";
 export { SCHEMAS, SCHEMA_SOURCE } from "./schemas.ts";

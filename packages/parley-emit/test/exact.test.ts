@@ -235,6 +235,22 @@ describe("PE-35 the exact parser and serialiser are the writer's, and exported",
       .toBe(`{"id":${BIG_TEXT},"s":"x\\n","list":[null,-${BIG_TEXT},null],"when":"1970-01-01T00:00:00.000Z","j":{"n":7}}`);
   });
 
+  test("exactJson writes a bigint that exists only in a toJSON result (review of flyingrobots/parley#175)", () => {
+    expect(emit.exactJson({ toJSON() { return { id: BIG }; } })).toBe(`{"id":${BIG_TEXT}}`);
+    expect(emit.exactJson({ a: 1, inner: { toJSON: () => [BIG] } })).toBe(`{"a":1,"inner":[${BIG_TEXT}]}`);
+  });
+
+  test("exactJson applies toJSON once per value, as JSON.stringify does (review of flyingrobots/parley#175)", () => {
+    // The hook's result is serialised as it is: its own toJSON is not called again.
+    const twice = { big: BIG, value: { toJSON() { return { kept: true, toJSON() { return "wrong"; } }; } } };
+    expect(emit.exactJson(twice)).toBe(`{"big":${BIG_TEXT},"value":{"kept":true}}`);
+    // A hook that returns its own object does not recurse.
+    const self: { big: bigint; toJSON(): unknown } = { big: BIG, toJSON() { return this; } };
+    expect(emit.exactJson(self)).toBe(`{"big":${BIG_TEXT}}`);
+    // A member of the hook's result still has its own hook applied.
+    expect(emit.exactJson({ big: BIG, v: { toJSON: () => ({ when: new Date(0) }) } })).toBe(`{"big":${BIG_TEXT},"v":{"when":"1970-01-01T00:00:00.000Z"}}`);
+  });
+
   test("exactJson follows JSON.stringify for boxed primitives and array holes beside a bigint, and a cycle is still a TypeError", () => {
     // eslint-disable-next-line no-sparse-arrays
     const beside = { n: new Number(5), s: new String("x"), b: new Boolean(false), holes: [, 1], map: new Map([[1, 2]]) };

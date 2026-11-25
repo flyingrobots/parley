@@ -16,16 +16,28 @@
 // working directory, the run id, the receipt path, the session and the clock are not in the
 // preimage. If any declared input could not be read, there is no `inv`.
 import { createHash } from "node:crypto";
+import { plain } from "./exact.ts";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-export function canonical(v: unknown): string {
-  if (Array.isArray(v)) return "[" + v.map(canonical).join(",") + "]";
+/**
+ * The canonical JSON of a value as the serialiser would write it (`plain`): a `Date` is its
+ * string, a boxed number its number, and a function has no member. So the identity is of what
+ * the receipt holds, and two values written differently are never one `inv`. `key` is the name
+ * the value sits under, which a `toJSON` hook is called with; `""` for a whole document.
+ */
+export function canonical(v: unknown, key = ""): string { return canon(plain(v, key)); }
+
+function canon(v: unknown): string {
+  if (Array.isArray(v)) return "[" + v.map(canon).join(",") + "]";
   if (v && typeof v === "object") {
     const o = v as Record<string, unknown>;
-    return "{" + Object.keys(o).sort().filter((k) => o[k] !== undefined).map((k) => JSON.stringify(k) + ":" + canonical(o[k])).join(",") + "}";
+    return "{" + Object.keys(o).sort().filter((k) => o[k] !== undefined).map((k) => JSON.stringify(k) + ":" + canon(o[k])).join(",") + "}";
   }
   if (typeof v === "bigint") return v.toString();
+  // `JSON.stringify` writes `null` for these, which would give `NaN` the identity of a real
+  // `null` (flyingrobots/parley#177).
+  if (typeof v === "number" && !Number.isFinite(v)) throw new TypeError("a number that is not finite (NaN or an infinity) has no canonical form");
   return JSON.stringify(v) ?? "null";
 }
 

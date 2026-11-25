@@ -23,9 +23,10 @@ import { join, resolve } from "node:path";
 /**
  * The canonical JSON of a value as the serialiser would write it (`plain`): a `Date` is its
  * string, a boxed number its number, and a function has no member. So the identity is of what
- * the receipt holds, and two values written differently are never one `inv`.
+ * the receipt holds, and two values written differently are never one `inv`. `key` is the name
+ * the value sits under, which a `toJSON` hook is called with; `""` for a whole document.
  */
-export function canonical(v: unknown): string { return canon(plain(v)); }
+export function canonical(v: unknown, key = ""): string { return canon(plain(v, key)); }
 
 function canon(v: unknown): string {
   if (Array.isArray(v)) return "[" + v.map(canon).join(",") + "]";

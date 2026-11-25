@@ -512,7 +512,7 @@ export class Run {
     // The copies of one event agree on every field they share (§1.3): compared as scrubbed, since
     // that is what is written, and before a seq is taken, so a refusal leaves no gap.
     if (extra) for (const k of Object.keys(extra)) {
-      if (k in scrubbed && canonical(extra[k]) !== canonical(scrubbed[k])) throw new TypeError(`receiptExtra.${k} differs from the record's ${k}; the copies of an event must agree on every field they share (spec §1.3)`);
+      if (k in scrubbed && canonical(extra[k], k) !== canonical(scrubbed[k], k)) throw new TypeError(`receiptExtra.${k} differs from the record's ${k}; the copies of an event must agree on every field they share (spec §1.3)`);
     }
     // A tool's record the scrub changed is validated as each sink would receive it, before any
     // copy is written and before a seq is taken (§5.3, flyingrobots/parley#131). A writer-built

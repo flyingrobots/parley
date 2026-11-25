@@ -263,26 +263,21 @@ let pastCap: bigint | undefined;
  * primitive is its primitive, whatever properties were hung on it; a function with no hook is
  * not written, so it is not read. `key` is the member name or array index, `""` at the top.
  */
-export function unwritable(value: unknown, key = "", hooked = false): "integer" | "number" | undefined {
-  if (value instanceof BigInt) value = value.valueOf(); // a boxed bigint is its primitive
+export function unwritable(value: unknown, key = ""): "integer" | "number" | undefined {
+  // One reading of the serialiser's rules, `plain`, decides what would be written; this looks
+  // only at that.
+  return refused(plain(value, key));
+}
+
+function refused(value: unknown): "integer" | "number" | undefined {
   if (typeof value === "bigint") {
     pastCap ??= 10n ** BigInt(MAX_EXACT_DIGITS);
     return value >= pastCap || value <= -pastCap ? "integer" : undefined;
   }
   if (typeof value === "number") return Number.isFinite(value) ? undefined : "number";
-  if (value === null || (typeof value !== "object" && typeof value !== "function")) return undefined;
-  // What the serialiser writes is what a `toJSON` hook returns, so that is what is looked at:
-  // once per value, as `write` applies it (`hooked` marks a hook's own result).
-  // The lookup itself is made only where the serialiser makes it: never on a hook's own result.
-  if (!hooked) {
-    const json = (value as { toJSON?: unknown }).toJSON;
-    if (typeof json === "function") return unwritable((json as (key: string) => unknown).call(value, key), key, true);
-  }
-  if (typeof value === "function") return undefined;
-  if (value instanceof Number) return Number.isFinite(Number(value)) ? undefined : "number";
-  if (value instanceof String || value instanceof Boolean) return undefined;
-  if (Array.isArray(value)) { for (let i = 0; i < value.length; i++) { const why = unwritable(value[i], String(i)); if (why) return why; } return undefined; }
-  for (const k of Object.keys(value)) { const why = unwritable((value as Record<string, unknown>)[k], k); if (why) return why; }
+  if (value === null || typeof value !== "object") return undefined;
+  if (Array.isArray(value)) { for (const item of value) { const why = refused(item); if (why) return why; } return undefined; }
+  for (const k of Object.keys(value)) { const why = refused((value as Record<string, unknown>)[k]); if (why) return why; }
   return undefined;
 }
 

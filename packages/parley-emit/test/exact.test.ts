@@ -13,6 +13,7 @@ import { join, resolve } from "node:path";
 import * as emit from "../src/index.ts";
 import { checkRecord, canonical, computeInv, defineTool, main, scrub, declaredProjection, ParleyRedactionConflict, ParleyRedactionUnchecked, type HistoryTransform, type MainOptions, type Run, type ToolSpec } from "../src/index.ts";
 import { pinned } from "./fixtures/pin-inv.ts";
+import { holdsUnreadable } from "../src/exact.ts";
 
 const ROOT = resolve(import.meta.dir, "../../..");
 const CORPUS = join(ROOT, "conformance/numbers/cases.jsonl");
@@ -251,6 +252,17 @@ describe("PE-35 the exact parser and serialiser are the writer's, and exported",
     expect(emit.exactJson({ big: BIG, v: { toJSON: () => ({ when: new Date(0) }) } })).toBe(`{"big":${BIG_TEXT},"v":{"when":"1970-01-01T00:00:00.000Z"}}`);
   });
 
+  test("holdsUnreadable sees an integer past the cap that only a toJSON hook returns (review of flyingrobots/parley#175)", () => {
+    const past = 10n ** BigInt(emit.MAX_EXACT_DIGITS);
+    class Hidden { own = 5n; toJSON() { return past; } }
+    expect(holdsUnreadable({ field: new Hidden() })).toBe(true);
+    expect(holdsUnreadable({ field: { toJSON: () => ({ deep: [past] }) } })).toBe(true);
+    expect(holdsUnreadable({ field: { toJSON: () => ({ deep: [5n] }) } })).toBe(false);
+    // The hook is applied once per value, as the serialiser applies it.
+    const self: { n: bigint; toJSON(): unknown } = { n: 5n, toJSON() { return this; } };
+    expect(holdsUnreadable(self)).toBe(false);
+  });
+
   test("exactJson follows JSON.stringify for boxed primitives and array holes beside a bigint, and a cycle is still a TypeError", () => {
     // eslint-disable-next-line no-sparse-arrays
     const beside = { n: new Number(5), s: new String("x"), b: new Boolean(false), holes: [, 1], map: new Map([[1, 2]]) };
@@ -457,6 +469,21 @@ describe("PE-35 the bounded checker decides a bigint exactly or says it cannot",
     expect(checkRecord(BIG, { exclusiveMinimum: 0.5, exclusiveMaximum: 1.5 })).toEqual({ ok: false, errors: ["/ is not below 1.5"], pointers: ["/"] });
     expect(checkRecord(5n, { minimum: 5, maximum: 5 })).toEqual(ok);
     expect(checkRecord(5n, { exclusiveMinimum: 5 })).toEqual({ ok: false, errors: ["/ is not above 5"], pointers: ["/"] });
+  });
+
+  test("a definite match among alternatives decides enum, anyOf and oneOf, wherever an undecidable alternative sits (review of flyingrobots/parley#175)", () => {
+    // 9007199254740992 is a schema number beyond the safe range: beside BIG it cannot be placed.
+    for (const options of [[9007199254740992, BIG], [BIG, 9007199254740992]]) expect(checkRecord(BIG, { enum: options })).toEqual(ok);
+    for (const anyOf of [[{ maximum: 9007199254740992 }, { type: "integer" }], [{ type: "integer" }, { maximum: 9007199254740992 }]]) expect(checkRecord(BIG, { anyOf })).toEqual(ok);
+    // No alternative matches and one cannot be decided: unchecked, never invalid.
+    expect("unsupported" in checkRecord(BIG, { enum: [9007199254740992, "x"] })).toBe(true);
+    expect("unsupported" in checkRecord(BIG, { anyOf: [{ maximum: 9007199254740992 }, { type: "string" }] })).toBe(true);
+    // No alternative matches and all were decided: invalid, as before.
+    expect("pointers" in checkRecord(BIG, { enum: [1, "x"] })).toBe(true);
+    // oneOf: two definite matches fail whatever the third is; one match beside an undecided one is unchecked.
+    expect("pointers" in checkRecord(BIG, { oneOf: [{ type: "integer" }, { minimum: 0 }, { maximum: 9007199254740992 }] })).toBe(true);
+    expect("unsupported" in checkRecord(BIG, { oneOf: [{ type: "integer" }, { maximum: 9007199254740992 }] })).toBe(true);
+    expect(checkRecord(BIG, { oneOf: [{ type: "integer" }, { type: "string" }] })).toEqual(ok);
   });
 
   test("a bound beyond the safe range is unchecked for a bigint, whichever way a rounded comparison would have gone", () => {

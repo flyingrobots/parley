@@ -107,8 +107,9 @@ export interface ScrubOptions {
  * value with a `toJSON` hook as what the hook returns and a boxed primitive as its primitive, so
  * that is what is scrubbed, and the copy holds the plain result: a `Date` is its string, a `URL`
  * its href, and a secret only a hook returns is replaced like any other. The hook is applied
- * once per value, as `JSON.stringify` applies it, and a function-valued member, which no JSON
- * form has, is left out of the copy, so no hook is left for the serialiser to call afterwards.
+ * once per value, as `JSON.stringify` applies it, to an object or a function alike. A function
+ * with no hook, or one a hook returned, has no JSON form and is absent from the copy, so nothing
+ * callable is left for the serialiser to call afterwards.
  * Before this, the copy was built from own keys alone: a `Date` became `{}`, and an object's own
  * `toJSON` was copied across and called by the serialiser after the scrub, unscrubbed.
  */
@@ -118,11 +119,16 @@ export function scrub(value: unknown, values: ReadonlySet<string>, pointer = "",
 
 function scrubValue(value: unknown, values: ReadonlySet<string>, pointer: string, found: string[], opts: ScrubOptions, key: string, hooked: boolean): unknown {
   if (values.size === 0) return value;
-  if (value !== null && typeof value === "object") {
+  // An object or a function can carry the hook, and `JSON.stringify` consults it on either.
+  if ((value !== null && typeof value === "object") || typeof value === "function") {
     const json = (value as { toJSON?: unknown }).toJSON;
     if (!hooked && typeof json === "function") return scrubValue((json as (key: string) => unknown).call(value, key), values, pointer, found, opts, key, true);
     if (value instanceof Number || value instanceof String || value instanceof Boolean || value instanceof BigInt) return scrubValue(value.valueOf(), values, pointer, found, opts, key, true);
   }
+  // A function left here has no JSON form: its hook, if it had one, has been applied, and a
+  // hook's own result is not asked again. It is absent from the copy, so nothing callable
+  // survives the scrub for the serialiser to call.
+  if (typeof value === "function") return undefined;
   if (typeof value === "string") {
     const r = replaceSecrets(value, values);
     if (r !== value) found.push(pointer || "/");
@@ -141,11 +147,12 @@ function scrubValue(value: unknown, values: ReadonlySet<string>, pointer: string
   if (value && typeof value === "object") {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      if (typeof v === "function") continue; // no JSON form, and a copied `toJSON` would be called after the scrub
       const renamed = opts.keys === false ? k : replaceSecrets(k, values);
       const p = `${pointer}/${escapePointer(renamed)}`;
+      const member = opts.skipKeys?.has(k) && typeof v === "string" ? v : scrubValue(v, values, p, found, opts, k, false);
+      if (member === undefined && typeof v === "function") continue; // a function with no JSON form: no member, as the serialiser would have left none
       if (renamed !== k) found.push(p);
-      out[renamed] = opts.skipKeys?.has(k) && typeof v === "string" ? v : scrubValue(v, values, p, found, opts, k, false);
+      out[renamed] = member;
     }
     return out;
   }

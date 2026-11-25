@@ -96,8 +96,9 @@ a test requires this source to reproduce each.
   unboxed nothing, so with any secret supplied `new Date(0)` was written as `{}` and
   `new Number(5)` as `{}`, where a run with no secret wrote `"1970-01-01T00:00:00.000Z"` and `5`.
   A record now says the same thing with a secret present as without.
-- A function-valued member of a payload is left out of the scrubbed copy. It never had a JSON
-  form, so no emitted byte changes, except that an own `toJSON` is no longer there to be called.
+- A function in a payload is scrubbed as the serialiser would write it: one with a `toJSON` hook
+  as what the hook returns, and one without, or one a hook returned, as nothing. Nothing callable
+  is left in the scrubbed copy for the serialiser to call afterwards.
 
 ### Not changed, and stated
 

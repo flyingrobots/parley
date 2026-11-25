@@ -239,7 +239,7 @@ export function parseExact(text: string): ExactParse {
 
 /** True when the value holds a `bigint` at any depth. */
 export function holdsExact(value: unknown): boolean {
-  if (typeof value === "bigint") return true;
+  if (typeof value === "bigint" || value instanceof BigInt) return true; // a boxed bigint is its primitive
   if (value === null || typeof value !== "object") return false;
   if (Array.isArray(value)) return value.some(holdsExact);
   for (const key in value) if (holdsExact((value as Record<string, unknown>)[key])) return true;
@@ -255,6 +255,7 @@ let pastCap: bigint | undefined;
  * constant, so no digit string is built to find out. It follows `toJSON` as the serialiser does.
  */
 export function holdsUnreadable(value: unknown, hooked = false): boolean {
+  if (value instanceof BigInt) value = value.valueOf(); // a boxed bigint is its primitive
   if (typeof value === "bigint") {
     pastCap ??= 10n ** BigInt(MAX_EXACT_DIGITS);
     return value >= pastCap || value <= -pastCap;
@@ -281,6 +282,7 @@ function write(value: unknown, key: string, hooked = false): string | undefined 
   const json = (value as { toJSON?: unknown }).toJSON;
   if (!hooked && typeof json === "function") return write((json as (key: string) => unknown).call(value, key), key, true);
   if (value instanceof Number || value instanceof String || value instanceof Boolean) return JSON.stringify(value); // a boxed primitive is its primitive
+  if (value instanceof BigInt) return value.valueOf().toString(); // and so is a boxed bigint, which `JSON.stringify` unboxes before it refuses it
   if (Array.isArray(value)) {
     // By index, so a hole is `null` as `JSON.stringify` writes it; `map` would skip it.
     const items: string[] = [];
@@ -300,6 +302,11 @@ function write(value: unknown, key: string, hooked = false): string | undefined 
  * number it is: exact unquoted digits, never a string and never with a suffix. For a value
  * holding none this returns `JSON.stringify`'s own text, byte for byte; a value with no JSON form
  * at all (`undefined`, a function) is `"null"`.
+ *
+ * The value is read at most twice. `JSON.stringify` runs first, so that a value with no `bigint`
+ * is its own text; a `bigint` is found by that pass refusing it, and the value is then written
+ * again by this module. A getter with a side effect is therefore read twice when its object holds
+ * a `bigint`: pass plain data. Every record the writer itself serialises is a plain copy.
  *
  * A consumer that parses the text again with an ordinary `JSON.parse` loses the precision again;
  * `parseExact` does not. A value that refers to itself throws, as it does from `JSON.stringify`.

@@ -192,7 +192,7 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
     // `resolved` goes into the head and into `inv`. A `bigint` in it is written as exact digits;
     // one the writer could not read back, or a number that is not finite, is refused here, where
     // it is still a startup failure.
-    const why = unwritable(resolvedRaw);
+    const why = unwritable(resolvedRaw, "resolved");
     if (why) throw new TypeError(`resolved carries ${unwritableClause(why)}`);
   } catch (e) {
     try { closeSync(location.fd); unlinkSync(location.receiptPath); } catch { /* the reservation is gone either way */ }

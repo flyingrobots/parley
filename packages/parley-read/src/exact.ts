@@ -15,15 +15,16 @@
 //     always, even where a double could hold it: `9007199254740992`, `9007199254740993.0`,
 //     `9.007199254740993e15`, `1e21`, `1e400`. One boundary, so neighbouring large ids never
 //     alternate between two types.
-//   - A number that is **not an integer** is a `number`, the double it parses to, when the token is
-//     that double's own digits: the double rounded to the token's count of significant digits is
-//     the token. That is every decimal of up to fifteen digits, a double's shortest form (`0.1`,
-//     what JavaScript, Python, Go and Rust write) and a longer correct one (`0.10000000000000001`,
-//     what C's `%.17g` writes).
-//   - Anything else the reader **cannot hold**: a non-integral decimal that is no double's digits
-//     (`0.1000000000000000055`, `1e-400`), or an integer of more than `MAX_EXACT_DIGITS` digits.
-//     It says so (`ok: false`, with the tokens) and the caller holds the whole text back rather
-//     than return a rounded value.
+//   - A number that is **not an integer** is a `number`, the double it parses to, only when its
+//     decimal value is the decimal value of that number's own JSON serialisation
+//     (flyingrobots/parley#173): `decimal(token)` against `decimal(String(Number(token)))`. `0.1`,
+//     `0.10` and `1e-1` are one decimal and are held; so is every decimal of up to fifteen digits.
+//   - Anything else the reader **cannot hold**: a non-integral decimal that a double does not give
+//     back (`0.10000000000000001`, `0.1000000000000000055`, `1e-400`), or an integer of more than
+//     `MAX_EXACT_DIGITS` digits. It says so (`ok: false`, with the tokens) and the caller holds the
+//     whole text back rather than return a rounded value. Two decimals that round to one double
+//     are not thereby the same evidence, so the reader does not guess that the longer one was a
+//     formatter's rendering of the shorter.
 //
 // This fixes **integer** precision. A `bigint` does nothing for a non-integral decimal: those are
 // doubles or they are not held.
@@ -93,12 +94,10 @@ function classify(token: string, at: Decimal): Kind {
     if (length > SAFE.length) return "bigint";
     return at.digits + "0".repeat(at.exponent) <= SAFE ? "number" : "bigint"; // sixteen digits against sixteen
   }
-  // Not an integer: a double, when the token is that double's digits at the token's own length.
-  if (at.digits.length > 100) return "none"; // more digits than a double can be asked to print
-  const double = Number(token);
-  if (!Number.isFinite(double) || double === 0) return "none";
-  const printed = decimal(double.toPrecision(at.digits.length));
-  return printed.digits === at.digits && printed.exponent === at.exponent ? "number" : "none";
+  // Not an integer: a number only when writing that number back states the decimal the token
+  // stated (flyingrobots/parley#173). `String` of a number is its JSON serialisation.
+  const printed = decimal(String(Number(token)));
+  return printed.digits === at.digits && printed.exponent === at.exponent && printed.negative === at.negative ? "number" : "none";
 }
 
 const QUOTE = 34, BACKSLASH = 92, MINUS = 45, ZERO = 48, NINE = 57;

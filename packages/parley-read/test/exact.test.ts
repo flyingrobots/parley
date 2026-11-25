@@ -524,7 +524,7 @@ describe("RD-121 a record holding such an integer is validated exactly: invalid 
     expect(state(BIG, { if: { minimum: 0 }, then: { maximum: 255 }, else: { type: "string" } })).toBe("invalid: /value must be <= 255");
     expect(state(BIG, { if: { maximum: 255 }, then: { type: "string" }, else: { type: "integer" } })).toBe("validated");
     expect(state(BIG, { if: undecided, then: { type: "string" }, else: { type: "integer" } })).toBe("partial:number_undecided");
-    expect(state(BIG, { if: undecided, then: { type: "string" }, else: { type: "null" } })).toBe("invalid: /value must match \"then\" and \"else\" both fail");
+    expect(state(BIG, { if: undecided, then: { type: "string" }, else: { type: "null" } })).toBe("invalid: /value fails both \"then\" and \"else\"");
     // allOf is every schema: one conclusive failure is enough, whatever else is undecided.
     expect(state(BIG, { allOf: [undecided, { maximum: 255 }] })).toBe("invalid: /value must be <= 255");
   });
@@ -542,6 +542,9 @@ describe("RD-121 a record holding such an integer is validated exactly: invalid 
     ]) {
       expect(state("contains" in value ? `[${BIG}]` : BIG, value)).toBe("partial:number_undecided");
     }
+    // A reference is written against the whole schema, so a part that holds one is not decided
+    // alone, even for a member that holds no such integer.
+    expect(state(`{"id":${BIG},"name":7}`, { type: "object", properties: { name: { $ref: "#/properties/value/properties/id" }, id: { type: "integer" } } })).toBe("partial:number_undecided");
     // The same undecided keyword beside a conclusive failure: the failure stands.
     expect(state(BIG, { type: "string", format: "int64" })).toBe("invalid: /value must be string");
     expect(state(`{"id":${BIG}}`, { type: "object", required: ["name"], properties: { id: { format: "int64" } } })).toBe("invalid: /value must have required property 'name'");

@@ -584,7 +584,7 @@ function buildBundle(run: string, raw: readonly Raw[], sources: readonly BundleS
       if (validation.state === "invalid") {
         defects.push(defect("record.invalid", "§4.5", entry.file, entry.line, `${validation.schema.id}@${validation.schema.version}: ${validation.errors.join("; ")}`, { run }));
       } else if (validation.state === "partial" && validation.why === "number_undecided") {
-        defects.push(defect("record.number_undecided", "§4.5", entry.file, entry.line, `${validation.schema.id}@${validation.schema.version}: the record holds an integer beyond the safe range, which this reader's validator cannot evaluate, so validation was not completed; the record is neither validated nor found invalid`, { run }));
+        defects.push(defect("record.number_undecided", "§4.5", entry.file, entry.line, `${validation.schema.id}@${validation.schema.version}: the record holds an integer beyond the safe range and a constraint that applies to it could not be decided exactly; nothing was found to fail, and the record is neither validated nor found invalid`, { run }));
       } else if (validation.state === "partial") {
         defects.push(defect("record.unknown_pair", "§4.5", entry.file, entry.line, `no schema for ${validation.schema.id}@${validation.schema.version}; reported as partial, never as validated`, { run }));
       }

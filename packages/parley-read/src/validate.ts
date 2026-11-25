@@ -12,6 +12,7 @@
 // nothing is fetched.
 import Ajv2020, { type ErrorObject, type ValidateFunction } from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
+import { decider } from "./decide.ts";
 import { holdsExact } from "./exact.ts";
 import { SCHEMAS } from "./schemas.ts";
 
@@ -29,10 +30,11 @@ export type Validation =
   | { readonly state: "invalid"; readonly schema: SchemaRef; readonly errors: readonly string[] }
   /**
    * The core was checked and the contract was not (§4.5). Without `why`: a `parley.*` pair this
-   * reader ships no schema for. With `why: "number_undecided"`: the schema is shipped and the
-   * record holds an integer beyond the safe range (a `bigint`), which this reader's validator
-   * cannot evaluate. The record was **not evaluated**: that is not a finding that it violates its
-   * schema, and it is never reported as validated (flyingrobots/parley#159).
+   * reader ships no schema for. With `why: "number_undecided"`: the schema is shipped, the record
+   * holds an integer beyond the safe range (a `bigint`), no constraint was found to fail, and at
+   * least one that applies to such an integer could not be decided exactly (`decide.ts`). It is
+   * not a finding that the record violates its schema, and it is never reported as validated
+   * (flyingrobots/parley#159, flyingrobots/parley#172).
    */
   | { readonly state: "partial"; readonly schema: SchemaRef; readonly missing: readonly string[]; readonly why?: "number_undecided" }
   /** Not validated at all: a tool's own type, or a line that advertises no pair. */
@@ -87,6 +89,13 @@ export function validator(schemas: ReadonlyArray<{ id: string; version: string; 
     if (!fn) { fn = ajv.compile(byPair.get(pair)!); compiled.set(pair, fn); }
     return fn;
   };
+  // Subschemas, for the parts of a record that hold no `bigint`. Compiled once each, by identity.
+  const parts = new WeakMap<object, ValidateFunction>();
+  const decideExact = decider((sub) => {
+    let fn = parts.get(sub);
+    if (!fn) { fn = ajv.compile(sub); parts.set(sub, fn); }
+    return fn;
+  });
   return {
     has: (id, version) => byPair.has(`${id}@${version}`),
     validate(record) {
@@ -95,13 +104,16 @@ export function validator(schemas: ReadonlyArray<{ id: string; version: string; 
       if (!schema.id.startsWith(PROTOCOL_PREFIX)) return { state: "unvalidated", schema, why: "tool_owned" };
       const pair = `${schema.id}@${schema.version}`;
       if (!byPair.has(pair)) return { state: "partial", schema, missing: envelopeGaps(record) };
+      // A record holding an integer beyond the safe range is decided by `decide.ts`: its ordinary
+      // parts by this same validator, the integer exactly, and what cannot be decided not at all.
+      // Never on a rounded stand-in (flyingrobots/parley#159, flyingrobots/parley#172).
+      if (holdsExact(record)) {
+        const { verdict, errors } = decideExact(byPair.get(pair), record);
+        if (verdict === "invalid") return { state: "invalid", schema, errors };
+        if (verdict === "valid") return { state: "validated", schema };
+        return { state: "partial", schema, missing: envelopeGaps(record), why: "number_undecided" };
+      }
       const fn = compile(pair);
-      // The validator underneath checks `integer` and `number` by `typeof`, and holds every
-      // number as a double. A `bigint` is a legitimate JSON integer it cannot evaluate: handing
-      // it over would be called invalid for the validator's own limit, and handing over a rounded
-      // stand-in would validate a record other than this one. So the finding is neither: the
-      // validation was not completed (flyingrobots/parley#159).
-      if (holdsExact(record)) return { state: "partial", schema, missing: envelopeGaps(record), why: "number_undecided" };
       return fn(record) ? { state: "validated", schema } : { state: "invalid", schema, errors: describe(fn.errors) };
     },
   };

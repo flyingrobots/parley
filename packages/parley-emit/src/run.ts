@@ -163,6 +163,8 @@ interface Emit {
   to: { stdout?: boolean; stderr?: boolean; receipt?: boolean }; writer?: boolean; noSidecar?: boolean; deferFailures?: boolean; verbatim?: string;
   /** Pointers into this record where the caller replaced a secret before handing it over; each gets its `redaction` event as though the record's own scrub had found it. */
   replaced?: readonly string[];
+  /** The tool names the event: the record as read must carry a non-empty string `event`. */
+  named?: boolean;
 }
 
 export class Run {
@@ -515,6 +517,7 @@ export class Run {
     // cannot be read at all (one that contains itself) is refused before a seq is taken.
     const payload = this.take(given, "a record") as Record_;
     const receiptExtra = givenExtra === undefined ? undefined : this.take(givenExtra, "receiptExtra") as Record_;
+    if (how.named === true && (typeof payload.event !== "string" || !payload.event)) throw new TypeError("a result needs an event name");
     this.refuseEnvelopeKeys(payload, "a record"); this.refuseEnvelopeKeys(receiptExtra, "receiptExtra");
     const found: string[] = [];
     const scrubbed = this.scrubPayload(payload, found, how.writer === true, how.writer === true ? how.verbatim : undefined);
@@ -530,7 +533,7 @@ export class Run {
     // The copies of one event agree on every field they share (§1.3): compared as scrubbed, since
     // that is what is written, and before a seq is taken, so a refusal leaves no gap.
     if (extra) for (const k of Object.keys(extra)) {
-      if (k in scrubbed && canonicalPlain(extra[k]) !== canonicalPlain(scrubbed[k])) throw new TypeError(`receiptExtra.${k} differs from the record's ${k}; the copies of an event must agree on every field they share (spec §1.3)`);
+      if (Object.hasOwn(scrubbed, k) && canonicalPlain(extra[k]) !== canonicalPlain(scrubbed[k])) throw new TypeError(`receiptExtra.${k} differs from the record's ${k}; the copies of an event must agree on every field they share (spec §1.3)`);
     }
     // A tool's record the scrub changed is validated as each sink would receive it, before any
     // copy is written and before a seq is taken (§5.3, flyingrobots/parley#131). A writer-built
@@ -548,7 +551,7 @@ export class Run {
     if (how.to.stderr) this.writeOrSkip("stderr", human ? this.prose(rec) : this.line(rec), how.deferFailures);
     if (how.to.receipt) {
       // A shared field is written from the payload, so the copies agree byte for byte on it.
-      const full = extra ? this.envelope({ ...scrubbed, ...Object.fromEntries(Object.entries(extra).filter(([k]) => !(k in scrubbed))) }, schema, at) : rec;
+      const full = extra ? this.envelope({ ...scrubbed, ...Object.fromEntries(Object.entries(extra).filter(([k]) => !Object.hasOwn(scrubbed, k))) }, schema, at) : rec;
       const text = exactText(full);
       if (!how.noSidecar && Buffer.byteLength(text, "utf8") > SIDECAR_THRESHOLD) this.sidecar(at.seq, text);
       else this.write("receipt", text + "\n");
@@ -568,7 +571,7 @@ export class Run {
   private copies(how: Emit, payload: Record_, extra: Record_ | undefined, schema: SchemaRef, at: { seq: number; t: number }): Record_[] {
     const out: Record_[] = [];
     if (how.to.stdout || how.to.stderr || !extra) out.push(this.envelope(payload, schema, at));
-    if (how.to.receipt && extra) out.push(this.envelope({ ...payload, ...Object.fromEntries(Object.entries(extra).filter(([k]) => !(k in payload))) }, schema, at));
+    if (how.to.receipt && extra) out.push(this.envelope({ ...payload, ...Object.fromEntries(Object.entries(extra).filter(([k]) => !Object.hasOwn(payload, k))) }, schema, at));
     return out;
   }
 
@@ -734,8 +737,8 @@ export class Run {
 
   /** A result: to stdout and the receipt. `receiptExtra` goes to the receipt copy only. */
   result(record: Record_, schema: SchemaRef, receiptExtra?: Record_): number {
-    if (typeof record.event !== "string" || !record.event) throw new TypeError("a result needs an event name");
-    return this.emit({ to: { stdout: true, receipt: true } }, record, schema, receiptExtra);
+    // The event name is checked inside `emit`, on the one reading of the record that is written.
+    return this.emit({ to: { stdout: true, receipt: true }, named: true }, record, schema, receiptExtra);
   }
 
   /** One page of unbounded output (§7.2); rows belong in `receiptExtra` or in the stream copy as the tool documents. */

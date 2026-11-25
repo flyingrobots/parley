@@ -158,8 +158,9 @@ that is not finite, which is now refused.
   those characters are escaped, so it was never found; the line was appended with no warning and
   status 0. Present in 0.4.0 and earlier. The guard now looks where the scrub looks, in the
   body's values and keys, and in the text as well. The receipt, stdout and stderr were not
-  affected. One consequence: the scrub's rule for numbers applies here too, so a number that
-  merely contains a secret's digits is not a restored secret.
+  affected. The text search is wider than the scrub for numbers, as it was: a number whose
+  digits contain a declared secret is withheld here, though in a record the scrub replaces a
+  number only when its whole decimal form is the secret.
 - **A payload is read once** (review case 2026-11-25). The writer takes one snapshot of a payload
   as it would be written (`plain`: hooks applied, boxes opened, functions gone) before it is
   refused, scrubbed, checked or given a `seq`, and every sink is written from that snapshot by a

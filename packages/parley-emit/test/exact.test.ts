@@ -918,4 +918,17 @@ describe("PE-37 a number that is not finite is refused, never written as null (f
     expect(r.status).toBe(3);
     expect(closed).toBe(1);
   });
+
+  test("a hook on a boxed bigint is read before the box is, and receiptExtra is compared under each member's key (third review of flyingrobots/parley#181)", async () => {
+    const keyed = () => ({ toJSON(key: string) { return key === "value" ? 42 : Number.POSITIVE_INFINITY; } });
+    const r = await go((run) => {
+      expect(() => run.result({ event: "result", value: Object.assign(Object(1n), { toJSON: () => Number.POSITIVE_INFINITY }) }, P.any)).toThrow(TypeError);
+      run.result({ event: "result", value: Object.assign(Object(1n), { toJSON: () => 7 }) }, P.any);
+      run.result({ event: "result", value: keyed() }, P.any, { value: keyed() });
+    });
+    expect(r.err).toEqual([]);
+    expect(r.status).toBe(0);
+    expect(of(r.out, "result").map(valueText)).toEqual(["7", "42"]);
+    expect(of(r.receipt, "result").map(valueText)).toEqual(["7", "42"]);
+  });
 });

@@ -16,6 +16,14 @@ the entry under it names each schema version it releases, and those are separate
   reproduction, containment, follow-up and deadline. The one exception on record is
   `@flyingrobots/parley-read` 0.2.0 and flyingrobots/parley#159, which now blocks the next reader
   release. No spec text, schema or package changes (flyingrobots/parley#168).
+- A shared numeric corpus, [conformance/numbers](conformance/numbers/README.md): 50 JSON texts,
+  each with the exact value it states and the text an exact writer emits for it. It pins the
+  integer rule (a `number` inside the safe-integer range however spelt, an exact integer
+  outside it), the decimal rule of flyingrobots/parley#173, and the 4,096-digit cap. The
+  TypeScript writer is held to it from `@flyingrobots/parley-emit` 0.5.0, which accepts a
+  `bigint` and writes it as exact digits (its own changelog; flyingrobots/parley#171). The Python
+  writer's suite runs the same file and pins where that writer differs
+  (flyingrobots/parley#176). No spec text or schema changes.
 
 ### Fixed
 

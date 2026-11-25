@@ -2497,5 +2497,112 @@ class TestPortability(unittest.TestCase):
         self.assertEqual([x["event"] for x in lines], ["run", "result", "end"])
 
 
+class TestNumericCorpus(unittest.TestCase):
+    """The shared numeric corpus, conformance/numbers/cases.jsonl, through this writer
+    (flyingrobots/parley#171). The oracle is the emitted text: the `value` is cut out of the stdout
+    line as written and compared with the corpus's `emit`, or, where only the spelling differs,
+    with its exact decimal value. `json.loads` is never the oracle for a number.
+
+    This writer is not changed by that issue. Where it differs from the corpus the difference is
+    pinned here as it is, so it cannot move unnoticed, and is tracked in flyingrobots/parley#176."""
+
+    ANY = {"commands": {"count": {
+        "intent": "Count things",
+        "effects": {"reads": [], "writes": [], "network": False, "idempotent": True},
+        "emits": [{"id": "t.any", "version": "1.0.0"}],
+    }}}
+
+    @classmethod
+    def setUpClass(cls):
+        with open(os.path.join(ROOT, "conformance", "numbers", "cases.jsonl"), encoding="utf-8") as f:
+            # The corpus holds strings and lists of strings only, so this parse rounds nothing.
+            cls.cases = [json.loads(line) for line in f]
+
+    def emitted(self, value):
+        """The text of `value` on the stdout result line, or None when the run wrote no result."""
+        d, _, env = scratch()
+        o = run_count(d, env, ["count"], lambda run: run.result({"event": "result", "value": value}, ("t.any", "1.0.0")), over=self.ANY)
+        for line in o.stdout.lines:
+            if '"event":"result"' in line:
+                self.assertEqual(o.status, 0)
+                self.assertIn(line, o.receipt)  # the receipt copy is the same bytes
+                return line[line.index('"value":') + len('"value":'):line.rindex(',"_schema"')]
+        self.assertEqual([x.get("code") for x in o.stderr.objs], ["uncaught.exception"])
+        self.assertEqual(o.status, 2)
+        return None
+
+    @staticmethod
+    def exact_number(token):
+        """A JSON number as the Python value that states it: an int when it is an integer, however
+        spelt, and otherwise a float. What a tool holding exact values would hand the writer."""
+        import decimal
+        with decimal.localcontext() as ctx:
+            ctx.prec = 5000
+            d = decimal.Decimal(token)
+            return int(d) if d == d.to_integral_value() else float(token)
+
+    def test_corpus_is_the_one_the_typescript_suite_reads(self):
+        self.assertEqual(len(self.cases), 50)
+        self.assertEqual(sum(c["outcome"] == "exact" for c in self.cases), 39)
+
+    # A float below 1e-4 is written by Python with a two-digit exponent. The value is the same.
+    SPELLING = {"small-exponent": "1e-07", "small-plain": "1e-07"}
+
+    def test_exact_values_are_written_as_the_corpus_says(self):
+        """Handed the exact Python value of each representable case, the writer emits the corpus's
+        text, digit for digit, except the two float spellings pinned above."""
+        import decimal
+        for c in self.cases:
+            if c["outcome"] != "exact":
+                continue
+            with self.subTest(c["id"]):
+                value = json.loads(c["text"], parse_float=self.exact_number, parse_int=int)
+                got = self.emitted(value)
+                if c["id"] in self.SPELLING:
+                    self.assertEqual(got, self.SPELLING[c["id"]])
+                    self.assertEqual(decimal.Decimal(got), decimal.Decimal(c["emit"]))
+                else:
+                    self.assertEqual(got, c["emit"])
+
+    def test_an_integer_past_the_cap_is_written(self):
+        """The corpus calls an integer of 4,097 digits unrepresentable, an implementation limit of
+        the TypeScript parser. This writer has no such limit and writes it."""
+        text = next(c["text"] for c in self.cases if c["id"] == "cap-4097-digits")
+        self.assertEqual(self.emitted(int(text)), text)
+
+    # What this writer emits for a case's text read with the standard `json.loads`, wherever that
+    # is not the corpus's `emit`. None: the run wrote no result and reported uncaught.exception,
+    # because the float is not finite. The first group states the same value in another spelling;
+    # the second states a different value, rounded by the parse before the writer saw it; the
+    # third is a text the corpus calls unrepresentable, written as the float it rounded to.
+    STANDARD_PARSE = {
+        "five-point-zero": "5.0", "five-exponent": "5.0", "negative-five-point-zero": "-5.0",
+        "zero-point-zero": "0.0", "zero-enormous-exponent": "0.0", "thousand-exponent": "1000.0",
+        "thousand-exponent-upper": "1000.0", "twelve-negative-exponent": "12.0", "ten-to-21": "1e+21",
+        "small-exponent": "1e-07", "small-plain": "1e-07",
+        "nested": '{"a":[9007199254740993,{"b":5.0,"c":"9007199254740993"}],"d":-9007199254740993,"e":0.1}',
+
+        "unsafe-point-zero": "9007199254740992.0", "unsafe-exponent": "9007199254740992.0",
+        "ten-to-400": None, "cap-exponent-4095": None,
+
+        "negative-decimal-longer": "-0.1", "tenth-seventeen-digits": "0.1", "tenth-nineteen-digits": "0.1",
+        "smallest-subnormal-longer": "5e-324", "underflow": "0.0", "underflow-enormous": "0.0",
+        "half-past-unsafe": "9007199254740992.0", "cap-4097-digits": "9" * 4097,
+        "cap-exponent-4096": None, "enormous-exponent": None,
+        "nested-unrepresentable": '{"ok":1,"bad":[0.1,{"deep":0.0}],"big":9007199254740993}',
+    }
+
+    def test_values_read_with_the_standard_parser(self):
+        """`json.loads` decides a number's type by its spelling: `5.0` is a float, and so is
+        `9007199254740993.0`, which it rounds. The writer writes what it is handed. Every case
+        where the result is not the corpus's text is pinned; every other case agrees."""
+        differing = {}
+        for c in self.cases:
+            got = self.emitted(json.loads(c["text"]))
+            if c["outcome"] != "exact" or got != c["emit"]:
+                differing[c["id"]] = got
+        self.assertEqual(differing, self.STANDARD_PARSE)
+
+
 if __name__ == "__main__":
     unittest.main()

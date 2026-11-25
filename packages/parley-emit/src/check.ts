@@ -8,6 +8,11 @@
 // reporting a line as checked that was not. A caller that cannot verify a line can then refuse
 // it. `test/parley-emit.test.ts` asserts every schema this package ships is inside the subset,
 // so a new draft that reaches for `$ref` fails a test here rather than silently going unchecked.
+//
+// A `bigint` in a record is a JSON number and an integer (flyingrobots/parley#171), and is never
+// converted to a double to be checked. Each numeric keyword is decided for it exactly, or the
+// checker says it cannot decide: see `beside`.
+import { exactJson } from "./exact.ts";
 
 /** The keywords that carry no assertion; present for readers and ignored here. */
 const ANNOTATIONS = new Set(["$schema", "$id", "$anchor", "$comment", "title", "description", "examples", "default", "deprecated", "readOnly", "writeOnly"]);
@@ -148,23 +153,70 @@ function kindOf(v: unknown): string {
   if (v === null) return "null";
   if (Array.isArray(v)) return "array";
   const t = typeof v;
+  if (t === "bigint") return "integer";
   return t === "number" ? (Number.isInteger(v as number) ? "integer" : "number") : t;
 }
 
 function isType(v: unknown, t: string): boolean {
+  if (typeof v === "bigint") return t === "number" || t === "integer";
   if (t === "number") return typeof v === "number" && Number.isFinite(v);
   if (t === "integer") return typeof v === "number" && Number.isInteger(v);
   return kindOf(v) === t;
 }
 
-function same(a: unknown, b: unknown): boolean {
+/** Whether an exact integer is inside the safe-integer range. */
+const SAFE = (value: bigint): boolean => value >= -9007199254740991n && value <= 9007199254740991n;
+
+/** What `beside` reports when it cannot place the two values. */
+const INEXACT = "a number beyond the safe-integer range to compare an integer beyond that range with, which this checker cannot do exactly";
+
+/**
+ * Where an exact integer stands beside a schema's number: -1 below it, 0 equal, 1 above. Never
+ * by converting the `bigint`: JavaScript compares a `bigint` with a number by value.
+ *
+ * The number is what the schema document holds in memory, and a document read from JSON text
+ * holds a double. Inside the safe-integer range, or with a fraction, that double is what the
+ * text said closely enough to place any integer. Beyond the safe range it may be a rounded
+ * reading: `maximum: 18446744073709551615` loads as 18446744073709551616, and an exact integer
+ * beside it would be judged against a bound the schema never stated. The checker cannot tell, so
+ * it says it cannot decide (`Unsupported`): the caller reports "unchecked", never "invalid".
+ *
+ * A `bigint` inside the safe range is placed against any bound: a text that loads as a double
+ * beyond the safe range states a magnitude of at least 2^53 - 0.5, which is past every safe
+ * integer on the side the double's sign says.
+ */
+function beside(value: bigint, bound: number, keyword: string): -1 | 0 | 1 {
+  if (Number.isInteger(bound) && !Number.isSafeInteger(bound) && !SAFE(value)) throw new Unsupported(`${keyword} with ${INEXACT}`);
+  return value < bound ? -1 : value > bound ? 1 : 0;
+}
+
+/** Whether two values are the same JSON value. A `bigint` and a number are the same when they are the same integer. */
+function same(a: unknown, b: unknown, keyword = "const"): boolean {
   if (a === b) return true;
-  if (Array.isArray(a) && Array.isArray(b)) return a.length === b.length && a.every((x, i) => same(x, b[i]));
+  if (typeof a === "bigint" && typeof b === "number") return Number.isFinite(b) && beside(a, b, keyword) === 0;
+  if (typeof b === "bigint" && typeof a === "number") return Number.isFinite(a) && beside(b, a, keyword) === 0;
+  if (Array.isArray(a) && Array.isArray(b)) return a.length === b.length && a.every((x, i) => same(x, b[i], keyword));
   if (a && b && typeof a === "object" && typeof b === "object" && !Array.isArray(a) && !Array.isArray(b)) {
     const ka = Object.keys(a as object), kb = Object.keys(b as object);
-    return ka.length === kb.length && ka.every((k) => Object.hasOwn(b as object, k) && same((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]));
+    return ka.length === kb.length && ka.every((k) => Object.hasOwn(b as object, k) && same((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k], keyword));
   }
   return false;
+}
+
+/**
+ * How many of the alternatives hold, when some may be undecidable (`beside` throws for an exact
+ * integer beside a schema number beyond the safe range). Every alternative is read: one that
+ * cannot be decided never hides a definite answer after it. `undecided` is the first refusal, for
+ * the caller to rethrow when the definite answers do not settle the keyword.
+ */
+function among<T>(alternatives: readonly T[], holds: (alternative: T) => boolean): { matches: number; undecided: Unsupported | null } {
+  let matches = 0;
+  let undecided: Unsupported | null = null;
+  for (const alternative of alternatives) {
+    try { if (holds(alternative)) matches++; }
+    catch (e) { if (!(e instanceof Unsupported)) throw e; undecided ??= e; }
+  }
+  return { matches, undecided };
 }
 
 function satisfies(schema: unknown, value: unknown): boolean {
@@ -217,15 +269,26 @@ function validate(schema: unknown, value: unknown, path: string, errors: Issue[]
     const types = Array.isArray(s.type) ? (s.type as string[]) : [s.type as string];
     if (!types.some((t) => isType(value, t))) fail(`is ${kindOf(value)}, not ${types.join(" or ")}`);
   }
-  if (s.const !== undefined && !same(value, s.const)) fail(`must be ${JSON.stringify(s.const)}`);
+  if (s.const !== undefined && !same(value, s.const)) fail(`must be ${exactJson(s.const)}`);
   if (s.enum !== undefined) {
     const options = s.enum as unknown[];
-    if (!options.some((o) => same(value, o))) fail(`must be one of ${JSON.stringify(options)}`);
+    // A definite match decides it. With none, an option that could not be compared leaves it undecided.
+    const { matches, undecided } = among(options, (o) => same(value, o, "enum"));
+    if (matches === 0) { if (undecided) throw undecided; fail(`must be one of ${exactJson(options)}`); }
   }
   if (s.not !== undefined && satisfies(s.not, value)) fail(`must not match the excluded shape`);
   if (s.allOf !== undefined) for (const sub of s.allOf as unknown[]) validate(sub, value, path, errors);
-  if (s.anyOf !== undefined && !(s.anyOf as unknown[]).some((sub) => satisfies(sub, value))) fail(`matches none of the allowed shapes`);
-  if (s.oneOf !== undefined && (s.oneOf as unknown[]).filter((sub) => satisfies(sub, value)).length !== 1) fail(`must match exactly one of the allowed shapes`);
+  if (s.anyOf !== undefined) {
+    const { matches, undecided } = among(s.anyOf as unknown[], (sub) => satisfies(sub, value));
+    if (matches === 0) { if (undecided) throw undecided; fail(`matches none of the allowed shapes`); }
+  }
+  if (s.oneOf !== undefined) {
+    // Two definite matches fail it whatever the rest are; otherwise an undecided branch could be a second match, or the only one.
+    const { matches, undecided } = among(s.oneOf as unknown[], (sub) => satisfies(sub, value));
+    if (matches > 1) fail(`must match exactly one of the allowed shapes`);
+    else if (undecided) throw undecided;
+    else if (matches !== 1) fail(`must match exactly one of the allowed shapes`);
+  }
   if (s.if !== undefined) {
     const branch = satisfies(s.if, value) ? s.then : s.else;
     if (branch !== undefined) validate(branch, value, path, errors);
@@ -251,6 +314,13 @@ function validate(schema: unknown, value: unknown, path: string, errors: Issue[]
     if (typeof s.maximum === "number" && value > s.maximum) fail(`is above ${s.maximum}`);
     if (typeof s.exclusiveMinimum === "number" && value <= s.exclusiveMinimum) fail(`is not above ${s.exclusiveMinimum}`);
     if (typeof s.exclusiveMaximum === "number" && value >= s.exclusiveMaximum) fail(`is not below ${s.exclusiveMaximum}`);
+  }
+
+  if (typeof value === "bigint") {
+    if (typeof s.minimum === "number" && beside(value, s.minimum, "minimum") < 0) fail(`is below ${s.minimum}`);
+    if (typeof s.maximum === "number" && beside(value, s.maximum, "maximum") > 0) fail(`is above ${s.maximum}`);
+    if (typeof s.exclusiveMinimum === "number" && beside(value, s.exclusiveMinimum, "exclusiveMinimum") <= 0) fail(`is not above ${s.exclusiveMinimum}`);
+    if (typeof s.exclusiveMaximum === "number" && beside(value, s.exclusiveMaximum, "exclusiveMaximum") >= 0) fail(`is not below ${s.exclusiveMaximum}`);
   }
 
   if (Array.isArray(value)) {

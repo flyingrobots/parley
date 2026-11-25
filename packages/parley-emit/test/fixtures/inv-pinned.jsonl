@@ -1,0 +1,25 @@
+{"name":"null","how":"canonical","input":null,"text":"null"}
+{"name":"true","how":"canonical","input":true,"text":"true"}
+{"name":"false","how":"canonical","input":false,"text":"false"}
+{"name":"empty string","how":"canonical","input":"","text":"\"\""}
+{"name":"string with escapes","how":"canonical","input":"a\"b\\c\n\t\u0001   é 日本 😀","text":"\"a\\\"b\\\\c\\n\\t\\u0001   é 日本 😀\""}
+{"name":"zero","how":"canonical","input":0,"text":"0"}
+{"name":"negative zero","how":"canonical","input":"(-0)","text":"0"}
+{"name":"safe integers","how":"canonical","input":[1,-1,42,9007199254740991,-9007199254740991],"text":"[1,-1,42,9007199254740991,-9007199254740991]"}
+{"name":"integers a double holds beyond the safe range","how":"canonical","input":[9007199254740992,-9007199254740992,10000000000000000,100000000000000000000,1e+21,1.2345678901234567e+30,1.7976931348623157e+308],"text":"[9007199254740992,-9007199254740992,10000000000000000,100000000000000000000,1e+21,1.2345678901234567e+30,1.7976931348623157e+308]"}
+{"name":"decimals","how":"canonical","input":[0.1,0.5,-2.5,0.30000000000000004,1e-7,5e-324,123456789012345.5,1.5e-10],"text":"[0.1,0.5,-2.5,0.30000000000000004,1e-7,5e-324,123456789012345.5,1.5e-10]"}
+{"name":"not finite","how":"canonical","input":["(NaN)","(Infinity)","(-Infinity)"],"text":"[null,null,null]"}
+{"name":"empty containers","how":"canonical","input":[{},[]],"text":"[{},[]]"}
+{"name":"keys are sorted","how":"canonical","input":{"9":7,"10":6,"b":1,"a":2,"":3,"é":4,"A":5},"text":"{\"\":3,\"10\":6,\"9\":7,\"A\":5,\"a\":2,\"b\":1,\"é\":4}"}
+{"name":"undefined members are left out","how":"canonical","input":{"kept":1,"gone":"(undefined)","list":["(undefined)",1]},"text":"{\"kept\":1,\"list\":[null,1]}"}
+{"name":"nested","how":"canonical","input":{"command":"count","args":["--depth","3"],"options":{"depth":3,"follow":false,"roots":["a","b"],"limit":null}},"text":"{\"args\":[\"--depth\",\"3\"],\"command\":\"count\",\"options\":{\"depth\":3,\"follow\":false,\"limit\":null,\"roots\":[\"a\",\"b\"]}}"}
+{"name":"the default resolved","how":"canonical","input":{"command":"count","args":[]},"text":"{\"args\":[],\"command\":\"count\"}"}
+{"name":"a redacted resolved","how":"canonical","input":{"command":"count","args":["--token","[redacted]"],"token":"[redacted]"},"text":"{\"args\":[\"--token\",\"[redacted]\"],\"command\":\"count\",\"token\":\"[redacted]\"}"}
+{"name":"no inputs","how":"computeInv","input":{"tool":"t","v":"0.0.1","command":"count","resolved":{"command":"count","args":[]},"inputs":[]},"inv":"7fb511024de69c464034facb3a1b209ae0879523e20c6bdb0753443e8ac82a54"}
+{"name":"one file","how":"computeInv","input":{"tool":"t","v":"0.0.1","command":"count","resolved":{"command":"count","args":["a.txt"]},"inputs":[{"path":"a.txt","sha256":"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"}]},"inv":"ccbda1cedb572812b81b010d85e48be0e7e988fbbfa938d9c65e5e056f3b4fb4"}
+{"name":"a role and a tree","how":"computeInv","input":{"tool":"footprint","v":"1.2.3","command":"report","resolved":{"command":"report","range":"main..HEAD","depth":2,"ratio":0.25},"inputs":[{"path":"-","role":"stdin","sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},{"path":"src","role":"tree","sha256":"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"}]},"inv":"8f14fef1e7bf83d22385aa1231c2e0f25ced93bec014804da7df791a62341535"}
+{"name":"numbers in resolved","how":"computeInv","input":{"tool":"t","v":"0.0.1","command":"count","resolved":{"command":"count","n":9007199254740992,"big":1e+21,"small":1e-7,"neg":"(-0)"},"inputs":[]},"inv":"571171c4db7ebd701f897d6d73f9078b4c67676a9fb2338449be9269510ece07"}
+{"name":"an unread input has no inv","how":"computeInv","input":{"tool":"t","v":"0.0.1","command":"count","resolved":{},"inputs":[{"path":"a.txt","error":"input.unreadable"}]},"inv":null}
+{"name":"a run with no inputs","how":"main","input":{"argv":["count"],"resolved":{"command":"count","depth":3,"ratio":0.25,"roots":["a","b"]},"file":null},"status":0,"inv":["09be8f4ca782d64c6f1e113be08716536ce62336436b5fde0a898d51062fb8e8"]}
+{"name":"a run with a redacted argument","how":"main","input":{"argv":["count","--token","hunter2-hunter2"],"resolved":{"command":"count","token":"hunter2-hunter2","note":"uses hunter2-hunter2"},"file":null},"status":0,"inv":["39684a56fbde02bf5c963a3f08cacc35230ee9d1a17fbbfdae70cf913fb14765"]}
+{"name":"a run with one file input","how":"main","input":{"argv":["count","a.txt"],"resolved":{"command":"count","args":["a.txt"],"big":1e+21},"file":"hello"},"status":0,"inv":["3e5e8c76a4093544047eba57f7acfc5aa977b381a222de36563dea4a90b19c5a"]}

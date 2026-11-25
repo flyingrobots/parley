@@ -5,6 +5,7 @@
 import { closeSync, mkdirSync, openSync, readFileSync, writeSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { checkRecord } from "./check.ts";
+import { exactJson, holdsUnreadable, MAX_EXACT_DIGITS, parseExact } from "./exact.ts";
 import type { HistoryProjection, HistorySink } from "./history.ts";
 import { canonical, computeInv, digestInput, sha256, type InputDecl, type InputDescriptor } from "./inv.ts";
 import { carriesSecret, replaceSecrets, scrub, scrubPointer } from "./redact.ts";
@@ -67,7 +68,8 @@ export type Record_ = Record<string, unknown>;
 
 export interface Diagnostic {
   code: string; problem: string; remedy?: string; remedy_target?: string;
-  measured?: number; limit?: number; retryable?: boolean; detail?: unknown;
+  /** A `bigint` is written as exact digits, for a measurement or a limit beyond the safe-integer range. */
+  measured?: number | bigint; limit?: number | bigint; retryable?: boolean; detail?: unknown;
 }
 
 export class ParleyClosed extends Error {
@@ -298,19 +300,36 @@ export class Run {
    *      off as a checked one.
    *   4. Anything that goes wrong withholds the line and warns, naming the `seq`; a warning is
    *      never an error and never changes the exit status (§6.1).
+   *
+   * The text is parsed exactly (flyingrobots/parley#171): the transform is handed the value each
+   * number's text states, an integer beyond the safe range as a `bigint`, and never a rounded
+   * one. Text holding a number that cannot be held that way is not handed over at all. The line
+   * is withheld and warned as `history.number_unrepresentable`: handing over a rounded record
+   * would let the stream state a value the receipt does not, and appending the line as it is
+   * would put it on the stream past the transform configured to narrow it. No emission writes
+   * such text (`emit` refuses a record it could not read back), so this is a second guard.
    */
   private project(text: string, p: HistoryProjection): string | null {
     let rec: Record_;
-    try { rec = JSON.parse(text) as Record_; } catch { return null; }
+    try {
+      const parsed = parseExact(text);
+      if (!parsed.ok) {
+        const at = (parsed.partial as Record_ | null)?.seq;
+        const shown = parsed.tokens.slice(0, 3).map((t) => (t.length > 40 ? `${t.slice(0, 40)}… (${t.length} characters)` : t)).join(", ");
+        this.withhold({ code: "history.number_unrepresentable", problem: `seq ${typeof at === "number" ? at : "?"} holds a number this writer cannot hold exactly (${shown}), so it was not handed to the history transform ${p.name} and that line is not on the shared stream; the receipt is unaffected`, remedy: `write an integer of at most ${MAX_EXACT_DIGITS} digits, or a decimal as JSON.stringify writes it; a value that is neither belongs in a string` });
+        return null;
+      }
+      rec = parsed.value as Record_;
+    } catch { return null; }
     const seq = typeof rec.seq === "number" ? rec.seq : -1;
     // Nothing from here may escape. This runs inside the receipt's own write, so a throw that got
     // out would be reported as a receipt sink failure and close the run with status 4 — the stream
     // failing the run it is an optional observer of, which §8 forbids. A record that cannot be
-    // serialised (a cycle, a BigInt) is withheld like any other failure.
+    // serialised (a cycle) is withheld like any other failure.
     try { return this.projectOne(rec, seq, p); }
     catch (e) {
       const msg = e instanceof Error ? e.message || e.name : String(e);
-      this.withhold({ code: "history.transform_failed", problem: `the projection of seq ${seq} by ${p.name} could not be completed: ${msg}; that line is not on the shared stream and the receipt is unaffected`, remedy: "return a record that serialises as JSON: no cycles, no bigint, nothing the receipt line did not already carry" });
+      this.withhold({ code: "history.transform_failed", problem: `the projection of seq ${seq} by ${p.name} could not be completed: ${msg}; that line is not on the shared stream and the receipt is unaffected`, remedy: "return a record that serialises as JSON: no cycles, nothing the receipt line did not already carry" });
       return null;
     }
   }
@@ -339,7 +358,7 @@ export class Run {
       return null;
     }
     const { event: _event, t: _t, seq: _seq, run: _run, _schema: _stamp, ...body } = returned as Record_;
-    if (this.init.secretValues.size > 0 && carriesSecret(JSON.stringify(body), this.init.secretValues)) {
+    if (this.init.secretValues.size > 0 && carriesSecret(exactJson(body), this.init.secretValues)) {
       this.withhold({ code: "history.transform_unredacted", problem: `the history transform ${p.name} returned a body for seq ${seq} carrying a declared secret value the writer had already replaced; that line is not on the shared stream`, remedy: "a transform narrows a record; it never restores a value §5.3 replaced" });
       return null;
     }
@@ -358,7 +377,12 @@ export class Run {
       this.withhold({ code: "history.transform_invalid", problem: `the body the history transform ${p.name} returned for seq ${seq} no longer validates against ${pair}: ${verdict.errors.slice(0, 3).join("; ")}; that line is not on the shared stream`, remedy: "project within the message's schema, or withhold the line by returning nothing" });
       return null;
     }
-    return JSON.stringify(out) + "\n";
+    // A body the writer could not read back is no more the stream's than the receipt's.
+    if (holdsUnreadable(body)) {
+      this.withhold({ code: "history.transform_invalid", problem: `the body the history transform ${p.name} returned for seq ${seq} holds an integer of more than ${MAX_EXACT_DIGITS} digits, which this writer does not write; that line is not on the shared stream`, remedy: "project within what the receipt line carried, or withhold the line by returning nothing" });
+      return null;
+    }
+    return exactJson(out) + "\n";
   }
 
   /**
@@ -421,7 +445,8 @@ export class Run {
     for (const { sink, error } of held) if (!this.closed) this.reportSinkFailure(sink, error);
   }
 
-  private line(obj: Record_): string { return JSON.stringify(obj) + "\n"; }
+  /** One record as one line. Every sink's copy is written by this serialiser, so a `bigint` is the same exact digits on each. */
+  private line(obj: Record_): string { return exactJson(obj) + "\n"; }
 
   private rendererFailed = false;
 
@@ -443,7 +468,7 @@ export class Run {
       case "run": return "";
       case "end": return obj.status === 0 ? "" : `end: status ${String(obj.status)}${obj.redacted ? ", receipt redacted" : ""}; receipt at ${String(obj.receipt)}\n`;
       case "error": case "warning": return `${String(obj.event)} ${String(obj.code)}: ${String(obj.problem)}${obj.remedy ? ` (${String(obj.remedy)})` : ""}\n`;
-      default: return `${String(obj.event)}: ${JSON.stringify(obj)}\n`;
+      default: return `${String(obj.event)}: ${exactJson(obj)}\n`;
     }
   }
 
@@ -475,6 +500,11 @@ export class Run {
     const scrubbed = this.scrubPayload(payload, found, how.writer === true, how.writer === true ? how.verbatim : undefined);
     const extraFound: string[] = [];
     const extra = receiptExtra ? this.scrubPayload(receiptExtra, extraFound, how.writer === true) : undefined;
+    // A `bigint` is written as its exact digits (flyingrobots/parley#171). One of more digits than
+    // `parseExact` reads back is refused here, before a seq is taken: a line this writer could
+    // not read exactly is one no reader of it could, and its own history projection would have
+    // to withhold it.
+    if (this.unreadable(scrubbed) || (extra !== undefined && this.unreadable(extra))) throw new TypeError(`a record must not carry an integer of more than ${MAX_EXACT_DIGITS} digits; a bigint is written as exact digits, and this writer does not write one it could not read back. Carry such a value as a string`);
     // The copies of one event agree on every field they share (§1.3): compared as scrubbed, since
     // that is what is written, and before a seq is taken, so a refusal leaves no gap.
     if (extra) for (const k of Object.keys(extra)) {
@@ -497,13 +527,16 @@ export class Run {
     if (how.to.receipt) {
       // A shared field is written from the payload, so the copies agree byte for byte on it.
       const full = extra ? this.envelope({ ...scrubbed, ...Object.fromEntries(Object.entries(extra).filter(([k]) => !(k in scrubbed))) }, schema, at) : rec;
-      const text = JSON.stringify(full);
+      const text = exactJson(full);
       if (!how.noSidecar && Buffer.byteLength(text, "utf8") > SIDECAR_THRESHOLD) this.sidecar(at.seq, text);
       else this.write("receipt", text + "\n");
     }
     for (const at_ of new Set([...found, ...extraFound, ...(how.replaced ?? [])])) this.redaction(at.seq, at_);
     return at.seq;
   }
+
+  /** Whether a payload holds a `bigint` past the cap. A payload that refers to itself is not this check's to report: the serialiser says so, as it always has. */
+  private unreadable(payload: Record_): boolean { try { return holdsUnreadable(payload); } catch { return false; } }
 
   /** The copies of one event as the sinks would receive them: the stream copy, and the receipt copy when it carries more. */
   private copies(how: Emit, payload: Record_, extra: Record_ | undefined, schema: SchemaRef, at: { seq: number; t: number }): Record_[] {
@@ -643,7 +676,7 @@ export class Run {
     const at = this.next();
     this.projectionSeq = at.seq;
     const rec = this.envelope(this.scrubPayload({ event: "history.transform", name: p.name, sha256: p.sha256 }, [], true), SCHEMA_IDS.historyTransform, at);
-    try { h.append(JSON.stringify(rec) + "\n"); }
+    try { h.append(exactJson(rec) + "\n"); }
     catch (e) {
       this.historyFailed = true;
       this.projectionSeq = null;
@@ -823,6 +856,9 @@ export class Run {
    */
   end(status?: number): number {
     if (this.closed) return this.finalStatus ?? 4;
+    // The envelope's own numbers are numbers. A status is at most 255, so a `bigint` here is a
+    // mistake to refuse, not a value to convert.
+    if (typeof status === "bigint") throw new TypeError("end status is an integer 0-255 other than 3 (spec §3.4), given as a number, not a bigint");
     if (status !== undefined && (!Number.isInteger(status) || status < 0 || status > 255 || status === 3)) throw new TypeError("end status is an integer 0-255 other than 3 (spec §3.4)");
     if (status === 0 && this.errorReported) throw new TypeError("a run that reported an error cannot end with status 0 (spec §3.4); a recovered condition is a warning");
     try { this.finaliseInputs(); } catch { /* an unreadable input is already recorded; nothing else can fail here */ }

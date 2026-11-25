@@ -931,4 +931,21 @@ describe("PE-37 a number that is not finite is refused, never written as null (f
     expect(of(r.out, "result").map(valueText)).toEqual(["7", "42"]);
     expect(of(r.receipt, "result").map(valueText)).toEqual(["7", "42"]);
   });
+
+  test("a boxed primitive from another realm is its primitive: in resolved, in a record, with a secret present and without (fourth review of flyingrobots/parley#181)", async () => {
+    const { runInNewContext } = await import("node:vm");
+    const foreign = () => runInNewContext(`({ amount: new Number(42), enabled: new Boolean(true), name: new String("n"), id: Object(9007199254740993n), list: [new Number(1.5)] })`) as Record<string, unknown>;
+    const text = `{"amount":42,"enabled":true,"name":"n","id":9007199254740993,"list":[1.5]}`;
+    for (const argv of [["count"], ["count", "--token", "zq7kx9unrelated"]]) {
+      const r = await go((run) => { run.result({ event: "result", value: foreign() }, P.any); }, { argv, extra: { resolved: () => ({ command: "count", ...foreign() }) } });
+      expect(r.err).toEqual([]);
+      expect(r.status).toBe(0);
+      expect(r.receipt[0]).toContain(`"resolved":{"command":"count",${text.slice(1)},`);
+      expect(of(r.out, "result").map(valueText)).toEqual([text]);
+      expect(of(r.receipt, "result").map(valueText)).toEqual([text]);
+    }
+    expect(emit.canonical(foreign().amount)).toBe("42");
+    expect(emit.holdsExact(foreign())).toBe(true);
+    expect(() => emit.canonical(runInNewContext("new Number(NaN)"))).toThrow(TypeError);
+  });
 });

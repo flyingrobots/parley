@@ -27,6 +27,11 @@ the entry under it names each schema version it releases, and those are separate
 
 ### Changed
 
+- The checks workflow runs both packages' own suites on Bun 1.2.0, the oldest version their
+  `engines` and READMEs promise, in a job of its own. The first run found one difference: on Bun
+  1.2.0 a boxed `bigint` from another realm was not recognised, which parley-emit 0.5.0 now
+  handles. The repository's tooling under `scripts/` needs a newer Bun and is not part of that
+  promise.
 - **BREAKING in `@flyingrobots/parley-emit` 0.5.0: `NaN`, `Infinity` and `-Infinity` are refused,
   never written as `null`** (flyingrobots/parley#177; the package's changelog). The TypeScript
   writer wrote `null` for them, silently and with status 0, since 0.1.0; `parley_emit.py` has
@@ -36,6 +41,12 @@ the entry under it names each schema version it releases, and those are separate
 
 ### Fixed
 
+- **PRIVACY: a history transform could put a declared secret on the shared stream** when the
+  secret holds a quote, a backslash or a newline (review case 2026-11-25). Present in
+  `@flyingrobots/parley-emit` 0.4.0 and earlier, fixed in 0.5.0. In the same version the writer
+  reads a payload once, never asks a `toJSON` on `BigInt.prototype` (which removes the limit of
+  flyingrobots/parley#180 before any release carried it), and no longer drops a member named
+  `__proto__` beside a secret. The package's changelog lists what breaks.
 - **PRIVACY: `@flyingrobots/parley-emit` published a declared secret that only a `toJSON` hook
   returns** (flyingrobots/parley#178), on stdout and in the receipt with status 0: a `URL` holding
   the secret, or any object whose hook returns it. Present in the published 0.4.0 (measured from

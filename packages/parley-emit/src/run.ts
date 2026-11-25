@@ -5,10 +5,10 @@
 import { closeSync, mkdirSync, openSync, readFileSync, writeSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { checkRecord } from "./check.ts";
-import { exactJson, MAX_EXACT_DIGITS, parseExact, unwritable, unwritableClause } from "./exact.ts";
+import { exactText, MAX_EXACT_DIGITS, parseExact, plain, unwritableClause, unwritablePlain } from "./exact.ts";
 import type { HistoryProjection, HistorySink } from "./history.ts";
-import { canonical, computeInv, digestInput, sha256, type InputDecl, type InputDescriptor } from "./inv.ts";
-import { carriesSecret, replaceSecrets, scrub, scrubPointer } from "./redact.ts";
+import { canonicalPlain, computeInvPlain, digestInput, sha256, type InputDecl, type InputDescriptor } from "./inv.ts";
+import { carriesSecret, replaceSecrets, scrubPlain, scrubPointer } from "./redact.ts";
 import { isHistoryRefusal, type HistoryRefusal } from "./refusal.ts";
 
 export interface Sink { write(line: string): void }
@@ -163,6 +163,8 @@ interface Emit {
   to: { stdout?: boolean; stderr?: boolean; receipt?: boolean }; writer?: boolean; noSidecar?: boolean; deferFailures?: boolean; verbatim?: string;
   /** Pointers into this record where the caller replaced a secret before handing it over; each gets its `redaction` event as though the record's own scrub had found it. */
   replaced?: readonly string[];
+  /** The tool names the event: the record as read must carry a non-empty string `event`. */
+  named?: boolean;
 }
 
 export class Run {
@@ -357,8 +359,20 @@ export class Run {
       this.withhold({ code: "history.transform_invalid", problem: `the history transform ${p.name} returned ${Array.isArray(returned) ? "an array" : typeof returned} for seq ${seq}, which is neither a record nor nothing; that line is not on the shared stream`, remedy: "return the record, a projection of it, or nothing to withhold the line" });
       return null;
     }
-    const { event: _event, t: _t, seq: _seq, run: _run, _schema: _stamp, ...body } = returned as Record_;
-    if (this.init.secretValues.size > 0 && carriesSecret(exactJson(body), this.init.secretValues)) {
+    // What the transform returned is read once, as it would be written (`plain`), and that one
+    // reading is what is checked for a secret, checked against the schema, and appended.
+    const taken = plain(returned);
+    if (taken === null || typeof taken !== "object" || Array.isArray(taken)) {
+      this.withhold({ code: "history.transform_invalid", problem: `the history transform ${p.name} returned for seq ${seq} a value that is not a record once written as JSON; that line is not on the shared stream`, remedy: "return a record, or nothing to withhold the line" });
+      return null;
+    }
+    const { event: _event, t: _t, seq: _seq, run: _run, _schema: _stamp, ...body } = taken as Record_;
+    // A declared secret is looked for in the body's values and keys, as the scrub looks, and in
+    // its text as well. The text alone is not enough: there a quote, a backslash or a newline in
+    // the secret is escaped, and the secret is never found (review case 2026-11-25).
+    const restored: string[] = [];
+    if (this.init.secretValues.size > 0) scrubPlain(body, this.init.secretValues, "", restored);
+    if (this.init.secretValues.size > 0 && (restored.length > 0 || carriesSecret(exactText(body), this.init.secretValues))) {
       this.withhold({ code: "history.transform_unredacted", problem: `the history transform ${p.name} returned a body for seq ${seq} carrying a declared secret value the writer had already replaced; that line is not on the shared stream`, remedy: "a transform narrows a record; it never restores a value §5.3 replaced" });
       return null;
     }
@@ -370,7 +384,7 @@ export class Run {
     const out: Record_ = { event: envelope.event, t: envelope.t, seq: envelope.seq, run: envelope.run, ...body, _schema: envelope._schema };
     // A body the writer could not write is no more the stream's than the receipt's. Asked before
     // the schema is, so the warning names the cause whatever the schema says of the field.
-    const why = unwritable(body);
+    const why = unwritablePlain(body);
     if (why) {
       this.withhold({ code: "history.transform_invalid", problem: `the body the history transform ${p.name} returned for seq ${seq} holds ${unwritableClause(why)}; that line is not on the shared stream`, remedy: "project within what the receipt line carried, or withhold the line by returning nothing" });
       return null;
@@ -384,7 +398,7 @@ export class Run {
       this.withhold({ code: "history.transform_invalid", problem: `the body the history transform ${p.name} returned for seq ${seq} no longer validates against ${pair}: ${verdict.errors.slice(0, 3).join("; ")}; that line is not on the shared stream`, remedy: "project within the message's schema, or withhold the line by returning nothing" });
       return null;
     }
-    return exactJson(out) + "\n";
+    return exactText(out) + "\n";
   }
 
   /**
@@ -448,7 +462,7 @@ export class Run {
   }
 
   /** One record as one line. Every sink's copy is written by this serialiser, so a `bigint` is the same exact digits on each. */
-  private line(obj: Record_): string { return exactJson(obj) + "\n"; }
+  private line(obj: Record_): string { return exactText(obj) + "\n"; }
 
   private rendererFailed = false;
 
@@ -470,7 +484,7 @@ export class Run {
       case "run": return "";
       case "end": return obj.status === 0 ? "" : `end: status ${String(obj.status)}${obj.redacted ? ", receipt redacted" : ""}; receipt at ${String(obj.receipt)}\n`;
       case "error": case "warning": return `${String(obj.event)} ${String(obj.code)}: ${String(obj.problem)}${obj.remedy ? ` (${String(obj.remedy)})` : ""}\n`;
-      default: return `${String(obj.event)}: ${exactJson(obj)}\n`;
+      default: return `${String(obj.event)}: ${exactText(obj)}\n`;
     }
   }
 
@@ -485,7 +499,7 @@ export class Run {
     const { event, ...all } = payload;
     const rest: Record_ = { ...all };
     if (verbatim !== undefined) delete rest[verbatim];
-    let scrubbed = scrub(rest, this.init.secretValues, "", found, writer ? { skipKeys: DIGEST_KEYS, scalars: false, keys: false } : {}) as Record_;
+    let scrubbed = scrubPlain(rest, this.init.secretValues, "", found, writer ? { skipKeys: DIGEST_KEYS, scalars: false, keys: false } : {}) as Record_;
     // Put back in its own place, so the record's key order is the one it was built with.
     if (verbatim !== undefined && verbatim in all) scrubbed = Object.fromEntries(Object.keys(all).map((k) => [k, k === verbatim ? all[k] : scrubbed[k]]));
     return event === undefined ? scrubbed : { event, ...scrubbed };
@@ -495,8 +509,15 @@ export class Run {
    * Emit one event to the named streams as copies sharing seq, t and event. The receipt copy may
    * carry `receiptExtra` fields the stream copy omits (§1.3). Returns the event's seq.
    */
-  private emit(how: Emit, payload: Record_, schema: SchemaRef, receiptExtra?: Record_): number {
+  private emit(how: Emit, given: Record_, schema: SchemaRef, givenExtra?: Record_): number {
     if (this.closed) throw new ParleyClosed();
+    // The payload is read once, here, as it would be written (`plain`): hooks applied, boxes
+    // opened, functions gone. Everything below works from that one reading, so what is
+    // refused, scrubbed, checked and compared is what every sink receives, and a value that
+    // cannot be read at all (one that contains itself) is refused before a seq is taken.
+    const payload = this.take(given, "a record") as Record_;
+    const receiptExtra = givenExtra === undefined ? undefined : this.take(givenExtra, "receiptExtra") as Record_;
+    if (how.named === true && (typeof payload.event !== "string" || !payload.event)) throw new TypeError("a result needs an event name");
     this.refuseEnvelopeKeys(payload, "a record"); this.refuseEnvelopeKeys(receiptExtra, "receiptExtra");
     const found: string[] = [];
     const scrubbed = this.scrubPayload(payload, found, how.writer === true, how.writer === true ? how.verbatim : undefined);
@@ -506,13 +527,13 @@ export class Run {
     // `parseExact` reads back is refused here, before a seq is taken: a line this writer could
     // not read exactly is one no reader of it could, and its own history projection would have
     // to withhold it. A number that is not finite is refused with it (flyingrobots/parley#177):
-    // the serialiser would write `null`, a value the tool did not hand over.
-    const why = this.unwritable(scrubbed) ?? (extra !== undefined ? this.unwritable(extra) : undefined);
+    // `JSON.stringify` would write `null`, a value the tool did not hand over.
+    const why = unwritablePlain(scrubbed) ?? (extra !== undefined ? unwritablePlain(extra) : undefined);
     if (why) throw new TypeError(`a record must not carry ${unwritableClause(why)}. Carry such a value as a string, or leave the field out`);
     // The copies of one event agree on every field they share (§1.3): compared as scrubbed, since
     // that is what is written, and before a seq is taken, so a refusal leaves no gap.
     if (extra) for (const k of Object.keys(extra)) {
-      if (k in scrubbed && canonical(extra[k], k) !== canonical(scrubbed[k], k)) throw new TypeError(`receiptExtra.${k} differs from the record's ${k}; the copies of an event must agree on every field they share (spec §1.3)`);
+      if (Object.hasOwn(scrubbed, k) && canonicalPlain(extra[k]) !== canonicalPlain(scrubbed[k])) throw new TypeError(`receiptExtra.${k} differs from the record's ${k}; the copies of an event must agree on every field they share (spec §1.3)`);
     }
     // A tool's record the scrub changed is validated as each sink would receive it, before any
     // copy is written and before a seq is taken (§5.3, flyingrobots/parley#131). A writer-built
@@ -530,8 +551,8 @@ export class Run {
     if (how.to.stderr) this.writeOrSkip("stderr", human ? this.prose(rec) : this.line(rec), how.deferFailures);
     if (how.to.receipt) {
       // A shared field is written from the payload, so the copies agree byte for byte on it.
-      const full = extra ? this.envelope({ ...scrubbed, ...Object.fromEntries(Object.entries(extra).filter(([k]) => !(k in scrubbed))) }, schema, at) : rec;
-      const text = exactJson(full);
+      const full = extra ? this.envelope({ ...scrubbed, ...Object.fromEntries(Object.entries(extra).filter(([k]) => !Object.hasOwn(scrubbed, k))) }, schema, at) : rec;
+      const text = exactText(full);
       if (!how.noSidecar && Buffer.byteLength(text, "utf8") > SIDECAR_THRESHOLD) this.sidecar(at.seq, text);
       else this.write("receipt", text + "\n");
     }
@@ -539,14 +560,18 @@ export class Run {
     return at.seq;
   }
 
-  /** Why a payload cannot be written, if it cannot. A payload that refers to itself is not this check's to report: the serialiser says so, as it always has. */
-  private unwritable(payload: Record_): "integer" | "number" | undefined { try { return unwritable(payload); } catch { return undefined; } }
+  /** A payload as it would be written, which must still be a record: a hook may have made it something else. */
+  private take(given: Record_, what: string): Record_ {
+    const taken = plain(given);
+    if (taken === null || typeof taken !== "object" || Array.isArray(taken)) throw new TypeError(`${what} must be an object once written as JSON`);
+    return taken as Record_;
+  }
 
   /** The copies of one event as the sinks would receive them: the stream copy, and the receipt copy when it carries more. */
   private copies(how: Emit, payload: Record_, extra: Record_ | undefined, schema: SchemaRef, at: { seq: number; t: number }): Record_[] {
     const out: Record_[] = [];
     if (how.to.stdout || how.to.stderr || !extra) out.push(this.envelope(payload, schema, at));
-    if (how.to.receipt && extra) out.push(this.envelope({ ...payload, ...Object.fromEntries(Object.entries(extra).filter(([k]) => !(k in payload))) }, schema, at));
+    if (how.to.receipt && extra) out.push(this.envelope({ ...payload, ...Object.fromEntries(Object.entries(extra).filter(([k]) => !Object.hasOwn(payload, k))) }, schema, at));
     return out;
   }
 
@@ -680,7 +705,7 @@ export class Run {
     const at = this.next();
     this.projectionSeq = at.seq;
     const rec = this.envelope(this.scrubPayload({ event: "history.transform", name: p.name, sha256: p.sha256 }, [], true), SCHEMA_IDS.historyTransform, at);
-    try { h.append(exactJson(rec) + "\n"); }
+    try { h.append(exactText(rec) + "\n"); }
     catch (e) {
       this.historyFailed = true;
       this.projectionSeq = null;
@@ -712,8 +737,8 @@ export class Run {
 
   /** A result: to stdout and the receipt. `receiptExtra` goes to the receipt copy only. */
   result(record: Record_, schema: SchemaRef, receiptExtra?: Record_): number {
-    if (typeof record.event !== "string" || !record.event) throw new TypeError("a result needs an event name");
-    return this.emit({ to: { stdout: true, receipt: true } }, record, schema, receiptExtra);
+    // The event name is checked inside `emit`, on the one reading of the record that is written.
+    return this.emit({ to: { stdout: true, receipt: true }, named: true }, record, schema, receiptExtra);
   }
 
   /** One page of unbounded output (§7.2); rows belong in `receiptExtra` or in the stream copy as the tool documents. */
@@ -848,8 +873,8 @@ export class Run {
       return digestInput(this.cwd, i, this.supplied.get(i.path));
     });
     // The preimage and the record both take the redacted descriptors (§2.2: no secret value in inv).
-    const inputs = scrub(raw, this.init.secretValues, "", [], { skipKeys: DIGEST_KEYS, scalars: false, keys: false }) as InputDescriptor[];
-    const inv = computeInv({ tool: this.tool, v: this.v, command: this.init.command, resolved: this.init.resolved, inputs });
+    const inputs = scrubPlain(raw, this.init.secretValues, "", [], { skipKeys: DIGEST_KEYS, scalars: false, keys: false }) as InputDescriptor[];
+    const inv = computeInvPlain({ tool: this.tool, v: this.v, command: this.init.command, resolved: this.init.resolved, inputs });
     this.emit({ to: { receipt: true }, writer: true }, { event: "receipt.inputs", inputs, ...(inv ? { inv } : {}) }, SCHEMA_IDS.inputs);
     return inputs;
   }

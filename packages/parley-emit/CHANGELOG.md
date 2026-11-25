@@ -14,16 +14,32 @@ The writer accepts a `bigint` in a payload and writes it as a JSON number of exa
 digits, everywhere a record travels (flyingrobots/parley#171). Before, a record holding one threw
 `TypeError: JSON.stringify cannot serialize BigInt.` and the run ended with `uncaught.exception`
 and status 2, so a TypeScript tool had no exact numeric form for an integer beyond the safe range
-(a 64-bit id) and had to round it or write a string.
+(a 64-bit id) and had to round it or write a string. (In a process that had installed a `toJSON`
+on `BigInt.prototype` it did not throw: the `bigint` was written as whatever that hook returned.
+See the second breaking change below.)
 
-**No emitted byte changes for a finite value the writer accepted before**, and no `inv` moves: a
-record with no `bigint` is serialised by `JSON.stringify` as it was, and the canonical form is the
-same text. `test/fixtures/inv-pinned.jsonl` holds 25 identities printed from the previous source,
+**What does not change.** A record of plain JSON data (objects, arrays, strings, booleans, `null`
+and finite numbers) is written with the bytes it had, and a `resolved` of plain JSON data keeps
+its `inv`. `test/fixtures/inv-pinned.jsonl` holds 25 identities printed from the 0.4.0 source,
 and a test requires this source to reproduce 24 of them. The twenty-fifth is withdrawn: a number
-that is not finite, which is now refused (below).
+that is not finite, which is now refused.
 
-**BREAKING: `NaN`, `Infinity` and `-Infinity` are refused** (flyingrobots/parley#177). A tool that
-emits one today gets a `TypeError` where it got a `null`.
+**What breaks.** Five things, each described under Changed or Fixed below:
+
+1. **`NaN`, `Infinity` and `-Infinity` are refused** (flyingrobots/parley#177). A tool that emits
+   one today gets a `TypeError` where it got a `null`.
+2. **A `toJSON` on `BigInt.prototype` is never asked.** A process with the common polyfill
+   (`BigInt.prototype.toJSON = function () { return this.toString(); }`) had its `bigint`s
+   written as quoted strings by 0.4.0, with status 0. They are now written as numbers:
+   `"id":"9007199254740993"` becomes `"id":9007199254740993`. Pass `String(id)` to keep a string.
+3. **The `inv` moves for a `resolved` that is not plain data**: one holding a `Date` or another
+   value with a `toJSON` hook, a boxed primitive, or a function or symbol as a member's value.
+4. **A history transform is handed a `bigint`** for any integer the receipt writes beyond the
+   safe range, including one the tool passed as a `number` (`2 ** 53`, `1e21`). A transform that
+   does number arithmetic on such a field throws, and its line is withheld from the stream as
+   `history.transform_failed`; the exit status does not change.
+5. **A record with a secret present is written as the same record without one.** 0.4.0 wrote a
+   `Date` or a boxed primitive as `{}` beside any secret, and dropped a member named `__proto__`.
 
 ### Added
 
@@ -43,8 +59,8 @@ emits one today gets a `TypeError` where it got a `null`.
   serialisation (flyingrobots/parley#173): `0.1`, `0.10` and `1e-1` are accepted,
   `0.10000000000000001` is not. For a text holding a number it cannot hold, `parseExact` returns
   `ok: false` with the numbers as written, and never a rounded value. An integer of more than
-  4,096 digits (`MAX_EXACT_DIGITS`, an implementation limit) is one of those. The reader will
-  import these in place of its own copies.
+  4,096 digits (`MAX_EXACT_DIGITS`, an implementation limit) is one of those. The reader
+  imports these and has no copy of its own.
 - **`inv` and `canonical`** write a `bigint` as its digits, so two questions that differ by one
   beyond the safe range have two identities. `resolved` may hold a `bigint`.
 - **Redaction.** A `bigint` whose digits are a declared secret is replaced with `[redacted]`, as
@@ -81,7 +97,9 @@ emits one today gets a `TypeError` where it got a `null`.
   function are not read. A value whose own `toJSON` returns `null`, such as an invalid `Date`,
   is still `null`: that is what the value says of itself. A boxed primitive is recognised by
   what it holds, so one made in another realm (a `vm` context) is its primitive too, here and in
-  redaction; before, redaction with a secret present wrote such a box as `{}`. To migrate, decide what the tool means: leave the field out,
+  redaction; before, redaction with a secret present wrote such a box as `{}`. This holds on Bun
+  1.2.0 as well, where `node:util`'s `types.isBigIntObject` does not recognise a boxed `bigint`
+  from another realm and the writer asks the value directly. To migrate, decide what the tool means: leave the field out,
   write `null` yourself, or carry the value as a string.
 - **BREAKING for an `inv`: `resolved` is identified as it is written** (review of
   flyingrobots/parley#181). `resolved` is taken once as the serialiser would write it (`toJSON`
@@ -133,15 +151,35 @@ emits one today gets a `TypeError` where it got a `null`.
   unboxed nothing, so with any secret supplied `new Date(0)` was written as `{}` and
   `new Number(5)` as `{}`, where a run with no secret wrote `"1970-01-01T00:00:00.000Z"` and `5`.
   A record now says the same thing with a secret present as without.
-- The scrub follows the serialiser's own rules: a hook is looked up only where the serialiser
-  looks it up (on an object, a function and a `bigint`, never on a hook's own result), and a
-  boxed `Number` or `String` is converted as the serialiser converts it. **Known limit:** in a
-  process that installs a `toJSON` on `BigInt.prototype`, a `bigint` that a payload's own hook
-  returns is written through that prototype hook when a secret is present, so the prototype
-  hook's output for it is not scrubbed. A `bigint` equal to a secret is still replaced. The owner
-  accepted this as a recorded exception on 2026-11-25
-  ([docs/workflows/release-review](../../docs/workflows/release-review/README.md),
-  flyingrobots/parley#180).
+- **PRIVACY: a history transform could put a declared secret on the shared stream when the
+  secret holds a character JSON escapes** (review case 2026-11-25): a quote, a backslash, a
+  newline or another control character, so a PEM key or a password with `"` in it. The guard
+  behind `history.transform_unredacted` searched the body's JSON text for the secret, and there
+  those characters are escaped, so it was never found; the line was appended with no warning and
+  status 0. Present in 0.4.0 and earlier. The guard now looks where the scrub looks, in the
+  body's values and keys, and in the text as well. The receipt, stdout and stderr were not
+  affected. The text search is wider than the scrub for numbers, as it was: a number whose
+  digits contain a declared secret is withheld here, though in a record the scrub replaces a
+  number only when its whole decimal form is the secret.
+- **A payload is read once** (review case 2026-11-25). The writer takes one snapshot of a payload
+  as it would be written (`plain`: hooks applied, boxes opened, functions gone) before it is
+  refused, scrubbed, checked or given a `seq`, and every sink is written from that snapshot by a
+  serialiser that asks no hook. Before, the guard, the scrub and two serialisers each read the
+  payload by their own rules, and with no secret present each sink read it again. So a `NaN`
+  behind some hook shapes was written as `null` when a `bigint` sat beside it, a hook that
+  answered differently the second time defeated the refusal, and a serialiser's throw came after
+  a `seq` was taken and left a gap. Now a `toJSON` hook or a getter is called once per emission
+  whatever the sinks, the same bytes are written with a `bigint` or a secret beside a value as
+  without, and a record that contains itself is a `TypeError` before a `seq` is taken.
+- **A `toJSON` on `BigInt.prototype` is never asked**, by the serialiser, the scrub or `inv`
+  (review case 2026-11-25). A `bigint` is its exact digits whatever the process has installed.
+  This removes the limit recorded on 2026-11-25 as flyingrobots/parley#180, where a `bigint` a
+  payload hook returned was written through that prototype hook after the scrub. A boxed
+  `bigint` is asked only for a `toJSON` of its own.
+- **A member named `__proto__` is no longer dropped when a secret is present.** The scrub's copy
+  assigned it, which set the copy's prototype instead of a member; so a record relayed from
+  parsed JSON lost it beside any secret, and two `resolved` values differing only there shared
+  an `inv`. Present in 0.4.0 and earlier.
 - A function in a payload is scrubbed as the serialiser would write it: one with a `toJSON` hook
   as what the hook returns, and one without, or one a hook returned, as nothing. Nothing callable
   is left in the scrubbed copy for the serialiser to call afterwards.

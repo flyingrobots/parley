@@ -252,6 +252,26 @@ describe("PE-35 the exact parser and serialiser are the writer's, and exported",
     expect(emit.exactJson({ big: BIG, v: { toJSON: () => ({ when: new Date(0) }) } })).toBe(`{"big":${BIG_TEXT},"v":{"when":"1970-01-01T00:00:00.000Z"}}`);
   });
 
+  test("a boxed bigint is written as its digits, and is seen by holdsExact and the cap guard (review of flyingrobots/parley#175)", () => {
+    expect(emit.exactJson({ id: Object(BIG) })).toBe(`{"id":${BIG_TEXT}}`);
+    expect(emit.exactJson([Object(5n), { n: Object(-BIG) }])).toBe(`[5,{"n":-${BIG_TEXT}}]`);
+    expect(emit.holdsExact({ id: Object(5n) })).toBe(true);
+    expect(holdsUnreadable({ id: Object(10n ** BigInt(emit.MAX_EXACT_DIGITS)) })).toBe(true);
+    expect(holdsUnreadable({ id: Object(5n) })).toBe(false);
+  });
+
+  test("exactJson reads a value at most twice: a getter is read again when a bigint sends it to the exact writer (review of flyingrobots/parley#175)", () => {
+    // Pinned, not endorsed: JSON.stringify runs first so that a value with no bigint is its own
+    // text byte for byte, and a bigint is found by that pass failing. Pass plain data.
+    let reads = 0;
+    const text = emit.exactJson({ get id() { reads++; return BIG; } });
+    expect(text).toBe(`{"id":${BIG_TEXT}}`);
+    expect(reads).toBe(2);
+    reads = 0;
+    emit.exactJson({ get id() { reads++; return 5; } });
+    expect(reads).toBe(1);
+  });
+
   test("holdsUnreadable sees an integer past the cap that only a toJSON hook returns (review of flyingrobots/parley#175)", () => {
     const past = 10n ** BigInt(emit.MAX_EXACT_DIGITS);
     class Hidden { own = 5n; toJSON() { return past; } }
@@ -569,6 +589,18 @@ describe("PE-35 nothing throws on a bigint", () => {
     expect(r.err).toEqual([]);
     expect(r.out.find((l) => l.startsWith("result: "))).toContain(`"value":${BIG_TEXT},`);
     expect(valueText(of(r.receipt, "result")[0]!)).toBe(BIG_TEXT);
+  });
+
+  test("an integer past the cap that only a toJSON hook returns is refused before a seq is taken (review of flyingrobots/parley#175)", async () => {
+    const past = 10n ** BigInt(emit.MAX_EXACT_DIGITS);
+    const r = await go((run) => {
+      run.result({ event: "result", value: { toJSON() { return past; } } }, P.any);
+    });
+    expect(r.status).toBe(2);
+    expect(codes(of(r.err, "error"))).toEqual(["uncaught.exception"]);
+    expect(of(r.receipt, "result")).toEqual([]);
+    // No line anywhere carries the digits.
+    expect([...r.out, ...r.err, ...r.receipt].some((l) => l.includes("1" + "0".repeat(64)))).toBe(false);
   });
 
   test("--human: a tool's renderer is handed the bigint", async () => {

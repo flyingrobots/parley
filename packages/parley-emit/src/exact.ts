@@ -343,8 +343,10 @@ function snapshot(value: unknown, key: string, hooked: boolean, inside: object[]
   inside.push(obj);
   let out: unknown;
   if (Array.isArray(obj)) {
-    const items: unknown[] = [];
-    for (let i = 0; i < obj.length; i++) items.push(snapshot(obj[i], String(i), false, inside));
+    // To the length it has now, as `JSON.stringify` reads it: an element that grows the array
+    // while it is read adds nothing to what is written.
+    const items: unknown[] = [], length = obj.length;
+    for (let i = 0; i < length; i++) items.push(snapshot(obj[i], String(i), false, inside));
     out = items;
   } else {
     const members: Record<string, unknown> = {};
@@ -384,11 +386,14 @@ function write(value: unknown): string | undefined {
   return `{${members.join(",")}}`;
 }
 
-/** Whether the process has installed a `toJSON` that `JSON.stringify` would ask of plain data. */
+/**
+ * Whether the process has put a `toJSON` where `JSON.stringify` would look for one on plain
+ * data: on `Object.prototype`, `Array.prototype` or `BigInt.prototype`. Asked with `in`, which
+ * finds the property without evaluating it, so an accessor there is never run. (`in` follows
+ * the chain, and both of the others inherit from `Object.prototype`.)
+ */
 function hookInstalled(): boolean {
-  return typeof (Object.prototype as { toJSON?: unknown }).toJSON === "function"
-    || typeof (Array.prototype as { toJSON?: unknown }).toJSON === "function"
-    || typeof (BigInt.prototype as { toJSON?: unknown }).toJSON === "function";
+  return "toJSON" in Array.prototype || "toJSON" in BigInt.prototype;
 }
 
 /**

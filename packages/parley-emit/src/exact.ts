@@ -38,12 +38,15 @@ import { types } from "node:util";
 /**
  * Whether a value is a boxed `bigint`, from any realm. `types.isBigIntObject` answers it, except
  * that Bun 1.2.0 says no for a box made in another realm (a `vm` context), which the serialiser
- * still unboxes. So a value tagged as one is asked directly: `valueOf` reads the held value and
- * throws for anything that holds none.
+ * still unboxes. So an object that is not plainly an ordinary one is asked directly: `valueOf`
+ * reads the held value and throws for anything that holds none. Nothing of the value's own is
+ * read to decide, no tag and no property, since the serialiser reads none either.
  */
 export function isBoxedBigInt(value: unknown): boolean {
   if (types.isBigIntObject(value)) return true;
-  if (value === null || typeof value !== "object" || Object.prototype.toString.call(value) !== "[object BigInt]") return false;
+  if (value === null || typeof value !== "object" || Array.isArray(value) || types.isProxy(value)) return false;
+  const proto: unknown = Object.getPrototypeOf(value);
+  if (proto === Object.prototype || proto === null) return false; // an ordinary object of this realm: the common case, decided without a throw
   try { BigInt.prototype.valueOf.call(value); return true; } catch { return false; }
 }
 

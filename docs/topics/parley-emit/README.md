@@ -83,7 +83,14 @@ it. This page is the reference for what the package does on `main`; the package
    reported, else 0; 4 if any sink or sidecar failed, or a record was withheld because redaction
    made it invalid (§3.3, §3.4, §5.4, §5.3). Every record's payload is
    scrubbed of declared secrets before any copy is written, within strings, in numbers and
-   booleans whose decimal form is a secret, and in object keys; the envelope never is. The default
+   booleans whose decimal form is a secret, and in object keys; the envelope never is. What is
+   scrubbed is what is written: a value with a `toJSON` hook (a `Date`, a `URL`) is scrubbed as
+   what the hook returns, applied once, and a boxed primitive as its primitive
+   (flyingrobots/parley#178). One known limit: in a process that installs a `toJSON` on
+   `BigInt.prototype`, a `bigint` that a payload's own hook returns is written through that
+   prototype hook when a secret is present (`"42"` where a run with no secret writes `42`),
+   because the writer cannot mark a primitive as already hooked. A `bigint` equal to a secret is
+   still replaced; what is not scrubbed is the prototype hook's own output for it. The default
    descriptor sinks retry a full pipe and continue a partial write; a sidecar that cannot be
    written is kept inline.
 

@@ -431,6 +431,110 @@ describe("PE-35 redaction of and beside a bigint", () => {
     expect(of(r.receipt, "redaction").some((l) => l.includes('"at":"/value"'))).toBe(true);
   });
 
+  // flyingrobots/parley#178: with a secret present, the scrub rebuilt every object from its own
+  // keys, so a value whose JSON form comes from a hook or a box was rewritten or let through.
+  test("PE-36 a Date, a boxed primitive and a hooked value are the same record with a secret present as without", async () => {
+    const body = (run: Run) => { run.result({ event: "result", when: new Date(0), n: new Number(5), s: new String("x"), b: new Boolean(true), big: Object(BIG), hook: { toJSON: () => ({ kept: 1 }) } }, P.any); };
+    const without = await go(body);
+    const withSecret = await go(body, { argv: ["count", "--token", "zq7kx9unrelated"] });
+    const text = `"when":"1970-01-01T00:00:00.000Z","n":5,"s":"x","b":true,"big":${BIG_TEXT},"hook":{"kept":1},`;
+    expect(of(without.receipt, "result")[0]).toContain(text);
+    expect(of(withSecret.receipt, "result")[0]).toContain(text);
+    expect(of(withSecret.out, "result")[0]).toContain(text);
+    expect(withSecret.status).toBe(0);
+  });
+
+  test("PE-36 a secret that only a toJSON hook returns is replaced, on every sink", async () => {
+    const secret = "zq7kx9hooksecret";
+    class Carrier { toJSON() { return { token: secret, note: `the ${secret} inside` }; } }
+    const r = await go((run) => { run.result({ event: "result", own: { toJSON: () => secret }, inherited: new Carrier(), list: [{ toJSON: () => [secret] }] }, P.any); }, { argv: ["count", "--token", secret], stream: true });
+    for (const lines of [r.out, r.err, r.receipt, r.stream]) expect(lines.join("\n")).not.toContain(secret);
+    expect(of(r.receipt, "result")[0]).toContain('"own":"[redacted]","inherited":{"token":"[redacted]","note":"the [redacted] inside"},"list":[["[redacted]"]],');
+    expect(of(r.receipt, "redaction").length).toBeGreaterThan(0);
+  });
+
+  test("PE-36 a URL holding a secret, and a hook's result that carries its own hook, are scrubbed as what is written", async () => {
+    const secret = "zq7kx9urlsecret";
+    const r = await go((run) => {
+      run.result({ event: "result", url: new URL(`https://user:${secret}@example.test/p`), twice: { toJSON() { return { kept: true, toJSON() { return secret; } }; } } }, P.any);
+    }, { argv: ["count", "--token", secret] });
+    for (const lines of [r.out, r.err, r.receipt]) expect(lines.join("\n")).not.toContain(secret);
+    // The hook is applied once, as JSON.stringify applies it: the result's own hook is not called.
+    expect(of(r.receipt, "result")[0]).toContain('"url":"https://user:[redacted]@example.test/p","twice":{"kept":true},');
+  });
+
+  test("PE-36 a function with a toJSON hook is scrubbed as what its hook returns, and a hook's callable result is never called again (review of flyingrobots/parley#179)", async () => {
+    const secret = "zq7kx9fnsecret";
+    const body = (run: Run) => {
+      const callable = Object.assign(function () { /* no JSON form of its own */ }, { toJSON: () => secret });
+      run.result({
+        event: "result",
+        hooked_fn: Object.assign(function () { /* */ }, { toJSON: () => ({ kept: 1, note: secret }) }),
+        returns_callable: { toJSON: () => callable },
+        plain_fn: () => 1,
+        list: [Object.assign(function () { /* */ }, { toJSON: () => "from a function" }), () => 2],
+      }, P.any);
+    };
+    const without = await go(body);
+    // With no secret, JSON.stringify decides: a hooked function is its hook's result, a hook's callable result is absent.
+    expect(of(without.receipt, "result")[0]).toContain(`"hooked_fn":{"kept":1,"note":"${secret}"},"list":["from a function",null],`);
+    const r = await go(body, { argv: ["count", "--token", secret], stream: true });
+    for (const lines of [r.out, r.err, r.receipt, r.stream]) expect(lines.join("\n")).not.toContain(secret);
+    expect(of(r.receipt, "result")[0]).toContain('"hooked_fn":{"kept":1,"note":"[redacted]"},"list":["from a function",null],');
+    expect(of(r.receipt, "result")[0]).not.toContain("returns_callable");
+    expect(of(r.receipt, "result")[0]).not.toContain("plain_fn");
+  });
+
+  test("PE-36 the scrub follows the serialiser's own rules for a hook's result and for a box (second review of flyingrobots/parley#179)", async () => {
+    const body = (run: Run) => {
+      run.result({
+        event: "result",
+        // A hook's result is not asked for a hook again, so a throwing `toJSON` getter on it is never read.
+        guarded: { toJSON: () => Object.defineProperty({ kept: 1 }, "toJSON", { get() { throw new Error("unexpected lookup"); } }) },
+        // A boxed number is converted as the serialiser converts it, which honours Symbol.toPrimitive.
+        boxed: { toJSON: () => Object.assign(new Number(5), { [Symbol.toPrimitive]() { return 8; } }) },
+        text: Object.assign(new String("a"), { toString() { return "b"; } }),
+      }, P.any);
+    };
+    const without = await go(body);
+    const withSecret = await go(body, { argv: ["count", "--token", "zq7kx9unrelated"] });
+    const text = '"guarded":{"kept":1},"boxed":8,"text":"b",';
+    expect(without.status).toBe(0);
+    expect(of(without.receipt, "result")[0]).toContain(text);
+    expect(withSecret.status).toBe(0);
+    expect(of(withSecret.receipt, "result")[0]).toContain(text);
+  });
+
+  test("PE-36 with a toJSON installed on BigInt.prototype, a bigint in a payload is scrubbed as what that hook returns (second review of flyingrobots/parley#179)", async () => {
+    const secret = "zq7kx9protosecret";
+    const proto = BigInt.prototype as unknown as { toJSON?: () => unknown };
+    proto.toJSON = function (this: bigint) { return `${secret}:${this.toString()}`; };
+    try {
+      const r = await go((run) => { run.result({ event: "result", id: 42n, list: [7n] }, P.any); }, { argv: ["count", "--token", secret] });
+      for (const lines of [r.out, r.err, r.receipt]) expect(lines.join("\n")).not.toContain(secret);
+      expect(of(r.receipt, "result")[0]).toContain('"id":"[redacted]:42","list":["[redacted]:7"],');
+    } finally { delete proto.toJSON; }
+  });
+
+  test("PE-36 known limit, pinned: with a toJSON on BigInt.prototype, a bigint that a payload hook returns is written through that prototype hook when a secret is present", async () => {
+    // Without a secret the serialiser applies the payload's hook once and writes the bigint it
+    // returned as digits. With one, the scrubbed copy holds that bigint as a plain value, and the
+    // serialiser, meeting it for the first time, consults BigInt.prototype. The writer cannot
+    // mark a primitive as already hooked. A bigint equal to a secret is still replaced, because
+    // the scrub sees it before the serialiser does.
+    const secret = "900719925474099312";
+    const proto = BigInt.prototype as unknown as { toJSON?: () => unknown };
+    proto.toJSON = function (this: bigint) { return this.toString(); };
+    try {
+      const body = (run: Run) => { run.result({ event: "result", id: { toJSON: () => 42n }, pin: { toJSON: () => BigInt(secret) } }, P.any); };
+      const without = await go(body);
+      expect(of(without.receipt, "result")[0]).toContain(`"id":42,"pin":${secret},`);
+      const r = await go(body, { argv: ["count", "--token", secret] });
+      for (const lines of [r.out, r.err, r.receipt]) expect(lines.join("\n")).not.toContain(secret);
+      expect(of(r.receipt, "result")[0]).toContain('"id":"42","pin":"[redacted]",');
+    } finally { delete proto.toJSON; }
+  });
+
   test("a bigint secret under a schema that requires an integer is a conflict, never a rounded or a quoted number", async () => {
     const r = await go((run) => { run.result({ event: "result", value: BigInt(SECRET) }, P.count); }, { argv: ["count", "--token", SECRET] });
     expect(r.status).toBe(4);

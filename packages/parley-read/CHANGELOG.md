@@ -5,6 +5,14 @@ on its own; the spec and each message schema move separately (spec §4.4).
 
 ## [Unreleased]
 
+### Changed
+
+- The dependency on `@flyingrobots/parley-emit` is `^0.4.0 || ^0.5.0`, widened from `^0.4.0`, so
+  the range admits the writer's version in the repository, 0.5.0, and Bun keeps linking the
+  workspace copy (flyingrobots/parley#171). No reader code changes, and the reader's suite passes
+  against the 0.5.0 writer. The reader does not yet use the writer's exact parser; that is
+  flyingrobots/parley#159.
+
 ## [0.2.0] — 2026-11-24
 
 A fold could hide a run whose result differed, and said only how many runs it stood for

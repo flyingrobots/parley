@@ -235,6 +235,18 @@ describe("PE-35 the exact parser and serialiser are the writer's, and exported",
       .toBe(`{"id":${BIG_TEXT},"s":"x\\n","list":[null,-${BIG_TEXT},null],"when":"1970-01-01T00:00:00.000Z","j":{"n":7}}`);
   });
 
+  test("exactJson follows JSON.stringify for boxed primitives and array holes beside a bigint, and a cycle is still a TypeError", () => {
+    // eslint-disable-next-line no-sparse-arrays
+    const beside = { n: new Number(5), s: new String("x"), b: new Boolean(false), holes: [, 1], map: new Map([[1, 2]]) };
+    expect(emit.exactJson({ id: BIG, ...beside })).toBe(`{"id":${BIG_TEXT},${JSON.stringify(beside).slice(1)}`);
+    const loop: Record<string, unknown> = { id: BIG };
+    loop.self = loop;
+    expect(() => emit.exactJson(loop)).toThrow(TypeError);
+    const plain: Record<string, unknown> = {};
+    plain.self = plain;
+    expect(() => emit.exactJson(plain)).toThrow(TypeError);
+  });
+
   test("a partial parse marks each unrepresentable number and keeps the fields beside it", () => {
     const p = emit.parseExact('{"seq":4,"value":0.10000000000000001}');
     expect(p.ok).toBe(false);
@@ -297,6 +309,29 @@ describe("PE-35 a history transform is handed exact values and writes exact valu
   test("the re-validation of a projected body decides a bigint exactly: one that breaks the schema is withheld as invalid, and the stream holds no rounded copy", async () => {
     const r = await go((run) => { run.result({ event: "result", value: BIG }, P.count); }, { transform: (rec) => (rec.event === "result" ? { ...rec, value: -BIG } : rec) });
     expect(codes(of(r.err, "warning"))).toEqual(["history.transform_invalid"]);
+    expect(of(r.stream, "result")).toEqual([]);
+    expect(r.status).toBe(0);
+  });
+
+  test("a projected bigint under a bound the checker cannot compare it with exactly is withheld as uncheckable, not as invalid", async () => {
+    const r = await go((run) => { run.result({ event: "result", value: 1 }, P.bound); }, { transform: (rec) => (rec.event === "result" ? { ...rec, value: 18446744073709551616n } : rec) });
+    expect(codes(of(r.err, "warning"))).toEqual(["history.transform_uncheckable"]);
+    expect(of(r.stream, "result")).toEqual([]);
+    expect(valueText(of(r.receipt, "result")[0]!)).toBe("1");
+    expect(r.status).toBe(0);
+  });
+
+  test("a transform that returns a bigint the writer could not read back is withheld", async () => {
+    const r = await go((run) => { run.result({ event: "result", value: 1 }, P.count); }, { transform: (rec) => (rec.event === "result" ? { ...rec, value: 10n ** 4096n } : rec) });
+    expect(codes(of(r.err, "warning"))).toEqual(["history.transform_invalid"]);
+    expect(of(r.err, "warning")[0]).toContain("more than 4096 digits");
+    expect(of(r.stream, "result")).toEqual([]);
+    expect(r.status).toBe(0);
+  });
+
+  test("a transform written for numbers that adds one to an integer beyond the safe range throws, and the line is withheld as failed", async () => {
+    const r = await go((run) => { run.result({ event: "result", value: 2 ** 53 }, P.count); }, { transform: (rec) => (rec.event === "result" ? { ...rec, value: (rec.value as number) + 1 } : rec) });
+    expect(codes(of(r.err, "warning"))).toEqual(["history.transform_failed"]);
     expect(of(r.stream, "result")).toEqual([]);
     expect(r.status).toBe(0);
   });
@@ -389,7 +424,7 @@ describe("PE-35 redaction of and beside a bigint", () => {
 });
 
 describe("PE-35 the bounded checker decides a bigint exactly or says it cannot", () => {
-  const ok = { ok: true };
+  const ok = { ok: true } as const;
   test("a bigint is a JSON number and an integer", () => {
     expect(checkRecord(BIG, { type: "integer" })).toEqual(ok);
     expect(checkRecord(BIG, { type: "number" })).toEqual(ok);
@@ -416,7 +451,12 @@ describe("PE-35 the bounded checker decides a bigint exactly or says it cannot",
         expect("unsupported" in verdict).toBe(true);
       }
     }
-    // The same bounds still decide an ordinary number as they always did.
+    // A bigint inside the safe range is placed against any bound, and the same bounds still
+    // decide an ordinary number as they always did.
+    expect(checkRecord(5n, { maximum: 18446744073709551615, exclusiveMinimum: -1e30 })).toEqual(ok);
+    expect(checkRecord(5n, { minimum: 1e30 })).toEqual({ ok: false, errors: ["/ is below 1e+30"], pointers: ["/"] });
+    expect(checkRecord(5n, { const: 1e30 }).ok).toBe(false);
+    expect("pointers" in checkRecord(5n, { const: 1e30 })).toBe(true);
     expect(checkRecord(5, { maximum: 18446744073709551615 })).toEqual(ok);
     expect(checkRecord(1e31, { exclusiveMaximum: 1e30 })).toEqual({ ok: false, errors: ["/ is not below 1e+30"], pointers: ["/"] });
   });
@@ -494,7 +534,7 @@ describe("PE-35 nothing throws on a bigint", () => {
   });
 
   test("an error with a bigint in its detail and measured is a structured line, and the run ends with status 2", async () => {
-    const r = await go((run) => { run.error({ code: "row.too_big", problem: "the row is too big", measured: BIG as unknown as number, detail: { id: BIG } }); });
+    const r = await go((run) => { run.error({ code: "row.too_big", problem: "the row is too big", measured: BIG, detail: { id: BIG } }); });
     expect(r.status).toBe(2);
     expect(of(r.err, "error")[0]).toContain(`"measured":${BIG_TEXT},"detail":{"id":${BIG_TEXT}}`);
     expect(of(r.receipt, "error")[0]).toBe(of(r.err, "error")[0]!);
@@ -508,6 +548,15 @@ describe("PE-35 nothing throws on a bigint", () => {
     const b = await go(() => { throw Object.assign(new Error("row failed"), { cause: { id: BIG } }); });
     expect(b.status).toBe(2);
     expect(codes(of(b.err, "error"))).toEqual(["uncaught.exception"]);
+  });
+
+  test("a record that refers to itself is reported as it was before: an uncaught TypeError from the serialiser", async () => {
+    const loop: Record<string, unknown> = { event: "result", value: 1 };
+    loop.self = loop;
+    const r = await go((run) => { run.result(loop, P.any); });
+    expect(r.status).toBe(2);
+    expect(r.thrown[0]).toBeInstanceOf(TypeError);
+    expect(codes(of(r.err, "error"))).toEqual(["uncaught.exception"]);
   });
 
   test("captured console output of an object holding a bigint keeps its digits", async () => {

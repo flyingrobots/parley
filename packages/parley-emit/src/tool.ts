@@ -4,7 +4,7 @@ import { closeSync, openSync, readSync, readdirSync, rmSync, statSync, unlinkSyn
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { historyBookkeeping, historyDays, historyProjection, isHistoryFailure, isHistorySink, openHistory, resolveHistory, retainHistory, type HistoryConfig, type HistoryPlan, type HistoryProjection, type HistorySink } from "./history.ts";
-import { exactJson, holdsUnreadable, MAX_EXACT_DIGITS } from "./exact.ts";
+import { exactJson, unwritable, unwritableClause } from "./exact.ts";
 import { computeInv, type InputDecl } from "./inv.ts";
 import { bookkeepingFor, chooseLocation, isLocationFailure, type Bookkeeping } from "./location.ts";
 import { carriesSecret, classifySecrets, collectSecretValues, redactArgv, scrub } from "./redact.ts";
@@ -190,8 +190,10 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
     resolvedRaw = discovery ? { discovery, command: commandName } : await (opts.resolved ?? ((a, c) => ({ command: c, args: a })))(rest, commandName!);
     inputs = discovery || !command ? [] : await (opts.inputs ?? (() => []))(rest, commandName!);
     // `resolved` goes into the head and into `inv`. A `bigint` in it is written as exact digits;
-    // one the writer could not read back is refused here, where it is still a startup failure.
-    if (holdsUnreadable(resolvedRaw)) throw new TypeError(`resolved carries an integer of more than ${MAX_EXACT_DIGITS} digits, which this writer does not write`);
+    // one the writer could not read back, or a number that is not finite, is refused here, where
+    // it is still a startup failure.
+    const why = unwritable(resolvedRaw);
+    if (why) throw new TypeError(`resolved carries ${unwritableClause(why)}`);
   } catch (e) {
     try { closeSync(location.fd); unlinkSync(location.receiptPath); } catch { /* the reservation is gone either way */ }
     const err = e instanceof Error ? e : new Error(String(e));

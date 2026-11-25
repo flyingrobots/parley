@@ -5,7 +5,7 @@
 import { closeSync, mkdirSync, openSync, readFileSync, writeSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { checkRecord } from "./check.ts";
-import { exactJson, holdsUnreadable, MAX_EXACT_DIGITS, parseExact } from "./exact.ts";
+import { exactJson, MAX_EXACT_DIGITS, parseExact, unwritable, unwritableClause } from "./exact.ts";
 import type { HistoryProjection, HistorySink } from "./history.ts";
 import { canonical, computeInv, digestInput, sha256, type InputDecl, type InputDescriptor } from "./inv.ts";
 import { carriesSecret, replaceSecrets, scrub, scrubPointer } from "./redact.ts";
@@ -368,6 +368,13 @@ export class Run {
       return null;
     }
     const out: Record_ = { event: envelope.event, t: envelope.t, seq: envelope.seq, run: envelope.run, ...body, _schema: envelope._schema };
+    // A body the writer could not write is no more the stream's than the receipt's. Asked before
+    // the schema is, so the warning names the cause whatever the schema says of the field.
+    const why = unwritable(body);
+    if (why) {
+      this.withhold({ code: "history.transform_invalid", problem: `the body the history transform ${p.name} returned for seq ${seq} holds ${unwritableClause(why)}; that line is not on the shared stream`, remedy: "project within what the receipt line carried, or withhold the line by returning nothing" });
+      return null;
+    }
     const verdict = checkRecord(out, doc);
     if (!verdict.ok) {
       if ("unsupported" in verdict) {
@@ -375,11 +382,6 @@ export class Run {
         return null;
       }
       this.withhold({ code: "history.transform_invalid", problem: `the body the history transform ${p.name} returned for seq ${seq} no longer validates against ${pair}: ${verdict.errors.slice(0, 3).join("; ")}; that line is not on the shared stream`, remedy: "project within the message's schema, or withhold the line by returning nothing" });
-      return null;
-    }
-    // A body the writer could not read back is no more the stream's than the receipt's.
-    if (holdsUnreadable(body)) {
-      this.withhold({ code: "history.transform_invalid", problem: `the body the history transform ${p.name} returned for seq ${seq} holds an integer of more than ${MAX_EXACT_DIGITS} digits, which this writer does not write; that line is not on the shared stream`, remedy: "project within what the receipt line carried, or withhold the line by returning nothing" });
       return null;
     }
     return exactJson(out) + "\n";
@@ -503,8 +505,10 @@ export class Run {
     // A `bigint` is written as its exact digits (flyingrobots/parley#171). One of more digits than
     // `parseExact` reads back is refused here, before a seq is taken: a line this writer could
     // not read exactly is one no reader of it could, and its own history projection would have
-    // to withhold it.
-    if (this.unreadable(scrubbed) || (extra !== undefined && this.unreadable(extra))) throw new TypeError(`a record must not carry an integer of more than ${MAX_EXACT_DIGITS} digits; a bigint is written as exact digits, and this writer does not write one it could not read back. Carry such a value as a string`);
+    // to withhold it. A number that is not finite is refused with it (flyingrobots/parley#177):
+    // the serialiser would write `null`, a value the tool did not hand over.
+    const why = this.unwritable(scrubbed) ?? (extra !== undefined ? this.unwritable(extra) : undefined);
+    if (why) throw new TypeError(`a record must not carry ${unwritableClause(why)}. Carry such a value as a string, or leave the field out`);
     // The copies of one event agree on every field they share (§1.3): compared as scrubbed, since
     // that is what is written, and before a seq is taken, so a refusal leaves no gap.
     if (extra) for (const k of Object.keys(extra)) {
@@ -535,8 +539,8 @@ export class Run {
     return at.seq;
   }
 
-  /** Whether a payload holds a `bigint` past the cap. A payload that refers to itself is not this check's to report: the serialiser says so, as it always has. */
-  private unreadable(payload: Record_): boolean { try { return holdsUnreadable(payload); } catch { return false; } }
+  /** Why a payload cannot be written, if it cannot. A payload that refers to itself is not this check's to report: the serialiser says so, as it always has. */
+  private unwritable(payload: Record_): "integer" | "number" | undefined { try { return unwritable(payload); } catch { return undefined; } }
 
   /** The copies of one event as the sinks would receive them: the stream copy, and the receipt copy when it carries more. */
   private copies(how: Emit, payload: Record_, extra: Record_ | undefined, schema: SchemaRef, at: { seq: number; t: number }): Record_[] {

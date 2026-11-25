@@ -16,10 +16,14 @@ digits, everywhere a record travels (flyingrobots/parley#171). Before, a record 
 and status 2, so a TypeScript tool had no exact numeric form for an integer beyond the safe range
 (a 64-bit id) and had to round it or write a string.
 
-**No emitted byte changes for a value the writer accepted before**, and no `inv` moves: a record
-with no `bigint` is serialised by `JSON.stringify` as it was, and the canonical form is the same
-text. `test/fixtures/inv-pinned.jsonl` holds 25 identities printed from the previous source, and
-a test requires this source to reproduce each.
+**No emitted byte changes for a finite value the writer accepted before**, and no `inv` moves: a
+record with no `bigint` is serialised by `JSON.stringify` as it was, and the canonical form is the
+same text. `test/fixtures/inv-pinned.jsonl` holds 25 identities printed from the previous source,
+and a test requires this source to reproduce 24 of them. The twenty-fifth is withdrawn: a number
+that is not finite, which is now refused (below).
+
+**BREAKING: `NaN`, `Infinity` and `-Infinity` are refused** (flyingrobots/parley#177). A tool that
+emits one today gets a `TypeError` where it got a `null`.
 
 ### Added
 
@@ -59,6 +63,22 @@ a test requires this source to reproduce each.
 
 ### Changed
 
+- **BREAKING: a number that is not finite is refused, never written as `null`**
+  (flyingrobots/parley#177). Before, `NaN`, `Infinity` and `-Infinity` were written as `null` on
+  stdout, in the receipt and in the canonical form `inv` is computed over, with no warning and
+  status 0: `JSON.stringify`'s behaviour, inherited since 0.1.0. A receipt then stated a `null`
+  the tool never handed over, and two questions whose `resolved` differed only in `NaN` against
+  `null` shared one `inv`. Now, at any depth, behind a `toJSON` hook or boxed:
+  - an emitting call throws `TypeError` before a `seq` is taken, so nothing is written and no
+    gap is left; uncaught in the handler it is `uncaught.exception` and status 2, as in
+    `parley_emit.py`, which has always refused these;
+  - `resolved` holding one is `startup.arguments_invalid`, status 3;
+  - a history transform's body holding one is withheld as `history.transform_invalid`;
+  - `canonical` and `computeInv` throw `TypeError`.
+
+  A value whose own `toJSON` returns `null`, such as an invalid `Date`, is still `null`: that is
+  what the value says of itself. To migrate, decide what the tool means: leave the field out,
+  write `null` yourself, or carry the value as a string.
 - **A history transform is handed exact values.** The receipt line is parsed with `parseExact`
   before the transform runs, and its result is written with `exactJson`. A transform therefore
   receives a `bigint` for any integer the receipt writes beyond the safe range, including one the
@@ -101,15 +121,16 @@ a test requires this source to reproduce each.
   boxed `Number` or `String` is converted as the serialiser converts it. **Known limit:** in a
   process that installs a `toJSON` on `BigInt.prototype`, a `bigint` that a payload's own hook
   returns is written through that prototype hook when a secret is present, so the prototype
-  hook's output for it is not scrubbed. A `bigint` equal to a secret is still replaced.
+  hook's output for it is not scrubbed. A `bigint` equal to a secret is still replaced. The owner
+  accepted this as a recorded exception on 2026-11-25
+  ([docs/workflows/release-review](../../docs/workflows/release-review/README.md),
+  flyingrobots/parley#180).
 - A function in a payload is scrubbed as the serialiser would write it: one with a `toJSON` hook
   as what the hook returns, and one without, or one a hook returned, as nothing. Nothing callable
   is left in the scrubbed copy for the serialiser to call afterwards.
 
 ### Not changed, and stated
 
-- A number that is not finite (`NaN`, `Infinity`) is still written as `null`, as `JSON.stringify`
-  writes it (flyingrobots/parley#177).
 - `retain`'s reads of another receipt's first and last line use `JSON.parse`: they read `event`
   and `tool`, which are strings, and no number.
 - A schema document that itself holds a `bigint` bound is outside the checker's subset

@@ -473,8 +473,9 @@ Where it does something different:
   language's. The TypeScript writer captures `console` and cannot contain a direct descriptor write
   either.
 - **Records are strict JSON.** A value `json` cannot serialise (a `datetime`, a set, an object) or a
-  `NaN` is raised to the tool (and, from the handler, becomes `uncaught.exception`), where
-  `JSON.stringify` silently drops `undefined` and functions. A diagnostic given a field other than
+  `NaN` is raised to the tool (and, from the handler, becomes `uncaught.exception`). The
+  TypeScript writer refuses `NaN` and the infinities too, from 0.5.0, and silently drops
+  `undefined` and functions as `JSON.stringify` does. A diagnostic given a field other than
   `remedy`, `remedy_target`, `measured`, `limit`, `retryable` and `detail` raises `ValueError`;
   tool-specific fields go under `detail`.
 - **Exit and interrupt.** `SystemExit` and `KeyboardInterrupt` in the handler have no TypeScript

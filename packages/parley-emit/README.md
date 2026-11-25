@@ -447,7 +447,11 @@ which is not the same as invalid. A `bigint` inside the safe range is decided ag
   values, and the stream copy of `1e21` is spelt as 22 digits.
 - **The undecidable bound is "unchecked" only for an integer beyond the safe range.** A stricter
   rule would refuse to compare any `bigint` with a schema number beyond the safe range.
-- **`NaN` and `Infinity` are still written as `null`**, as before (flyingrobots/parley#177).
+- **`NaN`, `Infinity` and `-Infinity` are refused**, from 0.5.0 (flyingrobots/parley#177).
+  Before, they were written as `null`. An emitting call that holds one, at any depth, throws
+  `TypeError` before a `seq` is taken; `resolved` holding one is `startup.arguments_invalid`; a
+  transform's body holding one is withheld. Leave the field out, write `null` yourself, or carry
+  the value as a string.
 
 ## What a receipt can contain
 

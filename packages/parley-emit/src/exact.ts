@@ -250,24 +250,39 @@ export function holdsExact(value: unknown): boolean {
 let pastCap: bigint | undefined;
 
 /**
- * True when the value holds, at any depth, a `bigint` of more than `MAX_EXACT_DIGITS` digits:
- * one `exactJson` would write and `parseExact` could not read back. The comparison is against one
- * constant, so no digit string is built to find out. It follows `toJSON` as the serialiser does.
+ * Why the writer refuses a value, or `undefined` when it writes it. Two things at any depth:
+ *
+ *   - `"integer"`: a `bigint` of more than `MAX_EXACT_DIGITS` digits, one `exactJson` would write
+ *     and `parseExact` could not read back. The comparison is against one constant, so no digit
+ *     string is built to find out.
+ *   - `"number"`: `NaN` or an infinity. JSON has no form for one, and `JSON.stringify` writes
+ *     `null`, which states a value the tool did not hand over (flyingrobots/parley#177).
+ *
+ * It follows `toJSON` as the serialiser does, and reads a boxed number as its primitive.
  */
-export function holdsUnreadable(value: unknown, hooked = false): boolean {
+export function unwritable(value: unknown, hooked = false): "integer" | "number" | undefined {
   if (value instanceof BigInt) value = value.valueOf(); // a boxed bigint is its primitive
   if (typeof value === "bigint") {
     pastCap ??= 10n ** BigInt(MAX_EXACT_DIGITS);
-    return value >= pastCap || value <= -pastCap;
+    return value >= pastCap || value <= -pastCap ? "integer" : undefined;
   }
-  if (value === null || typeof value !== "object") return false;
+  if (typeof value === "number") return Number.isFinite(value) ? undefined : "number";
+  if (value === null || typeof value !== "object") return undefined;
   // What the serialiser writes is what a `toJSON` hook returns, so that is what is looked at:
   // once per value, as `write` applies it (`hooked` marks a hook's own result).
   const json = (value as { toJSON?: unknown }).toJSON;
-  if (!hooked && typeof json === "function") return holdsUnreadable((json as (key: string) => unknown).call(value, ""), true);
-  if (Array.isArray(value)) { for (let i = 0; i < value.length; i++) if (holdsUnreadable(value[i])) return true; return false; }
-  for (const key of Object.keys(value)) if (holdsUnreadable((value as Record<string, unknown>)[key])) return true;
-  return false;
+  if (!hooked && typeof json === "function") return unwritable((json as (key: string) => unknown).call(value, ""), true);
+  if (value instanceof Number) return Number.isFinite(Number(value)) ? undefined : "number";
+  if (Array.isArray(value)) { for (let i = 0; i < value.length; i++) { const why = unwritable(value[i]); if (why) return why; } return undefined; }
+  for (const key of Object.keys(value)) { const why = unwritable((value as Record<string, unknown>)[key]); if (why) return why; }
+  return undefined;
+}
+
+/** What `unwritable` found, as the clause a refusal's message uses. */
+export function unwritableClause(why: "integer" | "number"): string {
+  return why === "integer"
+    ? `an integer of more than ${MAX_EXACT_DIGITS} digits, which this writer does not write because it could not read it back`
+    : "a number that is not finite (NaN or an infinity), which JSON cannot state and this writer does not write as null";
 }
 
 /**

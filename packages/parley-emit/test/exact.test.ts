@@ -13,7 +13,9 @@ import { join, resolve } from "node:path";
 import * as emit from "../src/index.ts";
 import { checkRecord, canonical, computeInv, defineTool, main, scrub, declaredProjection, ParleyRedactionConflict, ParleyRedactionUnchecked, type HistoryTransform, type MainOptions, type Run, type ToolSpec } from "../src/index.ts";
 import { pinned } from "./fixtures/pin-inv.ts";
-import { holdsUnreadable } from "../src/exact.ts";
+import { unwritable } from "../src/exact.ts";
+/** The cap guard alone: whether `unwritable` refuses the value for an integer past the cap. */
+const holdsUnreadable = (v: unknown): boolean => unwritable(v) === "integer";
 
 const ROOT = resolve(import.meta.dir, "../../..");
 const CORPUS = join(ROOT, "conformance/numbers/cases.jsonl");
@@ -835,7 +837,7 @@ describe("PE-37 a number that is not finite is refused, never written as null (f
   });
 
   test("a transform that returns one is withheld as invalid, and the receipt keeps the record", async () => {
-    const r = await go((run) => { run.result({ event: "result", value: 1 }, P.any); }, { transform: (rec) => (rec.event === "result" ? { ...rec, value: Number.NaN } : rec) });
+    const r = await go((run) => { run.result({ event: "result", value: 1 }, P.count); }, { transform: (rec) => (rec.event === "result" ? { ...rec, value: Number.NaN } : rec) });
     expect(codes(of(r.err, "warning"))).toEqual(["history.transform_invalid"]);
     expect(of(r.err, "warning")[0]).toContain("not finite");
     expect(of(r.stream, "result")).toEqual([]);

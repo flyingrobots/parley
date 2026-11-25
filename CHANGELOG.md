@@ -27,6 +27,13 @@ the entry under it names each schema version it releases, and those are separate
 
 ### Fixed
 
+- **PRIVACY: `@flyingrobots/parley-emit` published a declared secret that only a `toJSON` hook
+  returns** (flyingrobots/parley#178), on stdout and in the receipt with status 0: a `URL` holding
+  the secret, or any object whose hook returns it. Present in the published 0.4.0 (measured from
+  npm) and earlier. With a secret present the same code wrote a `Date` or a boxed primitive as
+  `{}`. Fixed in parley-emit 0.5.0: what is scrubbed is what is written. The Python writer is not
+  affected: `json.dumps` calls no hook and raises on a value it cannot write.
+
 - An intermittent test failure, in both writers' suites (flyingrobots/parley#142). Several
   redaction tests declared a short numeric secret (`4321`, `8675309`) and searched whole receipts
   for it, and a receipt also holds the clock in milliseconds, run ids and hex digests: `4321`

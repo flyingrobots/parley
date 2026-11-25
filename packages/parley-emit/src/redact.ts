@@ -102,9 +102,27 @@ export interface ScrubOptions {
  * secret becomes the string `[redacted]` (a PIN parsed to a number is still the PIN); an object
  * key that carries a secret is renamed, and the pointer recorded is the renamed key's. `opts`
  * narrows this for a writer-built record.
+ *
+ * **What is scrubbed is what is written** (flyingrobots/parley#178). The serialiser writes a
+ * value with a `toJSON` hook as what the hook returns and a boxed primitive as its primitive, so
+ * that is what is scrubbed, and the copy holds the plain result: a `Date` is its string, a `URL`
+ * its href, and a secret only a hook returns is replaced like any other. The hook is applied
+ * once per value, as `JSON.stringify` applies it, and a function-valued member, which no JSON
+ * form has, is left out of the copy, so no hook is left for the serialiser to call afterwards.
+ * Before this, the copy was built from own keys alone: a `Date` became `{}`, and an object's own
+ * `toJSON` was copied across and called by the serialiser after the scrub, unscrubbed.
  */
 export function scrub(value: unknown, values: ReadonlySet<string>, pointer = "", found: string[] = [], opts: ScrubOptions = {}): unknown {
+  return scrubValue(value, values, pointer, found, opts, "", false);
+}
+
+function scrubValue(value: unknown, values: ReadonlySet<string>, pointer: string, found: string[], opts: ScrubOptions, key: string, hooked: boolean): unknown {
   if (values.size === 0) return value;
+  if (value !== null && typeof value === "object") {
+    const json = (value as { toJSON?: unknown }).toJSON;
+    if (!hooked && typeof json === "function") return scrubValue((json as (key: string) => unknown).call(value, key), values, pointer, found, opts, key, true);
+    if (value instanceof Number || value instanceof String || value instanceof Boolean || value instanceof BigInt) return scrubValue(value.valueOf(), values, pointer, found, opts, key, true);
+  }
   if (typeof value === "string") {
     const r = replaceSecrets(value, values);
     if (r !== value) found.push(pointer || "/");
@@ -114,14 +132,20 @@ export function scrub(value: unknown, values: ReadonlySet<string>, pointer = "",
     if (opts.scalars !== false && values.has(String(value))) { found.push(pointer || "/"); return REDACTED; }
     return value;
   }
-  if (Array.isArray(value)) return value.map((v, i) => scrub(v, values, `${pointer}/${i}`, found, opts));
+  if (Array.isArray(value)) {
+    // By index, so a hole is scrubbed as the `undefined` it reads as; `map` would skip it.
+    const items: unknown[] = [];
+    for (let i = 0; i < value.length; i++) items.push(scrubValue(value[i], values, `${pointer}/${i}`, found, opts, String(i), false));
+    return items;
+  }
   if (value && typeof value === "object") {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      const key = opts.keys === false ? k : replaceSecrets(k, values);
-      const p = `${pointer}/${escapePointer(key)}`;
-      if (key !== k) found.push(p);
-      out[key] = opts.skipKeys?.has(k) && typeof v === "string" ? v : scrub(v, values, p, found, opts);
+      if (typeof v === "function") continue; // no JSON form, and a copied `toJSON` would be called after the scrub
+      const renamed = opts.keys === false ? k : replaceSecrets(k, values);
+      const p = `${pointer}/${escapePointer(renamed)}`;
+      if (renamed !== k) found.push(p);
+      out[renamed] = opts.skipKeys?.has(k) && typeof v === "string" ? v : scrubValue(v, values, p, found, opts, k, false);
     }
     return out;
   }

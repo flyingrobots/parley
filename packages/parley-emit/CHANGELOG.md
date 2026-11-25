@@ -81,6 +81,24 @@ a test requires this source to reproduce each.
   such text; the code exists so that a rounded value cannot reach a transform by a path nobody
   has found.
 
+### Fixed
+
+- **A declared secret that only a `toJSON` hook returns is now replaced** (flyingrobots/parley#178).
+  PRIVACY. With a secret present, the scrub copied each object from its own keys. An object's own
+  `toJSON` was copied across with them and called by the serialiser after the scrub, and an
+  inherited one was lost, so the secret a hook returned was never looked at: `{ url: new URL(...) }`
+  with the secret in the URL, or `{ token: { toJSON: () => secret } }`, was written to stdout and
+  the receipt with status 0. Measured on the published 0.4.0 from npm, and present by inspection
+  in every earlier version. What is scrubbed is now what is written: a hooked value is scrubbed
+  as what its hook returns, once, and a boxed primitive as its primitive.
+- **A `Date`, or another value whose JSON form is inherited, is no longer written as `{}` when a
+  secret is present** (flyingrobots/parley#178). The same copy dropped an inherited `toJSON` and
+  unboxed nothing, so with any secret supplied `new Date(0)` was written as `{}` and
+  `new Number(5)` as `{}`, where a run with no secret wrote `"1970-01-01T00:00:00.000Z"` and `5`.
+  A record now says the same thing with a secret present as without.
+- A function-valued member of a payload is left out of the scrubbed copy. It never had a JSON
+  form, so no emitted byte changes, except that an own `toJSON` is no longer there to be called.
+
 ### Not changed, and stated
 
 - A number that is not finite (`NaN`, `Infinity`) is still written as `null`, as `JSON.stringify`

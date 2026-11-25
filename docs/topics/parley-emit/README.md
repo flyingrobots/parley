@@ -83,7 +83,10 @@ it. This page is the reference for what the package does on `main`; the package
    reported, else 0; 4 if any sink or sidecar failed, or a record was withheld because redaction
    made it invalid (§3.3, §3.4, §5.4, §5.3). Every record's payload is
    scrubbed of declared secrets before any copy is written, within strings, in numbers and
-   booleans whose decimal form is a secret, and in object keys; the envelope never is. The default
+   booleans whose decimal form is a secret, and in object keys; the envelope never is. What is
+   scrubbed is what is written: a value with a `toJSON` hook (a `Date`, a `URL`) is scrubbed as
+   what the hook returns, applied once, and a boxed primitive as its primitive
+   (flyingrobots/parley#178). The default
    descriptor sinks retry a full pipe and continue a partial write; a sidecar that cannot be
    written is kept inline.
 

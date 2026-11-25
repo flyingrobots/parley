@@ -948,4 +948,14 @@ describe("PE-37 a number that is not finite is refused, never written as null (f
     expect(emit.holdsExact(foreign())).toBe(true);
     expect(() => emit.canonical(runInNewContext("new Number(NaN)"))).toThrow(TypeError);
   });
+
+  test("deciding whether a value is a boxed bigint reads nothing of the value's own: a throwing Symbol.toStringTag getter changes nothing (review of flyingrobots/parley#182)", async () => {
+    const tagged = () => Object.defineProperty({ answer: 42 }, Symbol.toStringTag, { get() { throw new Error("never read by a serialiser"); } });
+    for (const argv of [["count"], ["count", "--token", "zq7kx9unrelated"]]) {
+      const r = await go((run) => { run.result({ event: "result", value: { t: tagged(), id: 9007199254740993n } }, P.any); }, { argv, extra: { resolved: () => ({ command: "count", t: tagged() }) } });
+      expect(r.err).toEqual([]);
+      expect(r.status).toBe(0);
+      expect(of(r.out, "result").map(valueText)).toEqual([`{"t":{"answer":42},"id":9007199254740993}`]);
+    }
+  });
 });

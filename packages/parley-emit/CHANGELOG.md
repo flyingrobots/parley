@@ -81,7 +81,9 @@ emits one today gets a `TypeError` where it got a `null`.
   function are not read. A value whose own `toJSON` returns `null`, such as an invalid `Date`,
   is still `null`: that is what the value says of itself. A boxed primitive is recognised by
   what it holds, so one made in another realm (a `vm` context) is its primitive too, here and in
-  redaction; before, redaction with a secret present wrote such a box as `{}`. To migrate, decide what the tool means: leave the field out,
+  redaction; before, redaction with a secret present wrote such a box as `{}`. This holds on Bun
+  1.2.0 as well, where `node:util`'s `types.isBigIntObject` does not recognise a boxed `bigint`
+  from another realm and the writer asks the value directly. To migrate, decide what the tool means: leave the field out,
   write `null` yourself, or carry the value as a string.
 - **BREAKING for an `inv`: `resolved` is identified as it is written** (review of
   flyingrobots/parley#181). `resolved` is taken once as the serialiser would write it (`toJSON`

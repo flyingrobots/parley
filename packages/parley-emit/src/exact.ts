@@ -35,6 +35,21 @@
 
 import { types } from "node:util";
 
+/**
+ * Whether a value is a boxed `bigint`, from any realm. `types.isBigIntObject` answers it, except
+ * that Bun 1.2.0 says no for a box made in another realm (a `vm` context), which the serialiser
+ * still unboxes. So an object that is not plainly an ordinary one is asked directly: `valueOf`
+ * reads the held value and throws for anything that holds none. Nothing of the value's own is
+ * read to decide, no tag and no property, since the serialiser reads none either.
+ */
+export function isBoxedBigInt(value: unknown): boolean {
+  if (types.isBigIntObject(value)) return true;
+  if (value === null || typeof value !== "object" || Array.isArray(value) || types.isProxy(value)) return false;
+  const proto: unknown = Object.getPrototypeOf(value);
+  if (proto === Object.prototype || proto === null) return false; // an ordinary object of this realm: the common case, decided without a throw
+  try { BigInt.prototype.valueOf.call(value); return true; } catch { return false; }
+}
+
 /** The most decimal digits an integer may have and still be held exactly; `1e400` has 401. */
 export const MAX_EXACT_DIGITS = 4096;
 
@@ -241,7 +256,7 @@ export function parseExact(text: string): ExactParse {
 
 /** True when the value holds a `bigint` at any depth. */
 export function holdsExact(value: unknown): boolean {
-  if (typeof value === "bigint" || types.isBigIntObject(value)) return true; // a boxed bigint is its primitive
+  if (typeof value === "bigint" || isBoxedBigInt(value)) return true; // a boxed bigint is its primitive
   if (value === null || typeof value !== "object") return false;
   if (Array.isArray(value)) return value.some(holdsExact);
   for (const key in value) if (holdsExact((value as Record<string, unknown>)[key])) return true;
@@ -300,7 +315,7 @@ export function plain(value: unknown, key = "", hooked = false): unknown {
   if (types.isNumberObject(value)) return Number(value);
   if (types.isStringObject(value)) return String(value);
   if (types.isBooleanObject(value)) return Boolean.prototype.valueOf.call(value);
-  if (types.isBigIntObject(value)) return BigInt.prototype.valueOf.call(value);
+  if (isBoxedBigInt(value)) return BigInt.prototype.valueOf.call(value);
   if (typeof value === "function" || typeof value === "symbol") return undefined;
   if (Array.isArray(value)) {
     const items: unknown[] = [];
@@ -339,7 +354,7 @@ function write(value: unknown, key: string, hooked = false): string | undefined 
   const json = (value as { toJSON?: unknown }).toJSON;
   if (!hooked && typeof json === "function") return write((json as (key: string) => unknown).call(value, key), key, true);
   if (types.isNumberObject(value) || types.isStringObject(value) || types.isBooleanObject(value)) return JSON.stringify(value); // a boxed primitive is its primitive
-  if (types.isBigIntObject(value)) return BigInt.prototype.valueOf.call(value).toString(); // and so is a boxed bigint, which `JSON.stringify` unboxes before it refuses it
+  if (isBoxedBigInt(value)) return BigInt.prototype.valueOf.call(value).toString(); // and so is a boxed bigint, which `JSON.stringify` unboxes before it refuses it
   if (Array.isArray(value)) {
     // By index, so a hole is `null` as `JSON.stringify` writes it; `map` would skip it.
     const items: string[] = [];

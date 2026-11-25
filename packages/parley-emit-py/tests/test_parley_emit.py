@@ -87,10 +87,12 @@ def scratch():
 
 
 def scratch_free(*secrets):
-    """A scratch directory whose paths carry none of the given secrets. The redaction-conflict cases
-    use short secrets such as `42`, and a temporary directory's random name holds one about once in
-    a few hundred runs; the writer then relocates the receipt or fails at startup, which is right
-    and is not what those cases are about."""
+    """A scratch directory whose paths carry none of the given secrets. A temporary directory's
+    random name can hold a short secret; the writer then relocates the receipt or fails at
+    startup, which is right and is not what these cases are about. The run id is the writer's own
+    and cannot be chosen here, and its leading characters are a timestamp, so a two-digit secret
+    is in every run id for hours at a time: the redaction-conflict cases use a fifteen-digit
+    integer, which no run id holds in practice."""
     for _ in range(64):
         d, state, env = scratch()
         if not any(v in d or v in state for v in secrets):
@@ -646,17 +648,17 @@ class TestRedactionConflict(unittest.TestCase):
         return "\n".join([e["problem"], e["remedy"], json.dumps(e["detail"])])
 
     def test_an_integer_field_equal_to_a_declared_secret_is_not_published(self):
-        d, _, env = scratch_free("42")
+        d, _, env = scratch_free("420000000000042")
         raised = []
 
         def body(run):
             try:
-                run.result({"event": "result", "value": 42}, T_COUNT)
+                run.result({"event": "result", "value": 420000000000042}, T_COUNT)
             except Exception as e:
                 raised.append(e)
                 raise
 
-        o = run_count(d, env, ["count", "--token", "42"], body)
+        o = run_count(d, env, ["count", "--token", "420000000000042"], body)
         self.assertEqual(o.status, 4)
         self.assertIsInstance(raised[0], pe.ParleyRedactionConflict)
         self.assertEqual([x for x in self.every_line(o) if x["event"] == "result"], [])
@@ -667,7 +669,7 @@ class TestRedactionConflict(unittest.TestCase):
         self.assertEqual(e["detail"], {"schema": {"id": "t.count", "version": "1.0.0"}, "at": ["/value"], "redacted": ["/value"]})
         self.assertIn("/value", e["problem"])
         self.assertIn("t.count@1.0.0", e["problem"])
-        self.assertNotIn("42", self.said(e))
+        self.assertNotIn("420000000000042", self.said(e))
         for leak in ("integer", "is string", "minimum", "not integer"):
             self.assertNotIn(leak, self.said(e))
         self.assertEqual([x["seq"] for x in o.receipt_lines if x["event"] == "error"], [e["seq"]])
@@ -715,37 +717,37 @@ class TestRedactionConflict(unittest.TestCase):
         assert_valid(self, o, TYPED_EXTRA)
 
     def test_with_receipt_extra_neither_copy_is_written_when_either_would_be_invalid(self):
-        d, _, env = scratch_free("42")
-        o = run_count(d, env, ["count", "--token", "42"],
-                      lambda run: run.result({"event": "result", "note": "fine"}, T_TYPED, {"count": 42}), TYPED_TOOL)
+        d, _, env = scratch_free("420000000000042")
+        o = run_count(d, env, ["count", "--token", "420000000000042"],
+                      lambda run: run.result({"event": "result", "note": "fine"}, T_TYPED, {"count": 420000000000042}), TYPED_TOOL)
         self.assertEqual(o.status, 4)
         self.assertEqual([x for x in self.every_line(o) if x["event"] == "result"], [])
         self.assertEqual(self.conflicts(o)[0]["detail"], {"schema": {"id": "t.typed", "version": "1.0.0"}, "at": ["/count"], "redacted": ["/count"]})
         self.assert_gapless(o)
         assert_valid(self, o, TYPED_EXTRA)
-        d2, _, env2 = scratch_free("42")
-        o2 = run_count(d2, env2, ["count", "--token", "42"],
-                       lambda run: run.result({"event": "result", "count": 42}, T_TYPED, {"note": "fine"}), TYPED_TOOL)
+        d2, _, env2 = scratch_free("420000000000042")
+        o2 = run_count(d2, env2, ["count", "--token", "420000000000042"],
+                       lambda run: run.result({"event": "result", "count": 420000000000042}, T_TYPED, {"note": "fine"}), TYPED_TOOL)
         self.assertEqual(o2.status, 4)
         self.assertEqual([x for x in self.every_line(o2) if x["event"] == "result"], [])
         self.assertEqual(len(self.conflicts(o2)), 1)
         self.assert_gapless(o2)
 
     def test_a_handler_that_catches_the_refusal_carries_on_and_end_0_cannot_undo_status_4(self):
-        d, _, env = scratch_free("42")
+        d, _, env = scratch_free("420000000000042")
         ended = []
 
         def body(run):
             try:
-                run.result({"event": "result", "value": 42}, T_COUNT)
+                run.result({"event": "result", "value": 420000000000042}, T_COUNT)
             except pe.ParleyRedactionConflict as e:
-                self.assertNotIn("42", str(e))
+                self.assertNotIn("420000000000042", str(e))
                 self.assertEqual(e.pointers, ["/value"])
                 self.assertEqual(e.schema, {"id": "t.count", "version": "1.0.0"})
             run.result({"event": "result", "value": 7}, T_COUNT)
             ended.append(run.end(0))
 
-        o = run_count(d, env, ["count", "--token", "42"], body)
+        o = run_count(d, env, ["count", "--token", "420000000000042"], body)
         self.assertEqual(ended, [4])
         self.assertEqual(o.status, 4)
         self.assertEqual(o.stdout.objs[-1]["status"], 4)
@@ -755,16 +757,16 @@ class TestRedactionConflict(unittest.TestCase):
         assert_valid(self, o)
 
     def test_a_tools_own_error_the_secret_lands_in_is_refused(self):
-        d, _, env = scratch_free("42", "true")
+        d, _, env = scratch_free("420000000000042", "true")
 
         def body(run):
             try:
-                run.error("http.42", "the fetch failed")
+                run.error("http.420000000000042", "the fetch failed")
             except pe.ParleyRedactionConflict:
                 pass
             run.error("fetch.failed", "the fetch failed", retryable=True)
 
-        o = run_count(d, {**env, "T_TOKEN": "true"}, ["count", "--token", "42"], body)
+        o = run_count(d, {**env, "T_TOKEN": "true"}, ["count", "--token", "420000000000042"], body)
         self.assertEqual(o.status, 4)
         err = {"id": "parley.error", "version": "2.0.0"}
         self.assertEqual([c["detail"] for c in self.conflicts(o)],

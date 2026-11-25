@@ -152,29 +152,30 @@ describe("RD-120 an integer beyond a double's range is loaded exactly and compar
   });
 
   test("the boundary is the safe-integer range, decided from the token: inside it a number, outside it a bigint, always", () => {
-    const TABLE: readonly (readonly [string, unknown])[] = [
-      ["9007199254740991", 9007199254740991],
-      ["9007199254740992", 9007199254740992n],
-      ["9007199254740993", 9007199254740993n],
-      ["9007199254740994", 9007199254740994n],
-      [`"9007199254740993"`, "9007199254740993"],
-      ["1.5", 1.5],
-      ["-9007199254740991", -9007199254740991],
-      ["-9007199254740992", -9007199254740992n],
-      ["9007199254740993.0", 9007199254740993n],
-      ["9007199254740991.0", 9007199254740991],
-      ["9.007199254740993e15", 9007199254740993n],
-      ["9.007199254740991e15", 9007199254740991],
-      ["900719925474099.3e1", 9007199254740993n],
-      ["1e400", 10n ** 400n],
-      ["1e21", 10n ** 21n],
-      ["1e3", 1000],
-      ["5.0", 5],
-      ["120e-1", 12],
-      ["0", 0],
-      ["-0.0", -0],
-      ["0e400", 0],
-      ["18446744073709551615", 18446744073709551615n],
+    // The token as written, the JavaScript type it loads as, and the text `exactJson` writes for it.
+    const TABLE: readonly (readonly [string, "number" | "bigint" | "string", string])[] = [
+      ["9007199254740991", "number", "9007199254740991"],
+      ["9007199254740992", "bigint", "9007199254740992"],
+      ["9007199254740993", "bigint", "9007199254740993"],
+      ["9007199254740994", "bigint", "9007199254740994"],
+      [`"9007199254740993"`, "string", `"9007199254740993"`],
+      ["1.5", "number", "1.5"],
+      ["-9007199254740991", "number", "-9007199254740991"],
+      ["-9007199254740992", "bigint", "-9007199254740992"],
+      ["9007199254740993.0", "bigint", "9007199254740993"],
+      ["9007199254740991.0", "number", "9007199254740991"],
+      ["9.007199254740993e15", "bigint", "9007199254740993"],
+      ["9.007199254740991e15", "number", "9007199254740991"],
+      ["900719925474099.3e1", "bigint", "9007199254740993"],
+      ["1e400", "bigint", `1${"0".repeat(400)}`],
+      ["1e21", "bigint", "1000000000000000000000"],
+      ["1e3", "number", "1000"],
+      ["5.0", "number", "5"],
+      ["120e-1", "number", "12"],
+      ["0", "number", "0"],
+      ["-0.0", "number", "0"],
+      ["0e400", "number", "0"],
+      ["18446744073709551615", "bigint", "18446744073709551615"],
     ];
     const { dir, receipts, env } = scratch();
     const run = runId(1);
@@ -182,10 +183,9 @@ describe("RD-120 an integer beyond a double's range is loaded exactly and compar
     writeLines(receipts, run, [headLine(run, T0), ...TABLE.map(([text], i) => resultLine(run, T0 + 2, text, i + 2)), endLine(run, T0 + 3, path, TABLE.length + 2)]);
     const bundle = only(dir, env);
     expect(bundle.defects).toEqual([]);
-    TABLE.forEach(([text, expected], i) => {
+    TABLE.forEach(([text, type, emitted], i) => {
       const value = bundle.records.find((r) => r.seq === i + 2)!.record.value;
-      expect(`${text} loads as ${typeof value} ${String(value)}`).toBe(`${text} loads as ${typeof expected} ${String(expected)}`);
-      expect(Object.is(value, expected)).toBe(true);
+      expect(`${text} loads as ${typeof value} and is written ${exactJson(value)}`).toBe(`${text} loads as ${type} and is written ${emitted}`);
     });
   });
 
@@ -287,7 +287,10 @@ describe("RD-120 an integer beyond a double's range is loaded exactly and compar
   });
 
   test("ordinary numbers load as they always did, whichever path parsed the line", () => {
-    const ordinary = `{"a":0,"b":-0,"c":0.1,"d":1e3,"e":1.5e-7,"f":9007199254740991,"g":-9007199254740991,"h":1e15,"i":123456789012345,"j":0.30000000000000004,"k":1.0,"l":[1,2.5,{"m":-3e2}],"n":"9007199254740993","o":"a \\"quoted\\" 1e400 \\\\","p":true,"q":null,"r":5e-324,"s":2.2250738585072014e-308,"t":5.0,"t2":0.10000000000000001,"__proto__":{"u":1},"dup":1,"dup":2,"v":{},"w":[]}`;
+    const ordinary = `{"a":0,"b":-0,"c":0.1,"d":1e3,"e":1.5e-7,"f":9007199254740991,"g":-9007199254740991,"h":1e15,"i":123456789012345,"j":0.30000000000000004,"k":1.0,"l":[1,2.5,{"m":-3e2}],"n":"9007199254740993","o":"a \\"quoted\\" 1e400 \\\\","p":true,"q":null,"r":5e-324,"s":2.2250738585072014e-308,"t":5.0,"__proto__":{"u":1},"dup":1,"dup":2,"v":{},"w":[]}`;
+    // What a JSON serialiser writes for those values, written out here by hand: the oracle is this
+    // text, never a second parse of the input, which would round the expected value with the actual.
+    const emitted = `{"a":0,"b":0,"c":0.1,"d":1000,"e":1.5e-7,"f":9007199254740991,"g":-9007199254740991,"h":1000000000000000,"i":123456789012345,"j":0.30000000000000004,"k":1,"l":[1,2.5,{"m":-300}],"n":"9007199254740993","o":"a \\"quoted\\" 1e400 \\\\","p":true,"q":null,"r":5e-324,"s":2.2250738585072014e-308,"t":5,"__proto__":{"u":1},"dup":2,"v":{},"w":[]}`;
     const { dir, receipts, env } = scratch();
     const run = runId(1);
     const path = join(receipts, `${run}.jsonl`);
@@ -298,18 +301,16 @@ describe("RD-120 an integer beyond a double's range is loaded exactly and compar
     ]);
     const bundle = only(dir, env);
     expect(bundle.defects).toEqual([]);
-    const expected = JSON.parse(ordinary) as Record<string, unknown>;
     const fast = bundle.records.find((r) => r.seq === 2)!.record.value as Record<string, unknown>;
     const [exact, big] = bundle.records.find((r) => r.seq === 3)!.record.value as [Record<string, unknown>, unknown];
-    expect(big).toBe(9007199254740993n);
+    expect(exactJson(big)).toBe("9007199254740993");
     for (const loaded of [fast, exact]) {
-      expect(loaded).toEqual(expected);
-      expect(Object.keys(loaded)).toEqual(Object.keys(expected));
+      expect(exactJson(loaded)).toBe(emitted);
+      expect(JSON.stringify(loaded)).toBe(emitted);
       expect(Object.is(loaded.b, -0)).toBe(true);
-      expect(JSON.stringify(loaded)).toBe(JSON.stringify(expected));
       // A member named __proto__ is data, as JSON.parse makes it, and never the object's prototype.
       expect(Object.getPrototypeOf(loaded)).toBe(Object.prototype);
-      expect(Object.getOwnPropertyDescriptor(loaded, "__proto__")?.value).toEqual({ u: 1 });
+      expect(exactJson(Object.getOwnPropertyDescriptor(loaded, "__proto__")?.value)).toBe(`{"u":1}`);
     }
   });
 
@@ -338,11 +339,38 @@ describe("RD-120 an integer beyond a double's range is loaded exactly and compar
       expect(`${token} is ${normal(String(value))}`).toBe(`${token} is ${normal(token)}`);
     }
     // Past fifteen digits, or with an exponent, a number is parsed and compared with its double.
-    expect((parseExact("[0.1000000000000001,0.30000000000000004,1.5e-7,2.5E+3,12345678901234567]") as { value: unknown[] }).value).toEqual([0.1000000000000001, 0.30000000000000004, 1.5e-7, 2500, 12345678901234567n]);
-    // A double written with more digits than its shortest form, as C's %.17g writes it, is that double.
-    expect((parseExact("[0.10000000000000001,0.1000000000000000055511151231257827]") as { value: unknown[] }).value).toEqual([0.1, 0.1]);
-    // A decimal that is no double's digits at its own length is not held.
-    expect(parseExact("[0.1000000000000000055]")).toEqual({ ok: false, tokens: ["0.1000000000000000055"], partial: [UNREPRESENTABLE] });
+    const held = (text: string) => { const parsed = parseExact(text); if (!parsed.ok) throw new Error(`${text} was not held`); return exactJson(parsed.value); };
+    expect(held("[0.1000000000000001,0.30000000000000004,1.5e-7,2.5E+3,12345678901234567]")).toBe("[0.1000000000000001,0.30000000000000004,1.5e-7,2500,12345678901234567]");
+  });
+
+  test("a non-integral number is held only when writing it back states the decimal it stated", () => {
+    // flyingrobots/parley#173: the token's decimal value must be the decimal value of the number's
+    // own JSON serialisation. Spellings of one decimal are one value.
+    const parsed = parseExact("[0.1,0.10,1e-1,1.0e-1,0.1000,-2.50,25e-1]");
+    if (!parsed.ok) throw new Error("not held");
+    expect(exactJson(parsed.value)).toBe("[0.1,0.1,0.1,0.1,0.1,-2.5,2.5]");
+    // Two decimals that round to one double are not the same evidence: the longer one is not held,
+    // however a formatter might have come to write it.
+    for (const token of ["0.10000000000000001", "0.1000000000000000055", "0.1000000000000000055511151231257827", "0.30000000000000004441", "1.00000000000000000001", "1e-400", "4.9e-324", `0.${"1".repeat(200)}`, `${"9".repeat(400)}.5`]) {
+      expect(parseExact(`[${token}]`)).toEqual({ ok: false, tokens: [token], partial: [UNREPRESENTABLE] });
+    }
+  });
+
+  test("two runs whose results are one decimal spelt two ways fold; a longer spelling of the same double is held back", async () => {
+    for (const other of ["0.10", "1e-1"]) {
+      const same = await ask("0.1", other);
+      expect(same.sections).toBe(1);
+      expect(exactJson(same.b)).toBe("0.1");
+      expect(same.answer.counts.unrepresentable).toBe(0);
+    }
+    const longer = await ask("0.1", "0.10000000000000001");
+    expect(longer.sections).toBe(2);
+    expect(longer.folded).toBe(0);
+    expect(exactJson(longer.a)).toBe("0.1");
+    expect(longer.b).toBeUndefined();
+    expect(longer.answer.counts.unrepresentable).toBe(1);
+    const held = coded(longer.answer.load.quarantined, "line.number_unrepresentable");
+    expect(held.map((d) => d.raw)).toEqual([resultLine(runId(2), T0 - 8 * DAY + 2, "0.10000000000000001")]);
   });
 
   test("a line that is not JSON is quarantined as before, whatever numbers it holds", () => {
@@ -356,77 +384,183 @@ describe("RD-120 an integer beyond a double's range is loaded exactly and compar
   });
 });
 
-// ---- RD-121 validation is never done on a surrogate, and "could not evaluate" is not "invalid" --
+// ---- RD-121 validation: every conclusion the record supports, none from a rounded value ------
 
-describe("RD-121 a record holding such an integer is not validated on a stand-in, and not called invalid for being one", () => {
-  test("a known parley.* schema: an end whose status is beyond the range is not evaluated, and the run still failed", async () => {
+describe("RD-121 a record holding such an integer is validated exactly: invalid on one conclusive failure, partial only when undecided", () => {
+  const SIDE = `"note":{"id":9007199254740993}`; // an unrelated integer beyond the range, in a member the schemas leave open
+  /** One receipt whose `end` is the given text; returns the loaded `end` record and its bundle. */
+  function ended(endText: (run: string, path: string) => string) {
     const { dir, receipts, env } = scratch();
     const run = runId(1);
     const path = join(receipts, `${run}.jsonl`);
-    writeLines(receipts, run, [headLine(run, T0), resultLine(run, T0 + 2, "1"), endLine(run, T0 + 3, path, 3, "9007199254740993")]);
+    writeLines(receipts, run, [headLine(run, T0), resultLine(run, T0 + 2, "1"), endText(run, path)]);
     const load = loadReceipts({ cwd: dir, env });
     const bundle = load.bundles[0]!;
-    const end = bundle.records.find((r) => r.event === "end")!;
-    expect(end.record.status).toBe(9007199254740993n);
-    // parley.end says status is an integer of at most 255. The reader's validator cannot evaluate
-    // a bigint, so it says that: not `validated`, and not `invalid` on the validator's own limit.
-    expect(end.validation).toEqual({ state: "partial", schema: { id: "parley.end", version: "1.0.0" }, missing: [], why: "number_undecided" });
-    expect(coded(bundle.defects, "record.number_undecided").map((d) => d.line)).toEqual([3]);
-    expect(coded(bundle.defects, "record.invalid")).toEqual([]);
-    expect(coded(bundle.defects, "record.unknown_pair")).toEqual([]);
-    expect(load.counts).toMatchObject({ validated: 1, invalid: 0, partial: 1 });
-    // The bundle's `status` is a number or null; a status it cannot hold as one is not stated as another.
+    return { dir, env, run, load, bundle, end: bundle.records.find((r) => r.seq === 3)! };
+  }
+  const errors = (r: LoadedRecord) => (r.validation.state === "invalid" ? r.validation.errors.join("; ") : `(${r.validation.state})`);
+
+  test("a known parley.* schema: an end whose status is beyond the range is invalid under the shipped maximum, and the run still failed", async () => {
+    const { dir, env, run, load, bundle, end } = ended((r, p) => endLine(r, T0 + 3, p, 3, "9007199254740993"));
+    expect(exactJson(end.record.status)).toBe("9007199254740993");
+    expect(end.validation.state).toBe("invalid");
+    expect(errors(end)).toBe("/status must be <= 255");
+    expect(coded(bundle.defects, "record.invalid").map((d) => d.line)).toEqual([3]);
+    expect(coded(bundle.defects, "record.number_undecided")).toEqual([]);
+    expect(load.counts).toMatchObject({ validated: 1, invalid: 1, partial: 0 });
+    // Schema validity and the run's outcome are separate findings, and both stand.
     expect(bundle.status).toBeNull();
     expect(bundle.terminated).toBe(true);
+    expect(bundle.replay.unavailable).toBe(true);
     expect(bundle.replay.reasons).toContain("end.status_nonzero");
     const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: WINDOW }, { cwd: dir, env }));
     expect(answer.ranking.outcomes[run]).toBe("failed");
   });
 
-  test("a known parley.* schema: the same for a head field, a legitimate JSON integer the schema allows", () => {
+  test("an unrelated integer beyond the range never erases an ordinary failure beside it", () => {
+    const line = (run: string, path: string, body: string) => `{"event":"end","t":${T0 + 3},"seq":3,"run":"${run}",${body}"redacted":false,${SIDE},"_schema":{"id":"parley.end","version":"1.0.0"}}`.replace("PATH", JSON.stringify(path));
+    // An ordinary status over the maximum.
+    expect(errors(ended((r, p) => line(r, p, `"status":256,"receipt":PATH,`)).end)).toBe("/status must be <= 255");
+    // A missing required member.
+    expect(errors(ended((r, p) => line(r, p, `"status":0,`)).end)).toBe("/ must have required property 'receipt'");
+    // A wrong type.
+    expect(errors(ended((r, p) => line(r, p, `"status":"0","receipt":PATH,`)).end)).toBe("/status must be integer");
+    // The status the schema forbids by `not`.
+    expect(ended((r, p) => line(r, p, `"status":3,"receipt":PATH,`)).end.validation.state).toBe("invalid");
+    // Two failures at once are both reported.
+    expect(errors(ended((r, p) => line(r, p, `"status":256,`)).end)).toBe("/ must have required property 'receipt'; /status must be <= 255");
+    // And with nothing wrong beside it, the record is validated: every constraint that applies was decided.
+    const sound = ended((r, p) => line(r, p, `"status":0,"receipt":PATH,`));
+    expect(sound.end.validation).toEqual({ state: "validated", schema: { id: "parley.end", version: "1.0.0" } });
+    expect(exactJson(sound.end.record.note)).toBe(`{"id":9007199254740993}`);
+    expect(sound.bundle.defects).toEqual([]);
+  });
+
+  test("a head whose t is beyond the range: the schema's two constraints on t are decided, so the record is validated, and the reader still cannot date it", () => {
     const { dir, receipts, env } = scratch();
     const run = runId(1);
     const path = join(receipts, `${run}.jsonl`);
-    // `t` is an integer of at least 0 in parley.receipt.head, with no upper bound: this line is valid JSON Schema-wise.
     writeLines(receipts, run, [headLine(run, "9007199254740993" as unknown as number), resultLine(run, T0 + 2, "1"), endLine(run, T0 + 3, path)]);
     const bundle = only(dir, env);
     const head = bundle.records.find((r) => r.event === "receipt.head")!;
-    expect(head.record.t).toBe(9007199254740993n);
-    expect(head.validation.state).toBe("partial");
-    expect((head.validation as { why?: string }).why).toBe("number_undecided");
-    expect(coded(bundle.defects, "record.invalid")).toEqual([]);
-    expect(bundle.records.find((r) => r.event === "end")!.validation.state).toBe("validated");
+    expect(exactJson(head.record.t)).toBe("9007199254740993");
+    // parley.receipt.head says of t: an integer, at least 0. Both are decided exactly for this value.
+    expect(head.validation.state).toBe("validated");
+    // What validation does not conclude: that the reader can use it. It cannot place the record in time.
+    expect(head.t).toBeNull();
+    expect(bundle.defects).toEqual([]);
+    // A negative one is under the minimum, exactly.
+    const below = scratch();
+    writeLines(below.receipts, run, [headLine(run, "-9007199254740993" as unknown as number)]);
+    const negative = only(below.dir, below.env).records[0]!;
+    expect(negative.validation.state === "invalid" ? negative.validation.errors : []).toEqual(["/t must be >= 0"]);
   });
 
-  test("with a caller's schema: undecided whatever the schema says of the value, and an in-range number decided as before", () => {
-    const schemaFor = (value: Record<string, unknown>) => validator([{
-      id: "parley.test.big", version: "1.0.0",
-      schema: { type: "object", required: ["value"], properties: { value } },
-    }]);
-    const state = (valueText: string, value: Record<string, unknown>) => {
-      const { receipts } = scratch();
-      const run = runId(1);
-      const line = `{"event":"result","t":${T0},"seq":2,"run":"${run}","value":${valueText},"_schema":{"id":"parley.test.big","version":"1.0.0"}}`;
-      const path = writeLines(receipts, run, [line]);
-      const record = readReceiptFile(path, { validate: schemaFor(value) }).bundles[0]!.records[0]!;
-      return record.validation.state === "partial" ? `partial:${String(record.validation.why)}` : record.validation.state;
-    };
-    for (const value of [{ type: "integer", minimum: 0 }, { type: "integer", maximum: 255 }, { type: "string" }, { const: 7 }, { multipleOf: 2 }, {}]) {
-      expect(state("9007199254740993", value)).toBe("partial:number_undecided");
-      expect(state("[1,{\"deep\":9007199254740992}]", value)).toBe("partial:number_undecided");
+  /** The state of one record whose `value` is the given text, under a caller's schema for `value`. */
+  function state(valueText: string, value: unknown): string {
+    const check = validator([{ id: "parley.test.big", version: "1.0.0", schema: { type: "object", required: ["value"], properties: { value } } }]);
+    const { receipts } = scratch();
+    const run = runId(1);
+    const path = writeLines(receipts, run, [`{"event":"result","t":${T0},"seq":2,"run":"${run}","value":${valueText},"_schema":{"id":"parley.test.big","version":"1.0.0"}}`]);
+    const read = readReceiptFile(path, { validate: check });
+    const record = read.bundles[0]!.records[0]!;
+    const defects = read.bundles[0]!.defects.map((d) => d.code).join(",");
+    const v = record.validation;
+    if (v.state === "partial") { expect(defects).toBe("record.number_undecided"); return `partial:${String(v.why)}`; }
+    if (v.state === "invalid") { expect(defects).toBe("record.invalid"); return `invalid: ${v.errors.join("; ")}`; }
+    expect(defects).toBe("");
+    return v.state;
+  }
+  const BIG = "9007199254740993", EVEN = "9007199254740992";
+
+  test("the numeric keywords are decided with the integer's exact value", () => {
+    expect(state(BIG, { type: "integer", minimum: 0 })).toBe("validated");
+    expect(state(BIG, { type: "number", exclusiveMinimum: 1 })).toBe("validated");
+    expect(state("1e400", { type: "integer", minimum: 0 })).toBe("validated");
+    expect(state(BIG, { type: "integer", maximum: 255 })).toBe("invalid: /value must be <= 255");
+    expect(state(`-${BIG}`, { type: "integer", minimum: 0 })).toBe("invalid: /value must be >= 0");
+    expect(state(BIG, { exclusiveMaximum: 10 })).toBe("invalid: /value must be < 10");
+    expect(state(BIG, { type: "string" })).toBe("invalid: /value must be string");
+    expect(state(BIG, { type: ["string", "null"] })).toBe("invalid: /value must be string,null");
+    expect(state(BIG, { type: ["string", "integer"] })).toBe("validated");
+    expect(state(BIG, { const: 7 })).toBe("invalid: /value must be equal to constant");
+    expect(state(BIG, { enum: [1, BIG] })).toBe("invalid: /value must be equal to one of the allowed values");
+    expect(state(BIG, { multipleOf: 2 })).toBe("invalid: /value must be multiple of 2");
+    expect(state(EVEN, { multipleOf: 2 })).toBe("validated");
+    // Keywords for other kinds of value do not apply to a number, and say nothing against it.
+    expect(state(BIG, { minLength: 3, pattern: "^x", minItems: 2, required: ["a"] })).toBe("validated");
+  });
+
+  test("structure around the integer is decided as it always was: members, items and counts", () => {
+    const nested = { type: "object", required: ["id", "name"], additionalProperties: false, properties: { id: { type: "integer" }, name: { type: "string", minLength: 1 }, tags: { type: "array", minItems: 1, maxItems: 2, items: { type: "integer", minimum: 0 } } } };
+    expect(state(`{"id":${BIG},"name":"a"}`, nested)).toBe("validated");
+    expect(state(`{"id":${BIG},"name":"a","tags":[1,${BIG}]}`, nested)).toBe("validated");
+    expect(state(`{"id":${BIG}}`, nested)).toBe("invalid: /value must have required property 'name'");
+    expect(state(`{"id":${BIG},"name":""}`, nested)).toBe("invalid: /value/name must NOT have fewer than 1 characters");
+    expect(state(`{"id":${BIG},"name":"a","more":1}`, nested)).toBe("invalid: /value must NOT have additional properties");
+    expect(state(`{"id":${BIG},"name":"a","tags":[]}`, nested)).toBe("invalid: /value/tags must NOT have fewer than 1 items");
+    expect(state(`{"id":1,"name":"a","tags":[1,-${BIG}]}`, nested)).toBe("invalid: /value/tags/1 must be >= 0");
+    expect(state(`{"id":1,"name":"a","tags":[${BIG},${BIG},${BIG}]}`, nested)).toBe("invalid: /value/tags must NOT have more than 2 items");
+    expect(state(`[${EVEN},${BIG}]`, { type: "array", uniqueItems: true })).toBe("validated");
+    expect(state(`[${BIG},${BIG}.0]`, { type: "array", uniqueItems: true })).toBe("invalid: /value must NOT have duplicate items");
+    expect(state(`{"a":${BIG}}`, { minProperties: 2 })).toBe("invalid: /value must NOT have fewer than 2 properties");
+  });
+
+  test("the combining keywords are sound: a failing branch proves nothing by itself", () => {
+    const undecided = { format: "int64" }; // a keyword the reader does not decide for such an integer
+    // anyOf: invalid only when every branch is; one failing branch beside an undecided one decides nothing.
+    expect(state(BIG, { anyOf: [{ type: "string" }, { maximum: 255 }] })).toBe("invalid: /value must match a schema in anyOf");
+    expect(state(BIG, { anyOf: [{ type: "string" }, { minimum: 0 }] })).toBe("validated");
+    expect(state(BIG, { anyOf: [{ type: "string" }, undecided] })).toBe("partial:number_undecided");
+    // not: a failure under it is the keyword succeeding, and an undecided schema under it stays undecided.
+    expect(state(BIG, { not: { maximum: 255 } })).toBe("validated");
+    expect(state(BIG, { not: { minimum: 0 } })).toBe("invalid: /value must NOT be valid");
+    expect(state(BIG, { not: undecided })).toBe("partial:number_undecided");
+    // oneOf: exactly one.
+    expect(state(BIG, { oneOf: [{ minimum: 0 }, { type: "string" }] })).toBe("validated");
+    expect(state(BIG, { oneOf: [{ minimum: 0 }, { type: "integer" }] })).toBe("invalid: /value must match exactly one schema in oneOf");
+    expect(state(BIG, { oneOf: [{ minimum: 0 }, undecided] })).toBe("partial:number_undecided");
+    // if: the branch taken is the one the condition's exact verdict selects.
+    expect(state(BIG, { if: { minimum: 0 }, then: { maximum: 255 }, else: { type: "string" } })).toBe("invalid: /value must be <= 255");
+    expect(state(BIG, { if: { maximum: 255 }, then: { type: "string" }, else: { type: "integer" } })).toBe("validated");
+    expect(state(BIG, { if: undecided, then: { type: "string" }, else: { type: "integer" } })).toBe("partial:number_undecided");
+    expect(state(BIG, { if: undecided, then: { type: "string" }, else: { type: "null" } })).toBe("invalid: /value must match \"then\" and \"else\" both fail");
+    // allOf is every schema: one conclusive failure is enough, whatever else is undecided.
+    expect(state(BIG, { allOf: [undecided, { maximum: 255 }] })).toBe("invalid: /value must be <= 255");
+  });
+
+  test("what cannot be decided stays partial, and never hides a failure that can", () => {
+    for (const value of [
+      { type: "integer", format: "int64" },
+      { multipleOf: 0.5 },
+      { const: 9007199254740992 },           // a schema constant that is itself beyond the range
+      { enum: [1, 9007199254740992] },
+      { maximum: 9007199254740992 },
+      { $ref: "#/properties/value/$defs/x", $defs: { x: { type: "integer" } } },
+      { type: "integer", "x-unknown-keyword": true },
+      { type: "array", contains: { type: "integer" }, minContains: 2 },
+    ]) {
+      expect(state("contains" in value ? `[${BIG}]` : BIG, value)).toBe("partial:number_undecided");
     }
+    // The same undecided keyword beside a conclusive failure: the failure stands.
+    expect(state(BIG, { type: "string", format: "int64" })).toBe("invalid: /value must be string");
+    expect(state(`{"id":${BIG}}`, { type: "object", required: ["name"], properties: { id: { format: "int64" } } })).toBe("invalid: /value must have required property 'name'");
+  });
+
+  test("a record that holds no such integer goes to the schema validator, as before", () => {
     expect(state("255", { type: "integer", minimum: 0, maximum: 255 })).toBe("validated");
-    expect(state("256", { type: "integer", minimum: 0, maximum: 255 })).toBe("invalid");
+    expect(state("256", { type: "integer", minimum: 0, maximum: 255 })).toBe("invalid: /value must be <= 255");
     expect(state("9007199254740991", { type: "integer" })).toBe("validated");
     expect(state("5.0", { type: "integer" })).toBe("validated");
-    expect(state("\"9007199254740993\"", { type: "integer" })).toBe("invalid");
+    expect(state(`"${BIG}"`, { type: "integer" })).toBe("invalid: /value must be integer");
+    expect(state("4", { type: "integer", format: "int64", multipleOf: 2 })).toBe("validated");
   });
 });
 
 // ---- RD-122 a number the reader cannot hold at all ------------------------------------------
 
 describe("RD-122 a number the reader cannot hold exactly is held back whole and said so", () => {
-  const INEXACT = ["0.1000000000000000055", "1e-400", "-0.30000000000000004999", `1e5000`, `{"deep":[0.1,{"x":1.00000000000000000001}]}`];
+  const INEXACT = ["0.1000000000000000055", "0.10000000000000001", "1e-400", "-0.30000000000000004999", `1e5000`, `{"deep":[0.1,{"x":1.00000000000000000001}]}`];
 
   test("the line is kept verbatim under its own code, attributed, and is not a record", () => {
     for (const text of INEXACT) {
@@ -469,7 +603,7 @@ describe("RD-122 a number the reader cannot hold exactly is held back whole and 
       const heldBack = y === "0.1" ? 1 : 2;
       expect(r.answer.counts.unrepresentable).toBe(heldBack);
       expect(r.a).toBeUndefined();
-      if (y === "0.1") expect(r.b).toBe(0.1);
+      if (y === "0.1") expect(exactJson(r.b)).toBe("0.1");
       expect(r.answer.status).toBe(0);
       // The read's own receipt holds one warning saying so, and its lens still validates.
       const own = loadReceipts({ cwd: r.dir, env: r.env }).bundles.find((b) => b.run === r.answer.run)!;

@@ -4,10 +4,10 @@ import { closeSync, openSync, readSync, readdirSync, rmSync, statSync, unlinkSyn
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { historyBookkeeping, historyDays, historyProjection, isHistoryFailure, isHistorySink, openHistory, resolveHistory, retainHistory, type HistoryConfig, type HistoryPlan, type HistoryProjection, type HistorySink } from "./history.ts";
-import { exactJson, plain, unwritable, unwritableClause } from "./exact.ts";
-import { computeInv, type InputDecl } from "./inv.ts";
+import { exactJson, plain, unwritableClause, unwritablePlain } from "./exact.ts";
+import { computeInvPlain, type InputDecl } from "./inv.ts";
 import { bookkeepingFor, chooseLocation, isLocationFailure, type Bookkeeping } from "./location.ts";
-import { carriesSecret, classifySecrets, collectSecretValues, redactArgv, scrub } from "./redact.ts";
+import { carriesSecret, classifySecrets, collectSecretValues, redactArgv, scrub, scrubPlain } from "./redact.ts";
 import { ParleyRedactionConflict, Run, SCHEMA_IDS, type Record_, type SchemaRef, type Sink } from "./run.ts";
 import { SCHEMAS } from "./schemas.ts";
 import { ulid } from "./ulid.ts";
@@ -196,7 +196,7 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
     // failure.
     resolvedRaw = plain(resolvedRaw, "resolved") as Record<string, unknown>;
     if (resolvedRaw === null || typeof resolvedRaw !== "object" || Array.isArray(resolvedRaw)) throw new TypeError("resolved is not an object once written as JSON");
-    const why = unwritable(resolvedRaw, "resolved");
+    const why = unwritablePlain(resolvedRaw);
     if (why) throw new TypeError(`resolved carries ${unwritableClause(why)}`);
   } catch (e) {
     try { closeSync(location.fd); unlinkSync(location.receiptPath); } catch { /* the reservation is gone either way */ }
@@ -208,7 +208,7 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
   const sessionRaw = opts.session ?? env.PARLEY_SESSION;
   const session = sessionRaw ? sessionRaw : undefined;
   const resolvedPointers: string[] = [];
-  const resolved = scrub(resolvedRaw, secretValues, "", resolvedPointers);
+  const resolved = scrubPlain(resolvedRaw, secretValues, "", resolvedPointers);
   const { argv: argvRedacted, indexes: argvIndexes } = redactArgv(argv, secretValues, allNames.flags);
   const inputPointers: string[] = [];
   // `path` and `role` are the writer's field names here and are never renamed; their values are the tool's and are scrubbed.
@@ -223,7 +223,7 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
   if (presentEnv.length) redacted.env = scrub(presentEnv, secretValues);
   if (presentSources.length) redacted.sources = scrub(presentSources, secretValues);
   const headRedacted = Object.keys(redacted).length > 0;
-  const inv = inputs.length === 0 && command ? computeInv({ tool: spec.name, v: spec.version, command: commandName!, resolved, inputs: [] }) : undefined;
+  const inv = inputs.length === 0 && command ? computeInvPlain({ tool: spec.name, v: spec.version, command: commandName!, resolved, inputs: [] }) : undefined;
 
   // The projection of §8 exists only when there is both a stream to narrow and a transform to
   // narrow it with: a transform with no stream configured changes nothing, as the stream itself
@@ -525,7 +525,7 @@ function captureConsole(): { attach: (run: Run) => void; release: () => void } {
 
 /** A console argument as text: its JSON where it has one, a `bigint` inside it as exact digits, and never a throw. */
 function safeJson(x: unknown): string {
-  try { return JSON.stringify(x) ?? String(x); } catch { /* a bigint, or a cycle */ }
+  if (x === undefined || typeof x === "function" || typeof x === "symbol") return String(x);
   try { return exactJson(x); } catch { return String(x); }
 }
 

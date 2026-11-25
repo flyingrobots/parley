@@ -26,13 +26,14 @@ import { join, resolve } from "node:path";
  * the receipt holds, and two values written differently are never one `inv`. `key` is the name
  * the value sits under, which a `toJSON` hook is called with; `""` for a whole document.
  */
-export function canonical(v: unknown, key = ""): string { return canon(plain(v, key)); }
+export function canonical(v: unknown, key = ""): string { return canonicalPlain(plain(v, key)); }
 
-function canon(v: unknown): string {
-  if (Array.isArray(v)) return "[" + v.map(canon).join(",") + "]";
+/** `canonical` for a value that is plain data already (`plain`'s result): no hook is called. */
+export function canonicalPlain(v: unknown): string {
+  if (Array.isArray(v)) return "[" + v.map(canonicalPlain).join(",") + "]";
   if (v && typeof v === "object") {
     const o = v as Record<string, unknown>;
-    return "{" + Object.keys(o).sort().filter((k) => o[k] !== undefined).map((k) => JSON.stringify(k) + ":" + canon(o[k])).join(",") + "}";
+    return "{" + Object.keys(o).sort().filter((k) => o[k] !== undefined).map((k) => JSON.stringify(k) + ":" + canonicalPlain(o[k])).join(",") + "}";
   }
   if (typeof v === "bigint") return v.toString();
   // `JSON.stringify` writes `null` for these, which would give `NaN` the identity of a real
@@ -49,6 +50,12 @@ export interface InputDescriptor { path: string; role?: string; sha256?: string;
 export function computeInv(pre: { tool: string; v: string; command: string; resolved: unknown; inputs: InputDescriptor[] }): string | undefined {
   if (pre.inputs.some((i) => i.sha256 === undefined)) return undefined;
   return sha256(canonical({ tool: pre.tool, v: pre.v, command: pre.command, resolved: pre.resolved, inputs: pre.inputs.map((i) => ({ path: i.path, role: i.role, sha256: i.sha256 })) }));
+}
+
+/** `computeInv` for a preimage whose `resolved` is plain data already; the writer's own call. */
+export function computeInvPlain(pre: { tool: string; v: string; command: string; resolved: unknown; inputs: InputDescriptor[] }): string | undefined {
+  if (pre.inputs.some((i) => i.sha256 === undefined)) return undefined;
+  return sha256(canonicalPlain({ tool: pre.tool, v: pre.v, command: pre.command, resolved: pre.resolved, inputs: pre.inputs.map((i) => ({ path: i.path, role: i.role, sha256: i.sha256 })) }));
 }
 
 function excluded(rel: string, exclude: readonly string[]): boolean {

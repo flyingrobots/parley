@@ -4,8 +4,7 @@
 // process, and the head records where. The envelope and the writer's own identifiers are never
 // scrubbed: the writer refuses, at startup, to choose a run id or receipt path that carries a
 // secret (location.ts, tool.ts), so there is nothing in them to replace.
-import { types } from "node:util";
-import { isBoxedBigInt } from "./exact.ts";
+import { plain } from "./exact.ts";
 
 export const REDACTED = "[redacted]";
 
@@ -117,29 +116,17 @@ export interface ScrubOptions {
  * `toJSON` was copied across and called by the serialiser after the scrub, unscrubbed.
  */
 export function scrub(value: unknown, values: ReadonlySet<string>, pointer = "", found: string[] = [], opts: ScrubOptions = {}): unknown {
-  return scrubValue(value, values, pointer, found, opts, "", false);
+  if (values.size === 0) return value;
+  return scrubPlain(plain(value), values, pointer, found, opts);
 }
 
-function scrubValue(value: unknown, values: ReadonlySet<string>, pointer: string, found: string[], opts: ScrubOptions, key: string, hooked: boolean): unknown {
+/**
+ * `scrub` for a value that is plain data already (`plain`'s result): no hook is called and no
+ * box is opened, because none is left. The writer scrubs the one snapshot it took of a payload
+ * with this, so the scrub and the serialiser cannot read the payload differently.
+ */
+export function scrubPlain(value: unknown, values: ReadonlySet<string>, pointer = "", found: string[] = [], opts: ScrubOptions = {}): unknown {
   if (values.size === 0) return value;
-  // What `JSON.stringify` consults for a hook: an object, a function, and a `bigint` primitive
-  // (through `BigInt.prototype`). The lookup itself is made only where the serialiser makes it:
-  // never on a hook's own result, so a getter there is not read.
-  if (!hooked && ((value !== null && typeof value === "object") || typeof value === "function" || typeof value === "bigint")) {
-    const json = (value as { toJSON?: unknown }).toJSON;
-    if (typeof json === "function") return scrubValue((json as (key: string) => unknown).call(value, key), values, pointer, found, opts, key, true);
-  }
-  // A boxed primitive is written as its primitive, by the serialiser's conversions: a Number by
-  // ToNumber and a String by ToString, which honour what the object overrides, and a Boolean and
-  // a BigInt by the value they hold.
-  if (types.isNumberObject(value)) return scrubValue(Number(value), values, pointer, found, opts, key, true);
-  if (types.isStringObject(value)) return scrubValue(String(value), values, pointer, found, opts, key, true);
-  if (types.isBooleanObject(value)) return scrubValue(Boolean.prototype.valueOf.call(value), values, pointer, found, opts, key, true);
-  if (isBoxedBigInt(value)) return scrubValue(BigInt.prototype.valueOf.call(value), values, pointer, found, opts, key, true);
-  // A function left here has no JSON form: its hook, if it had one, has been applied, and a
-  // hook's own result is not asked again. It is absent from the copy, so nothing callable
-  // survives the scrub for the serialiser to call.
-  if (typeof value === "function") return undefined;
   if (typeof value === "string") {
     const r = replaceSecrets(value, values);
     if (r !== value) found.push(pointer || "/");
@@ -150,20 +137,20 @@ function scrubValue(value: unknown, values: ReadonlySet<string>, pointer: string
     return value;
   }
   if (Array.isArray(value)) {
-    // By index, so a hole is scrubbed as the `undefined` it reads as; `map` would skip it.
     const items: unknown[] = [];
-    for (let i = 0; i < value.length; i++) items.push(scrubValue(value[i], values, `${pointer}/${i}`, found, opts, String(i), false));
+    for (let i = 0; i < value.length; i++) items.push(scrubPlain(value[i], values, `${pointer}/${i}`, found, opts));
     return items;
   }
-  if (value && typeof value === "object") {
+  if (value !== null && typeof value === "object") {
     const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    for (const k of Object.keys(value)) {
+      const v = (value as Record<string, unknown>)[k];
       const renamed = opts.keys === false ? k : replaceSecrets(k, values);
       const p = `${pointer}/${escapePointer(renamed)}`;
-      const member = opts.skipKeys?.has(k) && typeof v === "string" ? v : scrubValue(v, values, p, found, opts, k, false);
-      if (member === undefined && typeof v === "function") continue; // a function with no JSON form: no member, as the serialiser would have left none
+      const member = opts.skipKeys?.has(k) && typeof v === "string" ? v : scrubPlain(v, values, p, found, opts);
       if (renamed !== k) found.push(p);
-      out[renamed] = member;
+      // Defined, never assigned: a member named `__proto__` is data, not the copy's prototype.
+      Object.defineProperty(out, renamed, { value: member, enumerable: true, writable: true, configurable: true });
     }
     return out;
   }

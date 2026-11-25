@@ -23,7 +23,7 @@ it. This page is the reference for what the package does on `main`; the package
 | `declaredProjection(values)` | A built-in transform: the writer's own §5.3 scrubber applied to the stream copy's body with a second declared set; `undefined` for an empty set, so no transform is configured at all |
 | `refuseSuspectedSecrets`, `findSuspectedSecret`, `SECRET_PATTERNS`, `refuse`, `isHistoryRefusal` | The built-in transform that withholds a line whose body matches one of ten documented token shapes, the shapes themselves as data, and the typed refusal a transform returns to withhold a line under a code of its own |
 | `checkRecord` | The bounded JSON Schema check the writer re-validates a projected line and a redacted record with, in a package with no runtime dependencies. A failing result carries `errors` and, in the same order, the JSON Pointer of each in `pointers` |
-| `parseExact`, `exactJson`, `holdsExact`, `MAX_EXACT_DIGITS`, `UNREPRESENTABLE` | The exact parser and serialiser ([below](#numbers)): JSON text read with every number's value kept or named as one that could not be, and a value written with a `bigint` as exact digits. The writer owns them; the reader is to import them |
+| `parseExact`, `exactJson`, `holdsExact`, `MAX_EXACT_DIGITS`, `UNREPRESENTABLE` | The exact parser and serialiser ([below](#numbers)): JSON text read with every number's value kept or named as one that could not be, and a value written with a `bigint` as exact digits. The writer owns them; the reader imports them |
 | `classifySecrets`, `collectSecretValues`, `redactArgv`, `scrub` | Redaction |
 | `ulid` | Run ids |
 
@@ -86,11 +86,11 @@ it. This page is the reference for what the package does on `main`; the package
    booleans whose decimal form is a secret, and in object keys; the envelope never is. What is
    scrubbed is what is written: a value with a `toJSON` hook (a `Date`, a `URL`) is scrubbed as
    what the hook returns, applied once, and a boxed primitive as its primitive
-   (flyingrobots/parley#178). One known limit: in a process that installs a `toJSON` on
-   `BigInt.prototype`, a `bigint` that a payload's own hook returns is written through that
-   prototype hook when a secret is present (`"42"` where a run with no secret writes `42`),
-   because the writer cannot mark a primitive as already hooked. A `bigint` equal to a secret is
-   still replaced; what is not scrubbed is the prototype hook's own output for it. The default
+   (flyingrobots/parley#178). The payload is read once for this, the refusal and every sink:
+   one snapshot, taken before a `seq`. A `toJSON` on `BigInt.prototype` is never asked, so a
+   `bigint` is its digits whatever the process has installed. What is recognised is the value
+   inside one string, as a scalar's decimal form, or inside a key: not the value split, parsed
+   into parts, re-encoded, hashed or truncated, which is the tool's to keep out. The default
    descriptor sinks retry a full pipe and continue a partial write; a sidecar that cannot be
    written is kept inline.
 

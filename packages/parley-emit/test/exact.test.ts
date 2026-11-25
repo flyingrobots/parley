@@ -262,13 +262,11 @@ describe("PE-35 the exact parser and serialiser are the writer's, and exported",
     expect(holdsUnreadable({ id: Object(5n) })).toBe(false);
   });
 
-  test("exactJson reads a value at most twice: a getter is read again when a bigint sends it to the exact writer (review of flyingrobots/parley#175)", () => {
-    // Pinned, not endorsed: JSON.stringify runs first so that a value with no bigint is its own
-    // text byte for byte, and a bigint is found by that pass failing. Pass plain data.
+  test("exactJson reads a value once, with a bigint in it or without (case 2026-11-25, F-3; it read a getter twice beside a bigint before)", () => {
     let reads = 0;
     const text = emit.exactJson({ get id() { reads++; return BIG; } });
     expect(text).toBe(`{"id":${BIG_TEXT}}`);
-    expect(reads).toBe(2);
+    expect(reads).toBe(1);
     reads = 0;
     emit.exactJson({ get id() { reads++; return 5; } });
     expect(reads).toBe(1);
@@ -507,33 +505,33 @@ describe("PE-35 redaction of and beside a bigint", () => {
     expect(of(withSecret.receipt, "result")[0]).toContain(text);
   });
 
-  test("PE-36 with a toJSON installed on BigInt.prototype, a bigint in a payload is scrubbed as what that hook returns (second review of flyingrobots/parley#179)", async () => {
+  test("PE-36 a toJSON installed on BigInt.prototype is never consulted: a bigint is its digits, and what that hook would return is written nowhere (case 2026-11-25, F-1)", async () => {
+    // Before, the scrub and the serialiser both asked the prototype hook, and a bigint that a
+    // payload's own hook returned was written through it after the scrub: the limit recorded as
+    // flyingrobots/parley#180. A bigint is now written as its digits whatever the process has
+    // installed, so there is no hook left to leak through.
     const secret = "zq7kx9protosecret";
     const proto = BigInt.prototype as unknown as { toJSON?: () => unknown };
     proto.toJSON = function (this: bigint) { return `${secret}:${this.toString()}`; };
     try {
-      const r = await go((run) => { run.result({ event: "result", id: 42n, list: [7n] }, P.any); }, { argv: ["count", "--token", secret] });
-      for (const lines of [r.out, r.err, r.receipt]) expect(lines.join("\n")).not.toContain(secret);
-      expect(of(r.receipt, "result")[0]).toContain('"id":"[redacted]:42","list":["[redacted]:7"],');
+      const body = (run: Run) => { run.result({ event: "result", value: { id: 42n, list: [7n], hooked: { toJSON: () => 9007199254740993n }, boxed: Object(5n) } }, P.any); };
+      for (const argv of [["count"], ["count", "--token", secret]]) {
+        const r = await go(body, { argv, stream: true });
+        expect(r.status).toBe(0);
+        for (const lines of [r.out, r.err, r.receipt, r.stream]) expect(lines.join("\n")).not.toContain(secret);
+        for (const lines of [r.out, r.receipt, r.stream]) expect(of(lines, "result").map(valueText)).toEqual([`{"id":42,"list":[7],"hooked":9007199254740993,"boxed":5}`]);
+      }
     } finally { delete proto.toJSON; }
   });
 
-  test("PE-36 known limit, pinned: with a toJSON on BigInt.prototype, a bigint that a payload hook returns is written through that prototype hook when a secret is present", async () => {
-    // Without a secret the serialiser applies the payload's hook once and writes the bigint it
-    // returned as digits. With one, the scrubbed copy holds that bigint as a plain value, and the
-    // serialiser, meeting it for the first time, consults BigInt.prototype. The writer cannot
-    // mark a primitive as already hooked. A bigint equal to a secret is still replaced, because
-    // the scrub sees it before the serialiser does.
+  test("PE-36 a bigint equal to a declared secret is replaced whatever BigInt.prototype holds, including one a payload hook returns", async () => {
     const secret = "900719925474099312";
     const proto = BigInt.prototype as unknown as { toJSON?: () => unknown };
     proto.toJSON = function (this: bigint) { return this.toString(); };
     try {
-      const body = (run: Run) => { run.result({ event: "result", id: { toJSON: () => 42n }, pin: { toJSON: () => BigInt(secret) } }, P.any); };
-      const without = await go(body);
-      expect(of(without.receipt, "result")[0]).toContain(`"id":42,"pin":${secret},`);
-      const r = await go(body, { argv: ["count", "--token", secret] });
+      const r = await go((run) => { run.result({ event: "result", value: { id: { toJSON: () => 42n }, pin: { toJSON: () => BigInt(secret) } } }, P.any); }, { argv: ["count", "--token", secret] });
       for (const lines of [r.out, r.err, r.receipt]) expect(lines.join("\n")).not.toContain(secret);
-      expect(of(r.receipt, "result")[0]).toContain('"id":"42","pin":"[redacted]",');
+      expect(of(r.receipt, "result").map(valueText)).toEqual([`{"id":42,"pin":"[redacted]"}`]);
     } finally { delete proto.toJSON; }
   });
 
@@ -957,5 +955,138 @@ describe("PE-37 a number that is not finite is refused, never written as null (f
       expect(r.status).toBe(0);
       expect(of(r.out, "result").map(valueText)).toEqual([`{"t":{"answer":42},"id":9007199254740993}`]);
     }
+  });
+});
+
+describe("PE-38 a payload is read once, and what is checked is what is written (review case 2026-11-25)", () => {
+  const BIG64 = 2n ** 64n;
+
+  test("F-1: with a toJSON on BigInt.prototype, exactJson and a whole run still write exact unquoted digits", async () => {
+    const proto = BigInt.prototype as unknown as { toJSON?: () => unknown };
+    for (const hook of [function (this: bigint) { return this.toString(); }, function (this: bigint) { return Number(this); }]) {
+      proto.toJSON = hook;
+      try {
+        expect(emit.exactJson({ id: BIG, list: [BIG + 1n] })).toBe(`{"id":9007199254740993,"list":[9007199254740994]}`);
+        expect(emit.canonical({ id: BIG })).toBe(`{"id":9007199254740993}`);
+        const r = await go((run) => { run.result({ event: "result", value: BIG }, P.any); }, { stream: true });
+        expect(r.status).toBe(0);
+        for (const lines of [r.out, r.receipt, r.stream]) expect(of(lines, "result").map(valueText)).toEqual([BIG_TEXT]);
+      } finally { delete proto.toJSON; }
+    }
+  });
+
+  test("F-3: a record is the same bytes with a bigint beside it as without, for a hook that returns a hooked box, a function whose hook reads its key, and a hook that returns a hooked function", async () => {
+    const shapes: Record<string, () => unknown> = {
+      "hooked box": () => { const n = Object.assign(new Number(5), { toJSON: () => Number.NaN }); return { toJSON: () => n }; },
+      "function, keyed hook": () => Object.assign(() => 1, { toJSON: (k: string) => (k === "a" ? 1 : Number.NaN) }),
+      "hooked function": () => { const f = Object.assign(() => 1, { toJSON: () => "FROM-INNER-HOOK" }); return { toJSON: () => f }; },
+    };
+    const want: Record<string, string> = { "hooked box": `"a":5,`, "function, keyed hook": `"a":1,`, "hooked function": "" };
+    for (const [name, make] of Object.entries(shapes)) {
+      for (const big of [false, true]) for (const argv of [["count"], ["count", "--token", "zq7kx9unrelated"]]) {
+        const r = await go((run) => { run.result({ event: "result", value: { a: make(), ...(big ? { big: BIG64 } : {}), z: 0 } }, P.any); }, { argv, stream: true });
+        expect(r.err).toEqual([]);
+        expect(r.status).toBe(0);
+        const text = `{${want[name]}${big ? `"big":18446744073709551616,` : ""}"z":0}`;
+        for (const lines of [r.out, r.receipt, r.stream]) expect(of(lines, "result").map(valueText)).toEqual([text]);
+      }
+    }
+  });
+
+  test("F-3: a hook is called once for one emission, so a hook that answers differently the second time cannot put a null past the guard", async () => {
+    let calls = 0;
+    const r = await go((run) => { run.result({ event: "result", value: { v: { toJSON: () => (calls++ === 0 ? 1 : Number.NaN) }, big: BIG64 } }, P.any); }, { stream: true });
+    expect(calls).toBe(1);
+    expect(r.status).toBe(0);
+    for (const lines of [r.out, r.receipt, r.stream]) expect(of(lines, "result").map(valueText)).toEqual([`{"v":1,"big":18446744073709551616}`]);
+  });
+
+  test("F-3: a function whose hook returns a bigint is written as its digits, and a record that refers to itself is refused before a seq is taken", async () => {
+    const ok = await go((run) => { run.result({ event: "result", value: Object.assign(() => 1, { toJSON: () => BIG }) }, P.any); });
+    expect(ok.status).toBe(0);
+    expect(of(ok.out, "result").map(valueText)).toEqual([BIG_TEXT]);
+    const loop: Record<string, unknown> = { event: "result", value: 1 };
+    loop.self = { again: loop };
+    const r = await go((run) => { expect(() => run.result(loop, P.any)).toThrow(TypeError); run.result({ event: "result", value: 2 }, P.any); });
+    expect(r.status).toBe(0);
+    const seqs = r.receipt.map((l) => Number(/"seq":(\d+)/.exec(l)![1]));
+    expect(seqs).toEqual(seqs.map((_, i) => seqs[0]! + i));
+    // The same value twice, not inside itself, is not a cycle.
+    const shared = { n: 1 };
+    const twice = await go((run) => { run.result({ event: "result", value: [shared, shared] }, P.any); });
+    expect(of(twice.out, "result").map(valueText)).toEqual([`[{"n":1},{"n":1}]`]);
+  });
+
+  test("F-2: a transform cannot restore a declared secret that JSON escapes: a quote, a backslash, a newline, as a value or as a key", async () => {
+    for (const secret of ['pa"ss-SECRET77', "pa\\ss-SECRET77", "-----BEGIN KEY-----\nMIIabc\n-----END KEY-----", "plainSECRET77"]) {
+      for (const restore of [(rec: Record<string, unknown>) => ({ ...rec, note: secret }), (rec: Record<string, unknown>) => ({ ...rec, [secret]: 1 }), (rec: Record<string, unknown>) => ({ ...rec, deep: [{ inside: `x${secret}y` }] })]) {
+        const r = await go((run) => { run.result({ event: "result", value: 1 }, P.any); }, { argv: ["count", "--token", secret], transform: (rec) => (rec.event === "result" ? restore(rec) : rec) });
+        expect(codes(of(r.err, "warning"))).toEqual(["history.transform_unredacted"]);
+        expect(of(r.stream, "result")).toEqual([]);
+        expect(r.stream.join("\n")).not.toContain("SECRET77");
+        expect(r.stream.join("\n")).not.toContain("MIIabc");
+        expect(r.status).toBe(0);
+      }
+    }
+  });
+
+  test("F-4: an own member named __proto__ is written with a secret present as without", async () => {
+    const payload = () => ({ event: "result", value: JSON.parse(`{"a":1,"__proto__":{"kept":"yes"},"b":2}`) as unknown });
+    const text = `{"a":1,"__proto__":{"kept":"yes"},"b":2}`;
+    for (const argv of [["count"], ["count", "--token", "zq7kx9unrelated"]]) {
+      const r = await go((run) => { run.result(payload(), P.any); }, { argv, extra: { resolved: () => ({ command: "count", opts: JSON.parse(`{"__proto__":{"x":1}}`) as unknown }) } });
+      expect(r.status).toBe(0);
+      expect(of(r.out, "result").map(valueText)).toEqual([text]);
+      expect(of(r.receipt, "result").map(valueText)).toEqual([text]);
+      expect(r.receipt[0]).toContain(`"resolved":{"command":"count","opts":{"__proto__":{"x":1}}},`);
+    }
+    const inv = (r: Outcome) => /"inv":"([0-9a-f]{64})"/.exec(r.out[0]!)![1];
+    const one = await go(() => {}, { argv: ["count", "--token", "zq7kx9unrelated"], extra: { resolved: () => ({ command: "count", opts: JSON.parse(`{"__proto__":{"x":1}}`) as unknown }) } });
+    const two = await go(() => {}, { argv: ["count", "--token", "zq7kx9unrelated"], extra: { resolved: () => ({ command: "count", opts: JSON.parse(`{"__proto__":{"x":2}}`) as unknown }) } });
+    expect(inv(one)).not.toBe(inv(two));
+  });
+
+  test("an array is read to the length it had when the read began, and a toJSON accessor on BigInt.prototype is never evaluated (review of flyingrobots/parley#183)", () => {
+    const grows: unknown[] = [];
+    Object.defineProperty(grows, 0, { enumerable: true, configurable: true, get() { grows.push(2); return 1; } });
+    expect(emit.exactJson(grows)).toBe("[1]");
+    const growsBig: unknown[] = [];
+    Object.defineProperty(growsBig, 0, { enumerable: true, configurable: true, get() { growsBig.push(2); return BIG; } });
+    expect(emit.exactJson(growsBig)).toBe(`[${BIG_TEXT}]`);
+    let evaluated = 0;
+    Object.defineProperty(BigInt.prototype, "toJSON", { configurable: true, get() { evaluated++; throw new Error("the hook this writer never asks"); } });
+    try {
+      expect(emit.exactJson({ value: 1 })).toBe(`{"value":1}`);
+      expect(emit.exactJson({ value: BIG, boxed: Object(5n) })).toBe(`{"value":${BIG_TEXT},"boxed":5}`);
+      expect(emit.canonical({ value: BIG })).toBe(`{"value":${BIG_TEXT}}`);
+      expect(evaluated).toBe(0);
+    } finally { delete (BigInt.prototype as unknown as { toJSON?: unknown }).toJSON; }
+  });
+
+  test("a result's event is checked on the one reading that is written, and a receipt-only __proto__ member is kept (second review of flyingrobots/parley#183)", async () => {
+    let reads = 0;
+    const r = await go((run) => {
+      // Before, `event` was read twice to check it and a third time to write it, so this record
+      // passed the check and was written with no event. It is read once: what is checked is written.
+      const shifty = { get event() { return reads++ < 2 ? "result" : undefined; }, value: 1 };
+      run.result(shifty as unknown as Record<string, unknown>, P.any);
+      expect(reads).toBe(1);
+      expect(() => run.result({ get event() { return undefined; }, value: 0 } as unknown as Record<string, unknown>, P.any)).toThrow(TypeError);
+      let once = 0;
+      run.result({ get event() { once++; return "result"; }, value: 2 } as unknown as Record<string, unknown>, P.any);
+      expect(once).toBe(1);
+      run.result({ event: "result", value: 3 }, P.any, JSON.parse(`{"__proto__":{"rows":[1]}}`) as Record<string, unknown>);
+      expect(() => run.result({ event: "result", value: 4 }, P.any, JSON.parse(`{"toString":1}`) as Record<string, unknown>)).not.toThrow();
+    });
+    expect(r.err).toEqual([]);
+    expect(r.status).toBe(0);
+    expect(of(r.out, "result").map(valueText)).toEqual(["1", "2", "3", "4"]);
+    expect(of(r.receipt, "result").map(valueText)).toEqual(["1", "2", `3,"__proto__":{"rows":[1]}`, `4,"toString":1`]);
+  });
+
+  test("the transform guard keeps its wider rule for numbers: a number whose digits contain a declared secret is withheld (second review of flyingrobots/parley#183)", async () => {
+    const r = await go((run) => { run.result({ event: "result", value: 1 }, P.any); }, { argv: ["count", "--token", "123456789012345"], transform: (rec) => (rec.event === "result" ? { ...rec, value: 91234567890123456n } : rec) });
+    expect(codes(of(r.err, "warning"))).toEqual(["history.transform_unredacted"]);
+    expect(of(r.stream, "result")).toEqual([]);
   });
 });

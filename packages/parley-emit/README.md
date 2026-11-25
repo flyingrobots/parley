@@ -148,9 +148,11 @@ of the range it compares. Two invocations differing only in a declared secret sh
 which is why a redacted receipt is never replayed (spec §2.3).
 
 A `bigint` in `resolved` is canonical as its exact digits, so two questions that differ in an
-integer beyond the safe range have two identities, and `5n` has the canonical form `5` has. Every
-value the writer accepted before 0.5.0 has the canonical form and the `inv` it had: a test
-reproduces 25 identities pinned from the 0.4.0 source (`test/fixtures/inv-pinned.jsonl`).
+integer beyond the safe range have two identities, and `5n` has the canonical form `5` has. A
+`resolved` of plain JSON data has the canonical form and the `inv` it had before 0.5.0: a test
+reproduces 24 identities pinned from the 0.4.0 source (`test/fixtures/inv-pinned.jsonl`). One
+that holds a `Date` or another hooked value, a boxed primitive or a function moves, and a number
+that is not finite has no identity; the changelog lists what breaks.
 
 ## Declared inputs
 
@@ -354,7 +356,10 @@ Captured from that call, the stdout line; the receipt's line is the same bytes:
 ```
 
 Before 0.5.0 the call threw `TypeError: JSON.stringify cannot serialize BigInt.` and the run ended
-with `uncaught.exception` and status 2.
+with `uncaught.exception` and status 2, unless the process had installed a `toJSON` on
+`BigInt.prototype`, in which case the `bigint` was written as what that hook returned (a quoted
+string, with the common polyfill). From 0.5.0 that hook is never asked: a `bigint` is written as
+its digits whatever the process has installed.
 
 | Where | What happens to a `bigint` |
 | --- | --- |
@@ -437,7 +442,7 @@ which is not the same as invalid. A `bigint` inside the safe range is decided ag
   the line past the transform: it withholds the line from the stream and warns with
   `history.number_unrepresentable`. The receipt is unaffected.
 
-### Four decisions the owner may overrule
+### Five decisions the owner may overrule
 
 - **The oversized `bigint` is refused, not written.** Writing it would be exact too, and the
   reader would then hold the line back. Refusing keeps the writer inside what its parser reads.
@@ -462,6 +467,12 @@ which is not the same as invalid. A `bigint` inside the safe range is decided ag
 Everything the handler passes to `result`, `step`, `warning` and `error`, the raw and resolved
 arguments, input paths and digests, captured console text, and copies of every result. Declared
 secrets are replaced before writing; an undeclared secret is not, so declare it.
+
+What is replaced is a declared value where it occurs inside one string, where it equals the
+decimal form of a number, a boolean or a `bigint`, or where it occurs inside an object key. No
+other form of the value is recognised: the value split across two fields, parsed into parts (a
+JSON credential emitted as an object), re-encoded (base64, URL-encoded, escaped inside another
+string), hashed or truncated. Keeping those out of a record is the tool's.
 
 ## The shared history stream
 

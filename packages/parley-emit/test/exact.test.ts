@@ -682,7 +682,12 @@ describe("PE-35 inv and the canonical form", () => {
     const before = readFileSync(join(import.meta.dir, "fixtures/inv-pinned.jsonl"), "utf8").trimEnd().split("\n");
     const now = await pinned(resolve(import.meta.dir, "../src"));
     expect(before.length).toBe(25);
-    expect(now).toEqual(before);
+    // One identity is withdrawn, not moved (flyingrobots/parley#177): a number that is not finite
+    // was canonical as `null`, the text of a real `null`, and is now refused. The other 24 stand.
+    const notFinite = (l: string) => (JSON.parse(l) as { name: string }).name === "not finite";
+    expect(before.filter(notFinite)).toEqual([`{"name":"not finite","how":"canonical","input":["(NaN)","(Infinity)","(-Infinity)"],"text":"[null,null,null]"}`]);
+    expect(now.filter(notFinite)).toEqual([`{"name":"not finite","how":"canonical","input":["(NaN)","(Infinity)","(-Infinity)"],"refused":"TypeError"}`]);
+    expect(now.filter((l) => !notFinite(l))).toEqual(before.filter((l) => !notFinite(l)));
   });
 });
 
@@ -778,5 +783,72 @@ describe("PE-35 what the writer refuses", () => {
     expect(r.status).toBe(3);
     expect(r.out).toEqual([]);
     expect(codes(r.err)).toEqual(["startup.arguments_invalid"]);
+  });
+});
+
+describe("PE-37 a number that is not finite is refused, never written as null (flyingrobots/parley#177)", () => {
+  const NOT_FINITE = [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY];
+
+  test("golden: a result of Infinity ends the run with uncaught.exception and status 2, and no sink holds a null in its place", async () => {
+    const r = await go((run) => { run.result({ event: "result", value: Number.POSITIVE_INFINITY }, P.any); });
+    expect(r.status).toBe(2);
+    expect(codes(of(r.err, "error"))).toEqual(["uncaught.exception"]);
+    expect(of(r.err, "error")[0]).toContain("not finite");
+    expect(of(r.out, "result")).toEqual([]);
+    expect(of(r.receipt, "result")).toEqual([]);
+    expect([...r.out, ...r.err, ...r.receipt].some((l) => l.includes(`"value":null`))).toBe(false);
+  });
+
+  test("every emitting call refuses one before a seq is taken, wherever it sits, and finite extremes are still written", async () => {
+    const r = await go((run) => {
+      for (const bad of NOT_FINITE) for (const emitIt of [
+        () => run.result({ event: "result", value: bad }, P.any),
+        () => run.result({ event: "result", value: { deep: [1, { ratio: bad }] } }, P.any),
+        () => run.result({ event: "result", value: 1 }, P.any, { rows: [{ ratio: bad }] }),
+        () => run.result({ event: "result", value: { toJSON: () => bad } }, P.any),
+        () => run.result({ event: "result", value: Object(bad) }, P.any),
+        () => run.step("d", "b", { ratio: bad }),
+      ]) expect(emitIt).toThrow(TypeError);
+      run.result({ event: "result", value: [Number.MAX_VALUE, 5e-324, -0, null] }, P.any);
+    });
+    expect(r.err).toEqual([]);
+    expect(r.status).toBe(0);
+    expect(of(r.out, "result").map(valueText)).toEqual(["[1.7976931348623157e+308,5e-324,0,null]"]);
+    const seqs = r.receipt.map((l) => Number(/"seq":(\d+)/.exec(l)![1]));
+    expect(seqs).toEqual(seqs.map((_, i) => seqs[0]! + i));
+  });
+
+  test("a value whose own toJSON gives null is still null: an invalid Date is what its hook says", async () => {
+    const r = await go((run) => { run.result({ event: "result", value: new Date(Number.NaN) }, P.any); });
+    expect(r.status).toBe(0);
+    expect(of(r.out, "result").map(valueText)).toEqual(["null"]);
+  });
+
+  test("resolved holding one is a startup failure", async () => {
+    for (const bad of NOT_FINITE) {
+      const r = await go(() => {}, { extra: { resolved: () => ({ command: "count", ratio: bad }) } });
+      expect(r.status).toBe(3);
+      expect(r.out).toEqual([]);
+      expect(codes(r.err)).toEqual(["startup.arguments_invalid"]);
+      expect(r.err[0]).toContain("not finite");
+    }
+  });
+
+  test("a transform that returns one is withheld as invalid, and the receipt keeps the record", async () => {
+    const r = await go((run) => { run.result({ event: "result", value: 1 }, P.any); }, { transform: (rec) => (rec.event === "result" ? { ...rec, value: Number.NaN } : rec) });
+    expect(codes(of(r.err, "warning"))).toEqual(["history.transform_invalid"]);
+    expect(of(r.err, "warning")[0]).toContain("not finite");
+    expect(of(r.stream, "result")).toEqual([]);
+    expect(of(r.receipt, "result").map(valueText)).toEqual(["1"]);
+    expect(r.status).toBe(0);
+  });
+
+  test("canonical refuses one, so NaN and null are never one identity", () => {
+    for (const bad of NOT_FINITE) {
+      expect(() => emit.canonical(bad)).toThrow(TypeError);
+      expect(() => emit.canonical({ command: "count", ratio: [bad] })).toThrow(TypeError);
+    }
+    expect(emit.canonical({ ratio: null })).toBe(`{"ratio":null}`);
+    expect(() => emit.computeInv({ tool: "t", v: "0.0.1", command: "count", resolved: { ratio: Number.NaN }, inputs: [] })).toThrow(TypeError);
   });
 });

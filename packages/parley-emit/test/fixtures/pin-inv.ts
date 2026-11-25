@@ -55,7 +55,12 @@ function shown(v: unknown): unknown {
 export async function pinned(src: string): Promise<string[]> {
   const index = await import(resolve(src, "index.ts"));
   const lines: string[] = [];
-  for (const [name, value] of Object.entries(VALUES)) lines.push(JSON.stringify({ name, how: "canonical", input: shown(value), text: index.canonical(value) }));
+  for (const [name, value] of Object.entries(VALUES)) {
+    // A value the source refuses has no canonical text: the line says so (flyingrobots/parley#177).
+    let text: string | null = null, refused: string | undefined;
+    try { text = index.canonical(value); } catch (e) { refused = e instanceof Error ? e.name : "thrown"; }
+    lines.push(JSON.stringify(refused === undefined ? { name, how: "canonical", input: shown(value), text } : { name, how: "canonical", input: shown(value), refused }));
+  }
   for (const [name, pre] of Object.entries(PREIMAGES)) lines.push(JSON.stringify({ name, how: "computeInv", input: shown(pre), inv: index.computeInv(pre) ?? null }));
   // Whole runs: the `inv` on the bootstrap line (no inputs) and on `receipt.inputs` (one file).
   const tool = index.defineTool({ name: "t", version: "0.0.1", commands: { count: { intent: "Count things", effects: { reads: [], writes: [], network: false, idempotent: true }, secrets: ["--token"], emits: [{ id: "t.count", version: "1.0.0" }] } }, retention: { count: 100 } });

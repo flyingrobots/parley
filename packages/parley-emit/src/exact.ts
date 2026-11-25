@@ -306,7 +306,8 @@ function write(value: unknown, key: string, hooked = false): string | undefined 
  * The value is read at most twice. `JSON.stringify` runs first, so that a value with no `bigint`
  * is its own text; a `bigint` is found by that pass refusing it, and the value is then written
  * again by this module. A getter with a side effect is therefore read twice when its object holds
- * a `bigint`: pass plain data. Every record the writer itself serialises is a plain copy.
+ * a `bigint`: pass plain data. That holds for a payload handed to the writer too, which
+ * serialises it with this function.
  *
  * A consumer that parses the text again with an ordinary `JSON.parse` loses the precision again;
  * `parseExact` does not. A value that refers to itself throws, as it does from `JSON.stringify`.

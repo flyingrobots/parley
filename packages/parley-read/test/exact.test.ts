@@ -9,7 +9,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  digestFor, exactJson, foldRuns, loadReceipts, openRecords, planQuery, queryReceipts, readReceiptFile, recordBytes, runSection, validator,
+  RUN_SECTION_BYTES, digestBytes, digestFor, digestLine, exactJson, foldRuns, loadReceipts, openRecords, planQuery, queryReceipts, readReceiptFile, recordBytes, runSection, validator,
   type Bundle, type Defect, type LoadedRecord, type OpenAnswer, type QueryAnswer,
 } from "../src/index.ts";
 import { UNREPRESENTABLE, parseExact } from "../src/exact.ts";
@@ -735,40 +735,101 @@ describe("RD-123 no emitting or measuring path throws on such an integer, and no
     }
   });
 
-  test("a head whose resolved holds such an integer: the read answers, the lens line is valid and states no rounded value", async () => {
+  /** The `parley.lens` line a read wrote, as text, from the read's own receipt. */
+  const lensLine = (answer: QueryAnswer) => readFileSync(answer.receipt, "utf8").split("\n").find((l) => l.includes(`"event":"lens"`))!;
+
+  test("a head whose resolved holds such an integer: the lens line that was written carries it, digit for digit", async () => {
     const { dir, receipts, env } = scratch();
     receipt(receipts, 1, "1", `{"command":"count","limit":9007199254740993}`);
-    receipt(receipts, 2, "1", `{"command":"count","limit":9007199254740991}`);
+    receipt(receipts, 2, "1", `{"command":"count","limit":9007199254740992}`);
     receipt(receipts, 3, "1", `{"command":"count","limit":9007199254740993}`);
     const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: WINDOW, budget: { records: 1000, bytes: 100_000 } }, { cwd: dir, env }));
     // Runs 1 and 3 share every value and fold; run 2 differs only in that integer and does not.
     expect(answer.digest.runs.map((s) => s.run)).toEqual([runId(2), runId(3)]);
-    const [two, three] = answer.digest.runs;
-    expect(two!.resolved).toEqual({ command: "count", limit: 9007199254740991 });
-    expect(two!.dropped).toBeUndefined();
-    // The lens line is written by a JSON writer that cannot carry the integer, so the section
-    // leaves `resolved` out whole and names it, and the head it came from holds it exactly.
-    expect(three!.resolved).toBeUndefined();
-    expect(three!.dropped).toEqual(["resolved"]);
-    expect(three!.folded).toEqual({ others: 1, records: 3, stands_for: [runId(1)] });
-    const head = answer.records.find((x) => x.run === runId(3) && x.event === "receipt.head")!;
-    expect((head.record.resolved as { limit: unknown }).limit).toBe(9007199254740993n);
-    const written = readFileSync(answer.receipt, "utf8").split("\n").find((l) => l.includes(`"event":"lens"`))!;
-    expect(Buffer.byteLength(written + "\n", "utf8")).toBe(answer.digestBytes);
-    expect(written).not.toContain("9007199254740993");
-    expect(written.match(/9007199254740991/g)!.length).toBe(1);
-    const own = loadReceipts({ cwd: dir, env }).bundles.find((b) => b.run === answer.run)!;
-    expect(own.records.find((x) => x.event === "lens")!.validation.state).toBe("validated");
+    expect(answer.digest.runs.map((s) => s.dropped)).toEqual([undefined, undefined]);
+    expect(answer.digest.runs[1]!.folded).toEqual({ others: 1, records: 3, stands_for: [runId(1)] });
+    // The text that went out, not an object in memory.
+    const written = lensLine(answer);
+    expect(written).toContain(`{"run":"${runId(2)}","tool":"t","v":"0.0.1","argv":["t","count"],"resolved":{"command":"count","limit":9007199254740992},"inv":"inv_same","outcome":"succeeded"}`);
+    expect(written).toContain(`{"run":"${runId(3)}","tool":"t","v":"0.0.1","argv":["t","count"],"resolved":{"command":"count","limit":9007199254740993},"inv":"inv_same","outcome":"succeeded","folded":`);
+    expect(written).not.toContain(`"dropped"`);
+    // The same line reached the read's stdout.
+    expect(exactJson(answer.lines.find((l) => l.event === "lens"))).toBe(written);
+    // The bytes the answer states, and the bytes the bound was measured with, are the bytes written.
+    expect(answer.digestBytes).toBe(Buffer.byteLength(written + "\n", "utf8"));
+    const env0 = /^\{"event":"lens","t":(\d+),"seq":(\d+),"run":"([^"]+)"/.exec(written)!;
+    const envelope = { t: Number(env0[1]), seq: Number(env0[2]), run: env0[3]! };
+    expect(digestLine(answer.digest, envelope)).toBe(written + "\n");
+    expect(digestBytes(answer.digest, envelope)).toBe(answer.digestBytes);
   });
 
-  test("runSection drops a resolved it cannot carry before it measures anything", () => {
-    const head: LoadedRecord = {
+  test("the byte budget is right for a section holding such an integer: the exact size holds every record and one byte less does not", async () => {
+    const { dir, receipts, env } = scratch();
+    receipt(receipts, 1, "1", `{"command":"count","limit":18446744073709551615,"ids":[9007199254740993,-9007199254740993]}`);
+    const ask1 = (bytes: number) => queryReceipts({ asker: { tool: "t" }, view: "everything", window: { from: 0, to: T0 - DAY }, budget: { records: 1000, bytes } }, { cwd: dir, env });
+    const roomy = answered(await ask1(100_000));
+    expect(roomy.counts).toMatchObject({ answered: 3, excluded: 0 });
+    const written = lensLine(roomy);
+    expect(written).toContain(`"resolved":{"command":"count","limit":18446744073709551615,"ids":[9007199254740993,-9007199254740993]}`);
+    // The line states its own budget, so the tight bound is found from the line's size at that bound.
+    const size = Buffer.byteLength(written + "\n", "utf8") - String(100_000).length;
+    const digits = String(size + String(size).length).length;
+    const exact = size + digits;
+    const tight = answered(await ask1(exact));
+    expect(tight.counts).toMatchObject({ answered: 3, excluded: 0 });
+    expect(tight.digestBytes).toBeLessThanOrEqual(exact);
+    expect(Buffer.byteLength(lensLine(tight) + "\n", "utf8")).toBe(tight.digestBytes);
+    expect(lensLine(tight)).toContain(`"limit":18446744073709551615`);
+    // Under a bound short of the whole line by the measured headroom or more, something is left out.
+    const under = answered(await ask1(tight.digestBytes - 1));
+    expect(under.counts.answered).toBeLessThan(3);
+    expect(Buffer.byteLength(lensLine(under) + "\n", "utf8")).toBeLessThanOrEqual(tight.digestBytes - 1);
+  });
+
+  test("a section is measured by the text written: a resolved holding such an integer is kept at the bound and dropped one byte past it, for size", () => {
+    const head = (pad: number): LoadedRecord => ({
       run: runId(1), seq: 1, event: "receipt.head", t: T0, file: "f", line: 1, copies: 1, fromSidecar: false, projected: false, projectedBy: [],
-      record: { event: "receipt.head", tool: "t", v: "1", argv: ["t"], inv: "i", resolved: { deep: [{ limit: 9007199254740993n }] } },
+      record: { event: "receipt.head", tool: "t", v: "1", argv: ["t"], inv: "i", resolved: { deep: [{ limit: 9007199254740993n }], pad: "x".repeat(pad) } },
       validation: { state: "unvalidated", schema: null, why: "no_schema_ref" },
-    };
-    const section = runSection(runId(1), [head]);
-    expect(section).toEqual({ run: runId(1), tool: "t", v: "1", argv: ["t"], inv: "i", dropped: ["resolved"] });
+    });
+    const base = Buffer.byteLength(exactJson(runSection(runId(1), [head(0)])), "utf8");
+    const fits = runSection(runId(1), [head(RUN_SECTION_BYTES - base)]);
+    expect(Buffer.byteLength(exactJson(fits), "utf8")).toBe(RUN_SECTION_BYTES);
+    expect(fits.dropped).toBeUndefined();
+    expect(exactJson(fits)).toContain(`"resolved":{"deep":[{"limit":9007199254740993}],"pad":"x`);
+    const over = runSection(runId(1), [head(RUN_SECTION_BYTES - base + 1)]);
+    expect(exactJson(over)).toBe(`{"run":"${runId(1)}","tool":"t","v":"1","argv":["t"],"inv":"i","dropped":["resolved"]}`);
+  });
+
+  test("an oversized resolved holding such an integer is left out for size and named, in the line that was written", async () => {
+    const { dir, receipts, env } = scratch();
+    receipt(receipts, 1, "1", `{"command":"count","limit":9007199254740993,"pad":"${"x".repeat(10_000)}"}`);
+    const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: WINDOW }, { cwd: dir, env }));
+    const written = lensLine(answer);
+    expect(written).toContain(`{"run":"${runId(1)}","tool":"t","v":"0.0.1","argv":["t","count"],"inv":"inv_same","outcome":"succeeded","dropped":["resolved"]}`);
+    expect(written).not.toContain("9007199254740993");
+    // The head it was read off still holds it, exactly.
+    const head = answer.records.find((x) => x.event === "receipt.head")!;
+    expect(exactJson((head.record.resolved as { limit: unknown }).limit)).toBe("9007199254740993");
+  });
+
+  test("the lens line that holds such an integer is validated against parley.lens 1.1.0, by exact evaluation", async () => {
+    const { dir, receipts, env } = scratch();
+    receipt(receipts, 1, "1", `{"command":"count","limit":9007199254740993}`);
+    const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: WINDOW }, { cwd: dir, env }));
+    const own = loadReceipts({ cwd: dir, env }).bundles.find((b) => b.run === answer.run)!;
+    const lens = own.records.find((x) => x.event === "lens")!;
+    // The loaded lens holds the integer as a bigint, so this verdict is the exact evaluator's:
+    // parley.lens says of runs[].resolved only that it is an object, and that was decided.
+    expect(exactJson((lens.record.runs as { resolved: unknown }[])[0]!.resolved)).toBe(`{"command":"count","limit":9007199254740993}`);
+    expect(lens.validation).toEqual({ state: "validated", schema: { id: "parley.lens", version: "1.1.0" } });
+    expect(own.defects).toEqual([]);
+    // The same line with a section the schema refuses is still refused, integer or not.
+    const line = lensLine(answer);
+    const broken = scratch();
+    writeLines(broken.receipts, answer.run, [line.replace(`"outcome":"succeeded"`, `"outcome":"perhaps"`)]);
+    const refused = only(broken.dir, broken.env).records[0]!;
+    expect(refused.validation.state).toBe("invalid");
   });
 
   test("the drill-down opens the record exactly, and sizes it by its exact text", async () => {

@@ -4,7 +4,7 @@ import { closeSync, openSync, readSync, readdirSync, rmSync, statSync, unlinkSyn
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { historyBookkeeping, historyDays, historyProjection, isHistoryFailure, isHistorySink, openHistory, resolveHistory, retainHistory, type HistoryConfig, type HistoryPlan, type HistoryProjection, type HistorySink } from "./history.ts";
-import { exactJson, unwritable, unwritableClause } from "./exact.ts";
+import { exactJson, plain, unwritable, unwritableClause } from "./exact.ts";
 import { computeInv, type InputDecl } from "./inv.ts";
 import { bookkeepingFor, chooseLocation, isLocationFailure, type Bookkeeping } from "./location.ts";
 import { carriesSecret, classifySecrets, collectSecretValues, redactArgv, scrub } from "./redact.ts";
@@ -189,13 +189,18 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
   try {
     resolvedRaw = discovery ? { discovery, command: commandName } : await (opts.resolved ?? ((a, c) => ({ command: c, args: a })))(rest, commandName!);
     inputs = discovery || !command ? [] : await (opts.inputs ?? (() => []))(rest, commandName!);
-    // `resolved` goes into the head and into `inv`. A `bigint` in it is written as exact digits;
-    // one the writer could not read back, or a number that is not finite, is refused here, where
-    // it is still a startup failure.
+    // `resolved` goes into the head and into `inv`. It is taken once as the serialiser would
+    // write it, so the head, the scrub and the identity are of one form: a hook is applied here
+    // and nowhere later. A `bigint` in it is written as exact digits; one the writer could not
+    // read back, or a number that is not finite, is refused here, where it is still a startup
+    // failure.
+    resolvedRaw = plain(resolvedRaw, "resolved") as Record<string, unknown>;
+    if (resolvedRaw === null || typeof resolvedRaw !== "object" || Array.isArray(resolvedRaw)) throw new TypeError("resolved is not an object once written as JSON");
     const why = unwritable(resolvedRaw, "resolved");
     if (why) throw new TypeError(`resolved carries ${unwritableClause(why)}`);
   } catch (e) {
     try { closeSync(location.fd); unlinkSync(location.receiptPath); } catch { /* the reservation is gone either way */ }
+    try { history?.close(); } catch { /* the stream was already gone */ }
     const err = e instanceof Error ? e : new Error(String(e));
     return fail("startup.arguments_invalid", `the arguments could not be interpreted: ${err.message || err.name}`, "fix the arguments; see the command's --help");
   }

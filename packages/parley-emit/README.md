@@ -447,6 +447,10 @@ which is not the same as invalid. A `bigint` inside the safe range is decided ag
   values, and the stream copy of `1e21` is spelt as 22 digits.
 - **The undecidable bound is "unchecked" only for an integer beyond the safe range.** A stricter
   rule would refuse to compare any `bigint` with a schema number beyond the safe range.
+- **`inv` is the identity of `resolved` as the head writes it**, from 0.5.0: a `Date` is its
+  string. Before, a value with a `toJSON` hook was identified by its own keys, so two dates
+  shared an `inv`. The `inv` of a `resolved` holding such a value moves; plain JSON data keeps
+  its `inv`.
 - **`NaN`, `Infinity` and `-Infinity` are refused**, from 0.5.0 (flyingrobots/parley#177).
   Before, they were written as `null`. An emitting call that holds one, at any depth, throws
   `TypeError` before a `seq` is taken; `resolved` holding one is `startup.arguments_invalid`; a

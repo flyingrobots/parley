@@ -273,14 +273,52 @@ export function unwritable(value: unknown, key = "", hooked = false): "integer" 
   if (value === null || (typeof value !== "object" && typeof value !== "function")) return undefined;
   // What the serialiser writes is what a `toJSON` hook returns, so that is what is looked at:
   // once per value, as `write` applies it (`hooked` marks a hook's own result).
-  const json = (value as { toJSON?: unknown }).toJSON;
-  if (!hooked && typeof json === "function") return unwritable((json as (key: string) => unknown).call(value, key), key, true);
+  // The lookup itself is made only where the serialiser makes it: never on a hook's own result.
+  if (!hooked) {
+    const json = (value as { toJSON?: unknown }).toJSON;
+    if (typeof json === "function") return unwritable((json as (key: string) => unknown).call(value, key), key, true);
+  }
   if (typeof value === "function") return undefined;
   if (value instanceof Number) return Number.isFinite(Number(value)) ? undefined : "number";
   if (value instanceof String || value instanceof Boolean) return undefined;
   if (Array.isArray(value)) { for (let i = 0; i < value.length; i++) { const why = unwritable(value[i], String(i)); if (why) return why; } return undefined; }
   for (const k of Object.keys(value)) { const why = unwritable((value as Record<string, unknown>)[k], k); if (why) return why; }
   return undefined;
+}
+
+/**
+ * The value as the serialiser would write it, as plain data: a `toJSON` hook applied once, with
+ * the key the value sits under, on an object, a function or a `bigint`; a boxed primitive as its
+ * primitive; no member for a function, a symbol or `undefined`, and `undefined` in an array where
+ * the serialiser writes `null`. Numbers and `bigint`s are kept as they are. `resolved` is passed
+ * through this once, so the head, the scrub and `inv` all see the one form that is written.
+ */
+export function plain(value: unknown, key = "", hooked = false): unknown {
+  if (!hooked && ((value !== null && typeof value === "object") || typeof value === "function" || typeof value === "bigint")) {
+    const json = (value as { toJSON?: unknown }).toJSON;
+    if (typeof json === "function") return plain((json as (key: string) => unknown).call(value, key), key, true);
+  }
+  if (value instanceof Number) return Number(value);
+  if (value instanceof String) return String(value);
+  if (value instanceof Boolean) return Boolean.prototype.valueOf.call(value);
+  if (value instanceof BigInt) return BigInt.prototype.valueOf.call(value);
+  if (typeof value === "function" || typeof value === "symbol") return undefined;
+  if (Array.isArray(value)) {
+    const items: unknown[] = [];
+    for (let i = 0; i < value.length; i++) items.push(plain(value[i], String(i)));
+    return items;
+  }
+  if (value !== null && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const k of Object.keys(value)) {
+      const member = plain((value as Record<string, unknown>)[k], k);
+      if (member === undefined) continue;
+      // Defined, never assigned: a member named `__proto__` is data here.
+      Object.defineProperty(out, k, { value: member, enumerable: true, writable: true, configurable: true });
+    }
+    return out;
+  }
+  return value;
 }
 
 /** What `unwritable` found, as the clause a refusal's message uses. */

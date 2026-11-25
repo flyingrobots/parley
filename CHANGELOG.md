@@ -30,7 +30,9 @@ the entry under it names each schema version it releases, and those are separate
 - **BREAKING in `@flyingrobots/parley-emit` 0.5.0: `NaN`, `Infinity` and `-Infinity` are refused,
   never written as `null`** (flyingrobots/parley#177; the package's changelog). The TypeScript
   writer wrote `null` for them, silently and with status 0, since 0.1.0; `parley_emit.py` has
-  always refused them, and the two writers now agree. No spec text or schema changes.
+  always refused them, and the two writers now agree. In the same version `inv` becomes the
+  identity of `resolved` as the head writes it: a `Date` in `resolved` was identified as `{}`, so
+  two dates shared an `inv`. Plain JSON data keeps its `inv`. No spec text or schema changes.
 
 ### Fixed
 

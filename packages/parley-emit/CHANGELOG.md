@@ -76,9 +76,24 @@ emits one today gets a `TypeError` where it got a `null`.
   - a history transform's body holding one is withheld as `history.transform_invalid`;
   - `canonical` and `computeInv` throw `TypeError`.
 
-  A value whose own `toJSON` returns `null`, such as an invalid `Date`, is still `null`: that is
-  what the value says of itself. To migrate, decide what the tool means: leave the field out,
+  The refusal is of what the serialiser would write and nothing else: a hook is called with its
+  key, a field a hook leaves out is not read, and properties hung on a boxed primitive or a
+  function are not read. A value whose own `toJSON` returns `null`, such as an invalid `Date`,
+  is still `null`: that is what the value says of itself. To migrate, decide what the tool means: leave the field out,
   write `null` yourself, or carry the value as a string.
+- **BREAKING for an `inv`: `resolved` is identified as it is written** (review of
+  flyingrobots/parley#181). `resolved` is taken once as the serialiser would write it (`toJSON`
+  applied, a boxed primitive as its primitive, no member for a function), and the head, the scrub
+  and `inv` all use that one form; `canonical` does the same for any value. Before, `inv` was
+  computed over the object's own keys while the head wrote the hook's result, so a `Date` in
+  `resolved` was `{}` to `inv`: two questions with different dates shared one identity, and a
+  reader could not recompute the `inv` from the head. The `inv` moves for a `resolved` that holds
+  a value with a `toJSON` hook, a boxed primitive, or a function or symbol as a member's value.
+  It does not move for plain JSON data: the 24 pinned identities are unchanged. A `resolved` that
+  is not an object once written (a resolver that returns a `Date`) is `startup.arguments_invalid`;
+  the head's schema never allowed it.
+- A startup refusal over `resolved` closes the history stream the run had opened; before, the
+  descriptor stayed open for the life of the process.
 - **A history transform is handed exact values.** The receipt line is parsed with `parseExact`
   before the transform runs, and its result is written with `exactJson`. A transform therefore
   receives a `bigint` for any integer the receipt writes beyond the safe range, including one the

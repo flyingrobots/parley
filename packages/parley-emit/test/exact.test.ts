@@ -262,13 +262,11 @@ describe("PE-35 the exact parser and serialiser are the writer's, and exported",
     expect(holdsUnreadable({ id: Object(5n) })).toBe(false);
   });
 
-  test("exactJson reads a value at most twice: a getter is read again when a bigint sends it to the exact writer (review of flyingrobots/parley#175)", () => {
-    // Pinned, not endorsed: JSON.stringify runs first so that a value with no bigint is its own
-    // text byte for byte, and a bigint is found by that pass failing. Pass plain data.
+  test("exactJson reads a value once, with a bigint in it or without (case 2026-11-25, F-3; it read a getter twice beside a bigint before)", () => {
     let reads = 0;
     const text = emit.exactJson({ get id() { reads++; return BIG; } });
     expect(text).toBe(`{"id":${BIG_TEXT}}`);
-    expect(reads).toBe(2);
+    expect(reads).toBe(1);
     reads = 0;
     emit.exactJson({ get id() { reads++; return 5; } });
     expect(reads).toBe(1);

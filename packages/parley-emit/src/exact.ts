@@ -275,64 +275,89 @@ let pastCap: bigint | undefined;
  *   - `"number"`: `NaN` or an infinity. JSON has no form for one, and `JSON.stringify` writes
  *     `null`, which states a value the tool did not hand over (flyingrobots/parley#177).
  *
- * It looks at what the serialiser would write and nothing else: a `toJSON` hook is called with
- * the key the value sits under, as the serialiser calls it, on an object or a function; a boxed
- * primitive is its primitive, whatever properties were hung on it; a function with no hook is
- * not written, so it is not read. `key` is the member name or array index, `""` at the top.
+ * It looks at what would be written and nothing else: the value is taken as `plain` takes it,
+ * and that is what is scanned. `key` is the member name or array index, `""` at the top.
  */
 export function unwritable(value: unknown, key = ""): "integer" | "number" | undefined {
-  // One reading of the serialiser's rules, `plain`, decides what would be written; this looks
-  // only at that.
-  return refused(plain(value, key));
+  return unwritablePlain(plain(value, key));
 }
 
-function refused(value: unknown): "integer" | "number" | undefined {
+/** `unwritable` for a value that is plain data already (`plain`'s result): no hook is called. */
+export function unwritablePlain(value: unknown): "integer" | "number" | undefined {
   if (typeof value === "bigint") {
     pastCap ??= 10n ** BigInt(MAX_EXACT_DIGITS);
     return value >= pastCap || value <= -pastCap ? "integer" : undefined;
   }
   if (typeof value === "number") return Number.isFinite(value) ? undefined : "number";
   if (value === null || typeof value !== "object") return undefined;
-  if (Array.isArray(value)) { for (const item of value) { const why = refused(item); if (why) return why; } return undefined; }
-  for (const k of Object.keys(value)) { const why = refused((value as Record<string, unknown>)[k]); if (why) return why; }
+  if (Array.isArray(value)) { for (const item of value) { const why = unwritablePlain(item); if (why) return why; } return undefined; }
+  for (const k of Object.keys(value)) { const why = unwritablePlain((value as Record<string, unknown>)[k]); if (why) return why; }
   return undefined;
 }
 
 /**
- * The value as the serialiser would write it, as plain data: a `toJSON` hook applied once, with
- * the key the value sits under, on an object, a function or a `bigint`; a boxed primitive as its
- * primitive; no member for a function, a symbol or `undefined`, and `undefined` in an array where
- * the serialiser writes `null`. Numbers and `bigint`s are kept as they are. `resolved` is passed
- * through this once, so the head, the scrub and `inv` all see the one form that is written.
+ * The value as it is written, as plain data: the one reading of a value that everything else
+ * works from. The writer takes a payload through this once, before it is checked, scrubbed or
+ * given a `seq`, so what is checked and scrubbed is what is written, and a `toJSON` hook is
+ * called once however many sinks the record reaches.
+ *
+ * The rules are `JSON.stringify`'s, with one difference:
+ *
+ *   - a `toJSON` hook is applied once, with the key the value sits under, on an object or a
+ *     function, and never on a hook's own result;
+ *   - a boxed primitive is its primitive, recognised by what it holds, so one from another realm
+ *     is too;
+ *   - a function, a symbol or `undefined` is no member of an object, and `undefined` in an array,
+ *     where `null` is written;
+ *   - **a `bigint` is itself, whatever the process has installed.** `JSON.stringify` asks
+ *     `BigInt.prototype` for a `toJSON`; this never does, so no polyfill in the process can turn
+ *     an exact integer into a string or a rounded number (review case 2026-11-25). A boxed
+ *     `bigint` is asked only for a `toJSON` of its own.
+ *
+ * A value that contains itself is a `TypeError`, as it is to `JSON.stringify`; the same value in
+ * two places is not. The result shares nothing mutable with the value: objects and arrays are
+ * new, with ordinary prototypes, and a member named `__proto__` is data.
  */
-export function plain(value: unknown, key = "", hooked = false): unknown {
-  if (!hooked && ((value !== null && typeof value === "object") || typeof value === "function" || typeof value === "bigint")) {
-    const json = (value as { toJSON?: unknown }).toJSON;
-    if (typeof json === "function") return plain((json as (key: string) => unknown).call(value, key), key, true);
+export function plain(value: unknown, key = ""): unknown {
+  return snapshot(value, key, false, []);
+}
+
+function snapshot(value: unknown, key: string, hooked: boolean, inside: object[]): unknown {
+  if (typeof value === "bigint") return value;
+  const isObject = value !== null && typeof value === "object";
+  if (!isObject && typeof value !== "function") return typeof value === "symbol" ? undefined : value;
+  const boxedBig = isObject && isBoxedBigInt(value);
+  if (!hooked) {
+    // On a boxed bigint only a hook of its own counts: the one it would inherit is
+    // `BigInt.prototype`'s, which is never asked.
+    const json = !boxedBig || Object.prototype.hasOwnProperty.call(value, "toJSON") ? (value as { toJSON?: unknown }).toJSON : undefined;
+    if (typeof json === "function") return snapshot((json as (key: string) => unknown).call(value, key), key, true, inside);
   }
-  // By what the object holds and not by its constructor, which a box made in another realm (a
-  // `vm` context) does not share while the serialiser still unboxes it.
+  if (typeof value === "function") return undefined;
+  if (boxedBig) return BigInt.prototype.valueOf.call(value);
   if (types.isNumberObject(value)) return Number(value);
   if (types.isStringObject(value)) return String(value);
   if (types.isBooleanObject(value)) return Boolean.prototype.valueOf.call(value);
-  if (isBoxedBigInt(value)) return BigInt.prototype.valueOf.call(value);
-  if (typeof value === "function" || typeof value === "symbol") return undefined;
-  if (Array.isArray(value)) {
+  const obj = value as object;
+  if (inside.includes(obj)) throw new TypeError("a value that contains itself has no JSON form");
+  inside.push(obj);
+  let out: unknown;
+  if (Array.isArray(obj)) {
     const items: unknown[] = [];
-    for (let i = 0; i < value.length; i++) items.push(plain(value[i], String(i)));
-    return items;
-  }
-  if (value !== null && typeof value === "object") {
-    const out: Record<string, unknown> = {};
-    for (const k of Object.keys(value)) {
-      const member = plain((value as Record<string, unknown>)[k], k);
+    for (let i = 0; i < obj.length; i++) items.push(snapshot(obj[i], String(i), false, inside));
+    out = items;
+  } else {
+    const members: Record<string, unknown> = {};
+    for (const k of Object.keys(obj)) {
+      const member = snapshot((obj as Record<string, unknown>)[k], k, false, inside);
       if (member === undefined) continue;
       // Defined, never assigned: a member named `__proto__` is data here.
-      Object.defineProperty(out, k, { value: member, enumerable: true, writable: true, configurable: true });
+      Object.defineProperty(members, k, { value: member, enumerable: true, writable: true, configurable: true });
     }
-    return out;
+    out = members;
   }
-  return value;
+  inside.pop();
+  return out;
 }
 
 /** What `unwritable` found, as the clause a refusal's message uses. */
@@ -342,55 +367,51 @@ export function unwritableClause(why: "integer" | "number"): string {
     : "a number that is not finite (NaN or an infinity), which JSON cannot state and this writer does not write as null";
 }
 
-/**
- * `JSON.stringify`'s rules, with a `bigint` written as its digits. `undefined` where
- * `JSON.stringify` gives none. `hooked` is true for a value a `toJSON` hook returned: the hook is
- * applied once per value, so its result is serialised as it is and its own `toJSON`, if it has
- * one, is not called. Its members are values of their own and their hooks still apply.
- */
-function write(value: unknown, key: string, hooked = false): string | undefined {
+/** Plain data as JSON text, with no hook asked: `write` for a value `plain` has already taken. */
+function write(value: unknown): string | undefined {
   if (typeof value === "bigint") return value.toString();
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  const json = (value as { toJSON?: unknown }).toJSON;
-  if (!hooked && typeof json === "function") return write((json as (key: string) => unknown).call(value, key), key, true);
-  if (types.isNumberObject(value) || types.isStringObject(value) || types.isBooleanObject(value)) return JSON.stringify(value); // a boxed primitive is its primitive
-  if (isBoxedBigInt(value)) return BigInt.prototype.valueOf.call(value).toString(); // and so is a boxed bigint, which `JSON.stringify` unboxes before it refuses it
+  if (value === null || typeof value !== "object") return typeof value === "function" || typeof value === "symbol" ? undefined : JSON.stringify(value);
   if (Array.isArray(value)) {
-    // By index, so a hole is `null` as `JSON.stringify` writes it; `map` would skip it.
     const items: string[] = [];
-    for (let i = 0; i < value.length; i++) items.push(write(value[i], String(i)) ?? "null");
+    for (let i = 0; i < value.length; i++) items.push(write(value[i]) ?? "null");
     return `[${items.join(",")}]`;
   }
   const members: string[] = [];
   for (const k of Object.keys(value)) {
-    const member = write((value as Record<string, unknown>)[k], k);
+    const member = write((value as Record<string, unknown>)[k]);
     if (member !== undefined) members.push(`${JSON.stringify(k)}:${member}`);
   }
   return `{${members.join(",")}}`;
 }
 
+/** Whether the process has installed a `toJSON` that `JSON.stringify` would ask of plain data. */
+function hookInstalled(): boolean {
+  return typeof (Object.prototype as { toJSON?: unknown }).toJSON === "function"
+    || typeof (Array.prototype as { toJSON?: unknown }).toJSON === "function"
+    || typeof (BigInt.prototype as { toJSON?: unknown }).toJSON === "function";
+}
+
 /**
- * `JSON.stringify(value)` for a value that may hold a `bigint`, which is written as the JSON
- * number it is: exact unquoted digits, never a string and never with a suffix. For a value
- * holding none this returns `JSON.stringify`'s own text, byte for byte; a value with no JSON form
- * at all (`undefined`, a function) is `"null"`.
- *
- * The value is read at most twice. `JSON.stringify` runs first, so that a value with no `bigint`
- * is its own text; a `bigint` is found by that pass refusing it, and the value is then written
- * again by this module. A getter with a side effect is therefore read twice when its object holds
- * a `bigint`: pass plain data. That holds for a payload handed to the writer too, which
- * serialises it with this function.
- *
- * A consumer that parses the text again with an ordinary `JSON.parse` loses the precision again;
- * `parseExact` does not. A value that refers to itself throws, as it does from `JSON.stringify`.
+ * The JSON text of plain data (`plain`'s result, or what `parseExact` returned): a `bigint` as
+ * its exact digits, everything else as `JSON.stringify` writes it, and **no hook asked**. Plain
+ * data has no hooks of its own, so the only ones `JSON.stringify` could find are on
+ * `Object.prototype`, `Array.prototype` and `BigInt.prototype`; when the process has installed
+ * one there, or the data holds a `bigint`, the text is written here and not by
+ * `JSON.stringify`. The text is the same either way.
  */
-export function exactJson(value: unknown): string {
-  try { return JSON.stringify(value) ?? "null"; } catch (e) {
-    if (!(e instanceof TypeError)) throw e;
-    // A `bigint`, or a cycle. The `bigint` may exist only in what a `toJSON` hook returns, so
-    // the value is not inspected first: it is written, hooks and all. A cycle exhausts the stack
-    // of that walk, and is reported as what `JSON.stringify` said about it.
-    try { return write(value, "") ?? "null"; }
-    catch (inner) { throw inner instanceof RangeError ? e : inner; }
+export function exactText(value: unknown): string {
+  if (!hookInstalled()) {
+    try { return JSON.stringify(value) ?? "null"; } catch (e) { if (!(e instanceof TypeError)) throw e; /* a bigint */ }
   }
+  return write(value) ?? "null";
+}
+
+/**
+ * A value as JSON text: `plain`'s reading of it, written by `exactText`. `JSON.stringify`'s rules
+ * with a `bigint` as its exact digits, never quoted and never rounded, whatever `toJSON` the
+ * process has put on `BigInt.prototype`. `"null"` where `JSON.stringify` gives none. A value that
+ * contains itself is a `TypeError`.
+ */
+export function exactJson(value: unknown, key = ""): string {
+  return exactText(plain(value, key));
 }

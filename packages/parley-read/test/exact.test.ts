@@ -7,12 +7,12 @@ import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   RUN_SECTION_BYTES, digestBytes, digestFor, digestLine, exactJson, foldRuns, loadReceipts, openRecords, planQuery, queryReceipts, readReceiptFile, recordBytes, runSection, validator,
   type Bundle, type Defect, type LoadedRecord, type OpenAnswer, type QueryAnswer,
 } from "../src/index.ts";
-import { UNREPRESENTABLE, parseExact } from "../src/exact.ts";
+import { UNREPRESENTABLE, parseExact } from "@flyingrobots/parley-emit";
 import { MAX_EXACT_DIGITS } from "../src/index.ts";
 
 const T0 = 1795326412346;
@@ -771,19 +771,22 @@ describe("RD-123 no emitting or measuring path throws on such an integer, and no
     expect(roomy.counts).toMatchObject({ answered: 3, excluded: 0 });
     const written = lensLine(roomy);
     expect(written).toContain(`"resolved":{"command":"count","limit":18446744073709551615,"ids":[9007199254740993,-9007199254740993]}`);
-    // The line states its own budget, so the tight bound is found from the line's size at that bound.
-    const size = Buffer.byteLength(written + "\n", "utf8") - String(100_000).length;
-    const digits = String(size + String(size).length).length;
-    const exact = size + digits;
-    const tight = answered(await ask1(exact));
-    expect(tight.counts).toMatchObject({ answered: 3, excluded: 0 });
-    expect(tight.digestBytes).toBeLessThanOrEqual(exact);
-    expect(Buffer.byteLength(lensLine(tight) + "\n", "utf8")).toBe(tight.digestBytes);
-    expect(lensLine(tight)).toContain(`"limit":18446744073709551615`);
-    // Under a bound short of the whole line by the measured headroom or more, something is left out.
-    const under = answered(await ask1(tight.digestBytes - 1));
-    expect(under.counts.answered).toBeLessThan(3);
-    expect(Buffer.byteLength(lensLine(under) + "\n", "utf8")).toBeLessThanOrEqual(tight.digestBytes - 1);
+    // Every bound around the line's own size: the line written is never over its bound, and the
+    // smallest bound that names all three records is the line's size plus the one byte the read
+    // keeps in hand for its own seq gaining a digit (`query.ts`). A size measured on a rounded or
+    // differently serialised section would miss that by the integer's digits.
+    const natural = Buffer.byteLength(written + "\n", "utf8");
+    let smallest: { bound: number; line: number } | undefined;
+    for (let bound = natural - 12; bound <= natural + 2; bound++) {
+      const answer = answered(await ask1(bound));
+      const line = Buffer.byteLength(lensLine(answer) + "\n", "utf8");
+      expect(line).toBeLessThanOrEqual(bound);
+      expect(line).toBe(answer.digestBytes);
+      if (answer.counts.answered === 3 && smallest === undefined) smallest = { bound, line };
+      if (answer.counts.answered === 3) expect(lensLine(answer)).toContain(`"limit":18446744073709551615,"ids":[9007199254740993,-9007199254740993]`);
+    }
+    expect(smallest).toBeDefined();
+    expect(smallest!.bound - smallest!.line).toBe(1);
   });
 
   test("a section is measured by the text written: a resolved holding such an integer is kept at the bound and dropped one byte past it, for size", () => {
@@ -863,4 +866,163 @@ describe("RD-123 no emitting or measuring path throws on such an integer, and no
     expect(load.counts.quarantined).toBe(0);
     expect(Date.now() - started).toBeLessThan(30_000);
   }, 60_000);
+});
+
+// ---- RD-124 the shared numeric corpus, through the reader ------------------------------------
+
+interface CorpusCase { id: string; pins: string; text: string; outcome: "exact" | "unrepresentable"; kinds?: string[]; emit?: string; tokens?: string[] }
+// Every value in the corpus is a string or a list of strings, so reading the corpus itself with
+// an ordinary parser loses nothing (conformance/numbers/README.md).
+const CORPUS: CorpusCase[] = readFileSync(resolve(import.meta.dir, "../../../conformance/numbers/cases.jsonl"), "utf8")
+  .split("\n").filter((l) => l.trim() !== "").map((l) => JSON.parse(l) as CorpusCase);
+
+/** How each number in a loaded value is held, in document order. */
+function kindsOf(value: unknown, into: string[] = []): string[] {
+  if (typeof value === "number" || typeof value === "bigint") into.push(typeof value);
+  else if (Array.isArray(value)) for (const v of value) kindsOf(v, into);
+  else if (value !== null && typeof value === "object") for (const v of Object.values(value)) kindsOf(v, into);
+  return into;
+}
+
+describe("RD-124 the shared numeric corpus through the reader (conformance/numbers)", () => {
+  test("the corpus is the one the writers run: 50 cases, 39 exact and 11 unrepresentable", () => {
+    expect(CORPUS.length).toBe(50);
+    expect(CORPUS.filter((c) => c.outcome === "exact").length).toBe(39);
+    expect(CORPUS.filter((c) => c.outcome === "unrepresentable").length).toBe(11);
+    expect(new Set(CORPUS.map((c) => c.id)).size).toBe(50);
+  });
+
+  for (const c of CORPUS.filter((x) => x.outcome === "exact")) {
+    test(`exact: ${c.id} loads from a receipt line and from a sidecar, and is written back as the corpus says`, () => {
+      const { dir, receipts, env } = scratch();
+      const run = runId(1);
+      const path = join(receipts, `${run}.jsonl`);
+      const stored = resultLine(run, T0 + 2, c.text, 3);
+      mkdirSync(join(receipts, run), { recursive: true });
+      writeFileSync(join(receipts, run, "3.json"), stored);
+      writeLines(receipts, run, [
+        headLine(run, T0), resultLine(run, T0 + 2, c.text),
+        `{"event":"sidecar","t":${T0 + 2},"seq":4,"run":"${run}","source":3,"path":"${run}/3.json","bytes":${Buffer.byteLength(stored)},"sha256":"${sha(stored)}","_schema":{"id":"parley.sidecar","version":"1.0.0"}}`,
+        endLine(run, T0 + 3, path, 5),
+      ]);
+      const bundle = only(dir, env);
+      expect(bundle.defects).toEqual([]);
+      for (const seq of [2, 3]) {
+        const value = bundle.records.find((r) => r.seq === seq)!.record.value;
+        expect(exactJson(value)).toBe(c.emit!);
+        expect(kindsOf(value)).toEqual(c.kinds!);
+      }
+      expect(bundle.records.find((r) => r.seq === 3)!.fromSidecar).toBe(true);
+    });
+  }
+
+  for (const c of CORPUS.filter((x) => x.outcome === "unrepresentable")) {
+    test(`unrepresentable: ${c.id} is held back verbatim, warned of, and its run never folds`, async () => {
+      // Two runs of one invocation whose only result is this text: identical, so they would fold.
+      const { dir, receipts, env } = scratch();
+      receipt(receipts, 1, c.text);
+      receipt(receipts, 2, c.text);
+      const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: WINDOW, budget: { records: 1000 } }, { cwd: dir, env }));
+      expect(answer.digest.runs.length).toBe(2);
+      expect(answer.digest.runs.some((s) => s.folded !== undefined)).toBe(false);
+      expect(answer.digest.loss.folded).toBe(0);
+      expect(answer.records.some((r) => r.event === "result")).toBe(false);
+      expect(answer.counts.unrepresentable).toBe(2);
+      const held = coded(answer.load.quarantined, "line.number_unrepresentable");
+      expect(held.map((d) => d.raw)).toEqual([1, 2].map((n) => resultLine(runId(n), T0 - (10 - n) * DAY + 2, c.text)));
+      expect(held.map((d) => d.run)).toEqual([runId(1), runId(2)]);
+      // The numbers that could not be held are the corpus's, in order.
+      const parsed = parseExact(c.text);
+      expect(parsed.ok ? [] : parsed.tokens).toEqual(c.tokens!);
+      const own = loadReceipts({ cwd: dir, env }).bundles.find((b) => b.run === answer.run)!;
+      expect(own.records.filter((r) => r.event === "warning").map((r) => r.record.code)).toEqual(["read.number_unrepresentable"]);
+      // And a sidecar holding the same text is not restored.
+      const side = scratch();
+      const run = runId(1);
+      const stored = resultLine(run, T0 + 2, c.text);
+      mkdirSync(join(side.receipts, run), { recursive: true });
+      writeFileSync(join(side.receipts, run, "2.json"), stored);
+      writeLines(side.receipts, run, [
+        headLine(run, T0),
+        `{"event":"sidecar","t":${T0 + 2},"seq":3,"run":"${run}","source":2,"path":"${run}/2.json","bytes":${Buffer.byteLength(stored)},"sha256":"${sha(stored)}","_schema":{"id":"parley.sidecar","version":"1.0.0"}}`,
+        endLine(run, T0 + 3, join(side.receipts, `${run}.jsonl`), 4),
+      ]);
+      const bundle = only(side.dir, side.env);
+      expect(bundle.sidecars[0]!.state).toBe("number_unrepresentable");
+      expect(bundle.records.map((r) => r.seq)).toEqual([1, 3, 4]);
+    });
+  }
+});
+
+// ---- RD-125 a real writer's integers, through real processes, to the reader's own lines -------
+
+describe("RD-125 a tool's integers beyond the safe range survive the writer, the receipt and the reader", () => {
+  const TOOL = resolve(import.meta.dir, "fixtures/big-tool.ts");
+  function emit(dir: string, state: string, id: string, extra: string[] = []) {
+    const spawned = Bun.spawnSync({
+      cmd: [process.execPath, "run", TOOL, "ids", ...extra], cwd: dir,
+      env: { ...process.env, XDG_STATE_HOME: state, BIG_ID: id }, stdout: "pipe", stderr: "pipe",
+    });
+    const out = new TextDecoder().decode(spawned.stdout);
+    const run = /"run":"([^"]+)"/.exec(out)![1]!;
+    return { status: spawned.exitCode, run, out, receipt: readFileSync(join(dir, ".parley", "receipts", `${run}.jsonl`), "utf8") };
+  }
+
+  test("two runs with adjacent ids do not fold, two with one id do, and every line the reader writes holds the exact digits", async () => {
+    const { dir, env } = scratch();
+    const state = env.XDG_STATE_HOME!;
+    const a = emit(dir, state, "9007199254740992");
+    const b = emit(dir, state, "9007199254740993");
+    const c = emit(dir, state, "9007199254740993");
+    expect([a.status, b.status, c.status]).toEqual([0, 0, 0]);
+    // What the writer put on disk, as text.
+    expect(a.receipt).toContain(`"id":9007199254740992,"next":9007199254740993,"ids":[9007199254740992,18446744073709551615]`);
+    expect(b.receipt).toContain(`"id":9007199254740993,"next":9007199254740994,"ids":[9007199254740993,18446744073709551615]`);
+    expect(b.receipt).toContain(`"resolved":{"command":"ids","limit":18446744073709551615,"floor":-9007199254740993}`);
+
+    const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: { from: 0, to: Date.now() + DAY }, budget: { records: 1000 } }, { cwd: dir, env }));
+    // One invocation (the id is not in `inv`), three runs: the two that share an id fold, the neighbour does not.
+    const sections = answer.digest.runs;
+    expect(sections.map((s) => s.inv)).toEqual([sections[0]!.inv, sections[0]!.inv]);
+    expect(sections.length).toBe(2);
+    const alone = sections.find((s) => s.run === a.run)!;
+    const folded = sections.find((s) => s.run !== a.run)!;
+    expect(alone.folded).toBeUndefined();
+    expect([b.run, c.run]).toContain(folded.run);
+    expect(folded.folded!.stands_for).toEqual([b.run, c.run].filter((r) => r !== folded.run));
+    // The lens line the reader wrote, as text from its own receipt.
+    const lens = readFileSync(answer.receipt, "utf8").split("\n").find((l) => l.includes(`"event":"lens"`))!;
+    expect(lens).toContain(`"run":"${a.run}","tool":"big","v":"0.1.0","argv":["big","ids"],"resolved":{"command":"ids","limit":18446744073709551615,"floor":-9007199254740993}`);
+    expect(lens).toContain(`"run":"${folded.run}","tool":"big","v":"0.1.0","argv":["big","ids"],"resolved":{"command":"ids","limit":18446744073709551615,"floor":-9007199254740993}`);
+    expect(lens).not.toContain(`"dropped"`);
+    // The records returned, written with the exported serialiser.
+    const results = answer.records.filter((r) => r.event === "result");
+    expect(results.map((r) => exactJson({ id: r.record.id, next: r.record.next, ids: r.record.ids })).sort()).toEqual([
+      `{"id":9007199254740992,"next":9007199254740993,"ids":[9007199254740992,18446744073709551615]}`,
+      `{"id":9007199254740993,"next":9007199254740994,"ids":[9007199254740993,18446744073709551615]}`,
+    ]);
+    // Each returned record is the receipt's own line, read back and written again.
+    for (const r of results) expect((r.run === a.run ? a : r.run === b.run ? b : c).receipt).toContain(exactJson(r.record));
+    // The drill-down returns the folded run's record exactly too.
+    const other = folded.folded!.stands_for[0]!;
+    const opened = await openRecords({ asker: { tool: "t" }, view: "everything", window: WINDOW, records: [{ run: other, seq: results[0]!.seq }] }, { cwd: dir, env }) as OpenAnswer;
+    expect(exactJson(opened.opened[0]!.record!.record.id)).toBe("9007199254740993");
+  });
+
+  test("a bigint that is a declared secret is redacted by the writer, and the integers beside it reach the reader exactly", async () => {
+    const { dir, env } = scratch();
+    const secret = "9007199254740997";
+    const run = emit(dir, env.XDG_STATE_HOME!, "9007199254740993", ["--token", secret]);
+    expect(run.status).toBe(0);
+    expect(run.receipt).not.toContain(secret);
+    expect(run.out).not.toContain(secret);
+    const bundle = loadReceipts({ cwd: dir, env }).bundles.find((x) => x.run === run.run)!;
+    expect(bundle.redacted).toBe(true);
+    const result = bundle.records.find((r) => r.event === "result")!;
+    expect(exactJson({ id: result.record.id, next: result.record.next, token: result.record.token })).toBe(`{"id":9007199254740993,"next":9007199254740994,"token":"[redacted]"}`);
+    const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: { from: 0, to: Date.now() + DAY }, budget: { records: 1000 } }, { cwd: dir, env }));
+    const text = readFileSync(answer.receipt, "utf8");
+    expect(text).not.toContain(secret);
+    expect(text).toContain(`"resolved":{"command":"ids","limit":18446744073709551615,"floor":-9007199254740993}`);
+  });
 });

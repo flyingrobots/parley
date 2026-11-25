@@ -42,7 +42,7 @@ suite and `bun run typecheck` checks it strictly, over `src`, `scripts` and `tes
 | `validator(schemas?)`, `schemaRef`, `envelopeGaps`, `ENVELOPE`, `PROTOCOL_PREFIX` | Exact-pair validation, and the version-independent core a partial check uses |
 | `SCHEMAS`, `SCHEMA_SOURCE` | The nineteen schemas the package ships: each message at its current released version, and the released 1.0.0 of `parley.query` and `parley.lens` beside their 1.1.0, with the commit and digest of each |
 | `QUARANTINE_CODES` | Which defect codes are a kept line rather than a judgement about a record |
-| `exactJson(value)`, `MAX_EXACT_DIGITS`, `ExactValue` | `JSON.stringify` for a value that may hold a `bigint`, written as the JSON number it is; the most digits an integer may have and still be held (4096); and the type of a value a returned record can hold: see [numbers](#numbers) |
+| `exactJson(value)`, `MAX_EXACT_DIGITS`, `ExactValue` | Re-exported from `@flyingrobots/parley-emit`. `JSON.stringify` for a value that may hold a `bigint`, written as the JSON number it is; the most digits an integer may have and still be held (4096); and the type of a value a returned record can hold: see [numbers](#numbers) |
 | `heldBackRuns(load)`, `NUMBER_UNREPRESENTABLE`, `UNREPRESENTABLE_WARNING` | The runs a load held a line back from, which a read hands to the fold; the defect code of such a line (`line.number_unrepresentable`); and the code of the warning a read reports for them (`read.number_unrepresentable`) |
 | `isDirectory`, `isFile` | The two existence questions the loader asks, exported because callers ask them too |
 
@@ -158,6 +158,12 @@ verbatim in the defect, with its file and line number.
 
 ### Writing a record back out
 
+The exact parser and serialiser are the writer's, `@flyingrobots/parley-emit`'s `parseExact`
+and `exactJson`; this package has no copy of its own and re-exports `exactJson`, `ExactValue` and
+`MAX_EXACT_DIGITS`. The reader, both writers and the corpus under
+[conformance/numbers](../../../conformance/numbers/README.md) are held to one rule: every case of
+that corpus is run through the loader (RD-124).
+
 **`JSON.stringify` throws on a record that holds a `bigint`.** `exactJson(value)` is
 `JSON.stringify` for such a value: the integer is written as the JSON number it is, exact unquoted
 digits (`{"value":9007199254740993}`), never a string and never with a suffix; a value holding
@@ -173,13 +179,13 @@ digits survive only through a parser that keeps them, as this one does.
 | --- | --- |
 | Copies of one `(run, seq)`, the [least-projected copy](#the-least-projected-copy) and the [fold](#runs-of-one-invocation-are-named-once) | Compared through `exactJson`, by value: two different integers never compare equal, an integer equals the same integer written another way, and a number never equals a string of its digits |
 | The drill-down's [byte bound](#a-byte-bound) | `recordBytes` is the UTF-8 length of the record's `exactJson` text, so the integer counts by its digits |
-| Validation against a shipped schema | **Decided exactly, as far as it can be**: see [validating a record that holds one](#validating-a-record-that-holds-one). `invalid` on one conclusive failure, `validated` when every constraint that applies was decided, `partial` with `why: "number_undecided"` otherwise. Never a verdict from a rounded stand-in |
+| Validation against a shipped schema | **Decided exactly, as far as it can be**: see [validating a record that holds one](#validating-a-record-that-holds-one). `invalid` on one conclusive failure, `validated` when every constraint that applies was decided, `partial` with `why: "number_undecided"` otherwise. Never a verdict from a rounded stand-in. A read's own `parley.lens` line whose section carries such a `resolved` loads `validated`: the schema says of `resolved` only that it is an object, and that is decided |
 | `seq` | **Rejected when out of range.** Every identity the reader hands out is a `number`, so the largest `seq` it places is 9007199254740991. A line whose `seq` is beyond it is [held back](#quarantine) whole and never placed at another `seq` |
 | `t` | Kept exact in the record. `LoadedRecord.t` is null, so the record is undated: it is in no window, `counts.undated` counts it, and it sorts last in its tier |
 | `end.status` | A status other than zero: the run `failed` and replay is unavailable for `end.status_nonzero`. `Bundle.status` is a `number` or null, and is null. Separately, the record is `invalid` against `parley.end`, whose `maximum` is 255: schema validity and the run's outcome are two findings |
 | A `sidecar` event's `source` or `bytes` | The sidecar is `unreadable`: it does not name a usable `source` and `bytes` |
-| A run section's `resolved` | Dropped whole and named in `dropped`, whatever its size. The lens line is written by the writer library with `JSON.stringify`, which cannot carry a `bigint` ([flyingrobots/parley#171](https://github.com/flyingrobots/parley/issues/171)), and a section never states a rounded value. The head, opened by `(run, seq)`, holds it exactly |
-| The lines a read writes | Hold no `bigint`: a lens names records by `(run, seq)`, `event`, `t` and `code`, and the one field copied from a record, `resolved`, is the row above |
+| A run section's `resolved` | Carried whole and exact, like any other: the lens line that is written holds the integer's digits. The section's size, `digestLine` and the byte budget are measured on that text. It is left out only when the section is too large, and `dropped` means that and nothing else (RD-123) |
+| The lines a read writes | Written by the writer library (`@flyingrobots/parley-emit` 0.5.0 or later), which writes a `bigint` as exact digits. A lens names records by `(run, seq)`, `event`, `t` and `code`; the one field copied from a record is `resolved`, the row above. `answer.lines` are those lines parsed exactly, so a `bigint` the read wrote comes back as one |
 
 ### Validating a record that holds one
 
@@ -604,8 +610,8 @@ the tool's own shape, while `argv` is the protocol's. A string or an object is n
 because a cut argument reads as a different argument. `run`, `outcome`, `reason`, `head` and `folded` are never dropped, because without them
 the section does not say which run it is or what became of it; a run id long enough to break the
 bound on its own is left whole, and the line's `budget.bytes` still holds. A `resolved` that holds
-an integer beyond the safe range is dropped the same way, whatever its size, and named in `dropped`: the
-line cannot carry it ([numbers](#numbers)). The ids in
+an integer beyond the safe range is measured by the digits that are written and is dropped only
+on those terms: for size ([numbers](#numbers)). The ids in
 `folded.stands_for` are not counted against the section's bound: a section that stands for forty
 runs carries over a kilobyte of them, and counting them would drop `resolved` and `argv` from
 exactly the sections that stand for the most. They are part of the line, so `budget.bytes` does

@@ -13,7 +13,7 @@
 import Ajv2020, { type ErrorObject, type ValidateFunction } from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 import { decider } from "./decide.ts";
-import { holdsExact } from "./exact.ts";
+import { holdsExact } from "@flyingrobots/parley-emit";
 import { SCHEMAS } from "./schemas.ts";
 
 export interface SchemaRef { readonly id: string; readonly version: string }

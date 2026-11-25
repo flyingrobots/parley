@@ -23,7 +23,7 @@
 // leaves undecided as it is. `if` takes the branch its condition's verdict selects, and with an
 // undecided condition concludes only what both branches agree on.
 import type { ValidateFunction } from "ajv/dist/2020.js";
-import { exactJson, holdsExact } from "./exact.ts";
+import { exactJson, holdsExact } from "@flyingrobots/parley-emit";
 
 export type Verdict = "valid" | "invalid" | "undecided";
 

@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 // A tool whose output holds integers beyond the safe range, run as a real process by the reader's
-// tests (RD-125). The id comes from the environment, which is no part of `inv` (spec §2.2), so two
-// runs with different ids are one invocation with different results. `--token` is a declared
+// tests (RD-125). The id comes from the environment and is stated only in the result, so it is
+// no part of `inv` (spec §2.2): two runs with different ids are one invocation with different
+// results. The head's `resolved` holds two such integers of its own. `--token` is a declared
 // secret; when it is given, its value also appears in the result as a number, and is redacted.
 import { defineTool, main } from "@flyingrobots/parley-emit";
 
@@ -31,5 +32,5 @@ const token = args.includes("--token") ? args[args.indexOf("--token") + 1] : und
 
 const status = await main(tool, ["big", ...args], (run) => {
   run.result({ event: "result", id, next: id + 1n, ids: [id, 18446744073709551615n], ...(token === undefined ? {} : { token: BigInt(token) }) }, { id: "big.ids", version: "1.0.0" });
-}, { resolved: (_rest: string[], command: string) => ({ command, id, limit: 18446744073709551615n }) });
+}, { resolved: (_rest: string[], command: string) => ({ command, limit: 18446744073709551615n, floor: -9007199254740993n }) });
 process.exit(status);

@@ -36,7 +36,9 @@ the entry under it names each schema version it releases, and those are separate
   did not, though `…993` still came back as `…992`). The reader now loads an integer-valued number
   outside that range as a `bigint`, which is a breaking change to what it returns, compares by
   the exact value, and holds back, verbatim and said, a line holding a number it cannot represent
-  at all. A fold is again what the lens message's description says it is. No schema's shape,
+  at all. It takes the exact parser and serialiser from `@flyingrobots/parley-emit` 0.5.0, is
+  held to every case of `conformance/numbers`, and a lens section carries a `resolved` holding
+  such an integer exactly, with `dropped` still meaning left out for size alone. A fold is again what the lens message's description says it is. No schema's shape,
   meaning or version moves; the package's own changelog is the record.
 
 - An intermittent test failure, in both writers' suites (flyingrobots/parley#142). Several

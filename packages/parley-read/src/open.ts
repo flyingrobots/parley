@@ -31,9 +31,8 @@
 // compared with the stored bytes before the record is restored (§5), and this module reports the
 // loader's resolution rather than reading the file a second time.
 import { resolve } from "node:path";
-import { defineTool, main } from "@flyingrobots/parley-emit";
+import { defineTool, exactJson, main, parseExact } from "@flyingrobots/parley-emit";
 import type { RecordRef } from "./digest.ts";
-import { exactJson } from "./exact.ts";
 import { NUMBER_UNREPRESENTABLE, loadReceipts, type Bundle, type Load, type LoadedRecord, type Replay, type SidecarResolution } from "./load.ts";
 import { repoReceiptDir, stateReceiptDir } from "./locate.ts";
 import {
@@ -445,7 +444,8 @@ export async function openRecords(request: OpenRequest, opts: OpenOptions = {}):
   });
 
   const lines = stdout.lines
-    .map((l) => { try { return JSON.parse(l) as Record<string, unknown>; } catch { return null; } })
+    // Parsed as the loader parses a receipt line, so a `bigint` the read wrote comes back as one.
+    .map((l) => { try { const parsed = parseExact(l); return parsed.ok ? parsed.value as Record<string, unknown> : null; } catch { return null; } })
     .filter((l): l is Record<string, unknown> => l !== null);
 
   if (!answer) throw new Error(`the drill-down did not complete: status ${status}; see the receipt it recorded`);

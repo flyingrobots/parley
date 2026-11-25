@@ -56,10 +56,13 @@ the version `package.json` names; the version is not tagged or published by this
   `^0.4.0 || ^0.5.0` on the way (flyingrobots/parley#171); the reader now takes its exact parser
   and serialiser from the writer and writes a `bigint` through it, so it requires the writer that
   has them.
-- A run section whose head's `resolved` holds such an integer drops `resolved` whole and names it
-  in `dropped`, whatever its size: the lens line is written with `JSON.stringify`, which cannot
-  carry a `bigint`, and the section never states a rounded value. No schema's shape or version
-  moves.
+- A run section whose head's `resolved` holds such an integer **carries it**, whole and exact, on
+  the `parley.lens` line that is written. The section's size, the line and the byte budget are
+  measured on the text written (`exactJson`). `dropped` is unchanged in meaning: a `resolved` too
+  large for the section is left out and named, and nothing else is. In 0.2.0 the section stated
+  the nearest double. No schema's shape or version moves (RD-123).
+- `answer.lines` on a read and a drill-down are parsed exactly, so a `bigint` the read wrote
+  comes back as one.
 - A read whose load held a line back writes one more line, the `warning` below, before its
   ranking step. A read over receipts that hold no such number writes exactly the lines it did.
 - `recordBytes` measures a record by `exactJson`'s text.
@@ -106,8 +109,11 @@ the version `package.json` names; the version is not tagged or published by this
 
 ### Added
 
-- `exactJson(value)`, `ExactValue`, `MAX_EXACT_DIGITS`, `heldBackRuns(load)`,
-  `NUMBER_UNREPRESENTABLE` and `UNREPRESENTABLE_WARNING` (RD-123).
+- `exactJson(value)`, `ExactValue` and `MAX_EXACT_DIGITS`, re-exported from
+  `@flyingrobots/parley-emit`, whose exact parser and serialiser the reader uses and holds no copy
+  of; `heldBackRuns(load)`, `NUMBER_UNREPRESENTABLE` and `UNREPRESENTABLE_WARNING` (RD-123).
+- The reader runs every case of the shared numeric corpus, `conformance/numbers` (RD-124), and a
+  real tool's integers through real processes to its own emitted lines (RD-125).
 - `DefectCode` gains `line.number_unrepresentable` (a quarantine code), `record.number_undecided`
   and `sidecar.number_unrepresentable`; `SidecarState` gains `number_unrepresentable`; `Defect`
   gains an optional `seq`; a `partial` validation gains an optional `why`; `QueryAnswer.counts`

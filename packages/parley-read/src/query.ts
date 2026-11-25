@@ -47,7 +47,7 @@
 // a refusal: a refusal is pure and pre-load, about a question nobody could state; a decline is a
 // verdict about real history, and only a read that ran can give one.
 import { resolve } from "node:path";
-import { defineTool, main, type Run, type Sink } from "@flyingrobots/parley-emit";
+import { defineTool, main, parseExact, type Run, type Sink } from "@flyingrobots/parley-emit";
 import { LENS_SCHEMA, digestFor, sufficientBytes, type Digest } from "./digest.ts";
 import { NUMBER_UNREPRESENTABLE, heldBackRuns, loadReceipts, type Load, type LoadOptions, type LoadedRecord } from "./load.ts";
 import { repoReceiptDir, stateReceiptDir } from "./locate.ts";
@@ -812,7 +812,8 @@ export async function queryReceipts(request: QueryRequest, opts: QueryOptions = 
   });
 
   const lines = stdout.lines
-    .map((l) => { try { return JSON.parse(l) as Record<string, unknown>; } catch { return null; } })
+    // Parsed as the loader parses a receipt line, so a `bigint` the read wrote comes back as one.
+    .map((l) => { try { const parsed = parseExact(l); return parsed.ok ? parsed.value as Record<string, unknown> : null; } catch { return null; } })
     .filter((l): l is Record<string, unknown> => l !== null);
 
   if (!answer) {

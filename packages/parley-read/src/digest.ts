@@ -67,11 +67,12 @@
 // argument reads as a different argument. The run's id, outcome, reason and head statement are
 // never dropped: without them the section does not say which run it is or what became of it.
 //
-// **A `resolved` the line cannot carry is dropped too** (flyingrobots/parley#159). The loader holds
-// an integer beyond the safe range as a `bigint`, and the lens line is written by a JSON writer that
-// cannot carry one. A section whose head's `resolved` holds such an integer drops `resolved` whole
-// and names it in `dropped`, as it does a `resolved` too large: the head, opened by `(run, seq)`,
-// holds the value exactly, and the section never states a rounded one.
+// **A section is measured by the text that is written** (flyingrobots/parley#159,
+// flyingrobots/parley#171). The loader holds an integer beyond the safe range as a `bigint`, and
+// the writer writes one as its exact digits, so a `resolved` that holds one is carried like any
+// other: whole, exact, and dropped only when the section is too large. Every size here is taken
+// from `exactJson`, which is the serialiser the writer uses, so the bound and the byte budget are
+// right for a line that holds such an integer.
 //
 // **Runs of one invocation with one result are named once** (flyingrobots/parley#79, `fold.ts`).
 // Before the bound is applied, runs are folded into their most recent run when their `inv` is
@@ -85,7 +86,7 @@
 // so the count still accounts for every record not named, and `excluded − folded` is what the
 // budget cut. A read that states `fold: false` skips all of it: the lens echoes `fold`, and
 // `loss.folded` is 0.
-import { holdsExact } from "./exact.ts";
+import { exactJson } from "@flyingrobots/parley-emit";
 import { foldRuns, type RunFold } from "./fold.ts";
 import type { LoadedRecord } from "./load.ts";
 import type { AcceptedQuery, Asker, Budget, QueryWindow, View } from "./query.ts";
@@ -257,7 +258,7 @@ export function lensEntry(record: LoadedRecord): LensEntry {
  */
 const sectionBytes = (section: RunSection) => {
   const bounded = section.folded === undefined ? section : { ...section, folded: { others: section.folded.others, records: section.folded.records } };
-  return Buffer.byteLength(JSON.stringify(bounded), "utf8");
+  return Buffer.byteLength(exactJson(bounded), "utf8");
 };
 
 /**
@@ -301,12 +302,11 @@ export function runSection(run: string, window: readonly LoadedRecord[], outcome
       ...(dropped.length === 0 ? {} : { dropped: [...dropped] }),
     } as RunSection;
   };
-  // Before anything is measured: a `bigint` has no place on the line and `JSON.stringify` throws on it.
-  const dropped: Droppable[] = "resolved" in fields && holdsExact(fields.resolved) ? ["resolved"] : [];
+  const dropped: Droppable[] = [];
   let section = build(dropped);
   for (const field of DROPPABLE) {
     if (sectionBytes(section) <= RUN_SECTION_BYTES) break;
-    if (!(field in fields) || dropped.includes(field)) continue;
+    if (!(field in fields)) continue;
     dropped.push(field);
     section = build(dropped);
   }
@@ -317,13 +317,13 @@ export function runSection(run: string, window: readonly LoadedRecord[], outcome
  * The line the writer will write for this digest, byte for byte.
  *
  * The writer builds a record as `{event, t, seq, run, ...payload, _schema}` and writes
- * `JSON.stringify(record) + "\n"` (spec §1.1, §1.3), and a read declares no secrets, so nothing
+ * `exactJson(record) + "\n"` (spec §1.1, §1.3; `JSON.stringify`'s text when the record holds no `bigint`), and a read declares no secrets, so nothing
  * is scrubbed and the payload's own key order survives. Reconstructing it here is what lets a
  * byte budget be applied **before** the line is written rather than discovered after it.
  */
 export function digestLine(digest: Digest, envelope: LineEnvelope): string {
   const { event, ...rest } = digest;
-  return JSON.stringify({
+  return exactJson({
     event,
     t: envelope.t,
     seq: envelope.seq,

@@ -65,7 +65,7 @@
 // **A fold names what it stands for** (flyingrobots/parley#133): `stands_for` lists the other
 // runs' ids, most recent first, so a reader can open their records by `(run, seq)` instead of
 // taking the count on trust.
-import { exactJson } from "./exact.ts";
+import { exactJson } from "@flyingrobots/parley-emit";
 import type { LoadedRecord } from "./load.ts";
 import type { View } from "./query.ts";
 import { PROTOCOL_EVENTS, onViewSurface, toolOwned, type Outcome } from "./rank.ts";

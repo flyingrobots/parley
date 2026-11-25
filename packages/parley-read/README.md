@@ -29,7 +29,8 @@ so lines an earlier reader wrote still validate (flyingrobots/parley#133).
 This is a library with no command, for Bun 1.2 or later. This is version 0.3.0 (tag
 `parley-read-v0.3.0`), on npm once the owner releases and approves it
 ([docs/workflows/release-parley-read](../../docs/workflows/release-parley-read/README.md)).
-`bun add @flyingrobots/parley-read` installs it with `@flyingrobots/parley-emit` `^0.4.0`.
+`bun add @flyingrobots/parley-read` installs it with `@flyingrobots/parley-emit` `^0.5.0`, whose
+exact parser and serialiser it uses.
 Inside this repository it is the workspace package `@flyingrobots/parley-read`.
 
 ## Loading a directory's receipts
@@ -535,7 +536,7 @@ the ids are opened; a drill-down past it declines as a read does and opens nothi
 | `validator(schemas?)`, `schemaRef`, `envelopeGaps` | Exact-pair validation and the version-independent core (§4.5, §4.6) |
 | `SCHEMAS`, `SCHEMA_SOURCE` | The nineteen schemas this reader ships: each of the seventeen messages at its current released version, and the released 1.0.0 of `parley.query` and `parley.lens` beside their 1.1.0, with the commit and digest of each |
 | `QUARANTINE_CODES` | Which defect codes are a kept line rather than a judgement about a record |
-| `exactJson(value)`, `MAX_EXACT_DIGITS`, `ExactValue` | `JSON.stringify` for a record that may hold a `bigint`, which it writes as the JSON number it is; the most digits an integer may have and still be held exactly (4096); the type of a value a record can hold |
+| `exactJson(value)`, `MAX_EXACT_DIGITS`, `ExactValue` | The writer's, re-exported. `JSON.stringify` for a record that may hold a `bigint`, which it writes as the JSON number it is; the most digits an integer may have and still be held exactly (4096); the type of a value a record can hold |
 | `heldBackRuns(load)`, `NUMBER_UNREPRESENTABLE`, `UNREPRESENTABLE_WARNING` | The runs a load held a line back from, which never fold; that line's defect code; and the code of the warning a read reports for them |
 
 ## What a load says, rule by rule
@@ -589,6 +590,10 @@ if (typeof record.value === "bigint") { /* arithmetic on it is bigint arithmetic
 ```
 
 A consumer that parses that text with an ordinary `JSON.parse` loses the precision again.
+
+A read's own `parley.lens` line carries such an integer exactly when a head's `resolved` holds
+one: the section is measured by the text written, and `dropped` still means left out for size and
+nothing else.
 
 A record of a `parley.*` schema that holds a `bigint` is validated with the integer's exact
 value: `invalid` on one conclusive failure (an `end.status` of `9007199254740993` is over the

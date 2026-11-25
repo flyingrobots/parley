@@ -15,7 +15,7 @@
 //         must not leave it; `bytes` and `sha256` describe the stored bytes; a sidecar found missing
 //         or mismatched makes the bundle unavailable for replay.
 //   §1.1  a line is JSON, and a JSON number is a decimal of any size. A number is loaded with the
-//         value its text states (`exact.ts`, flyingrobots/parley#159): a `bigint` where it is an
+//         value its text states (the writer's `parseExact`, flyingrobots/parley#159): a `bigint` where it is an
 //         integer outside the safe-integer range, a number otherwise, and where the reader cannot
 //         hold it at all the line is held back whole rather than returned rounded.
 //   §8    a copy of a run on the shared history stream may be a projection of the receipt copy, and
@@ -26,8 +26,7 @@
 // say, with each claim labelled by how well it is established (§1.2a).
 import { readFileSync, readdirSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
-import { sha256 } from "@flyingrobots/parley-emit";
-import { MAX_EXACT_DIGITS, exactJson, parseExact } from "./exact.ts";
+import { MAX_EXACT_DIGITS, exactJson, parseExact, sha256 } from "@flyingrobots/parley-emit";
 import { readFileLines } from "./lines.ts";
 import { isFile, receiptLocations, type LocateOptions, type ReceiptLocation, type Where } from "./locate.ts";
 import { ENVELOPE, validator, type Validation, type Validator } from "./validate.ts";

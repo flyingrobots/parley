@@ -62,5 +62,10 @@ it as its `gate` job before anything public is created.
   still a draft under `Unreleased` in the changelog (spec §4.5), in which case record the change
   in that entry.
 - Do not claim a section is settled that has not been tested against a real program.
+- Do not release over a confirmed finding that violates evidence fidelity, privacy, identity or a
+  published contract, whether or not the change under review introduced it. Fix it, or stop and
+  ask the owner for an exception and record it
+  ([docs/workflows/release-review](docs/workflows/release-review/README.md)). An agent acting
+  under a delegation does not accept such an exception itself.
 - Do not tag or publish a package as stable while `bun run release-gate -- <package>` refuses
   it, and do not edit, delete or re-point a file under `schemas/released/`.

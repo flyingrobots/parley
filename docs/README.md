@@ -20,6 +20,7 @@
 | [Releasing parley-read](workflows/release-parley-read/README.md) | The same for the reader: the dependency on parley-emit, the publish order, and the manual first publish with its trusted-publisher values |
 | [Releasing parley-emit-py](workflows/release-parley-emit-py/README.md) | The same for the vendorable Python file: the gate before the tag, the workflow that creates its GitHub release with the digest, and what it cannot verify |
 | [Releasing the spec and its schemas](workflows/release-spec/README.md) | The rule a stable release is held to, the release-eligibility checker and its three phases, the release gate and its report, and the two commits and merge commit that release schema versions; its [test plan](workflows/release-spec/test-plan.md) is the contract ledger |
+| [Review findings and release exceptions](workflows/release-review/README.md) | The rule that a confirmed finding against evidence fidelity, privacy, identity or a published contract blocks a release by default, what an exception must record, and the exceptions on record |
 | [Changing a message](workflows/change-a-message/README.md) | Moving the version, then making one change in both the JSON Schema and the SDL, and checking they agree |
 | [Checking the examples](workflows/check-examples/README.md) | How every JSON example is validated against its schema, and how to label one that is not complete |
 

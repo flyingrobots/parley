@@ -1045,4 +1045,21 @@ describe("PE-38 a payload is read once, and what is checked is what is written (
     const two = await go(() => {}, { argv: ["count", "--token", "zq7kx9unrelated"], extra: { resolved: () => ({ command: "count", opts: JSON.parse(`{"__proto__":{"x":2}}`) as unknown }) } });
     expect(inv(one)).not.toBe(inv(two));
   });
+
+  test("an array is read to the length it had when the read began, and a toJSON accessor on BigInt.prototype is never evaluated (review of flyingrobots/parley#183)", () => {
+    const grows: unknown[] = [];
+    Object.defineProperty(grows, 0, { enumerable: true, configurable: true, get() { grows.push(2); return 1; } });
+    expect(emit.exactJson(grows)).toBe("[1]");
+    const growsBig: unknown[] = [];
+    Object.defineProperty(growsBig, 0, { enumerable: true, configurable: true, get() { growsBig.push(2); return BIG; } });
+    expect(emit.exactJson(growsBig)).toBe(`[${BIG_TEXT}]`);
+    let evaluated = 0;
+    Object.defineProperty(BigInt.prototype, "toJSON", { configurable: true, get() { evaluated++; throw new Error("the hook this writer never asks"); } });
+    try {
+      expect(emit.exactJson({ value: 1 })).toBe(`{"value":1}`);
+      expect(emit.exactJson({ value: BIG, boxed: Object(5n) })).toBe(`{"value":${BIG_TEXT},"boxed":5}`);
+      expect(emit.canonical({ value: BIG })).toBe(`{"value":${BIG_TEXT}}`);
+      expect(evaluated).toBe(0);
+    } finally { delete (BigInt.prototype as unknown as { toJSON?: unknown }).toJSON; }
+  });
 });

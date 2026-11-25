@@ -363,15 +363,18 @@ schema versions is one pull request with two commits, in this order.
    The order is what makes the pin true. The sync scripts record `HEAD` as the pin's commit, so a
    sync run before S is committed pins the commit before it, where the files it copied do not
    exist in that form, and `pin.content_differs` says so.
-3. **Check the candidate**: `bun run release-check --phase candidate`, with the whole gate
+3. **Review the candidate.** A confirmed finding against evidence fidelity, privacy, identity or
+   a published contract blocks the release unless the owner accepts a recorded exception, whenever
+   the defect was introduced ([Review findings and release exceptions](../release-review/README.md)).
+4. **Check the candidate**: `bun run release-check --phase candidate`, with the whole gate
    (`bun test`, `bun run check`, `bun run typecheck`). `candidate` passes. `publication` does not
    yet, with `release.not_accepted`, because the default branch has not accepted the release.
-4. **Merge with a merge commit.** S must stay reachable from the default branch under its own
+5. **Merge with a merge commit.** S must stay reachable from the default branch under its own
    commit id, because that id is what every package copy is pinned to. **Squash-merging is not
    used for a release**: it replaces S and P with one new commit, S exists on no branch, and
    `publication` refuses every package with `pin.unreachable`. Rebase-merging gives S a new commit
    id, so the pins name a commit that is not on the branch either.
-5. **After the merge**, `bun run release-check --phase publication` passes on the default branch,
+6. **After the merge**, `bun run release-check --phase publication` passes on the default branch,
    and the steps in [`RELEASE.md`](../../../RELEASE.md) apply. A package version that carries the
    newly released schemas is then released by its own workflow, once its
    [release gate](#the-release-gate) exits `0`

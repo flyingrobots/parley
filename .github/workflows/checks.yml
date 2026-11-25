@@ -51,9 +51,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Bun 1.2.0 cannot read this repository's lockfile (lockfileVersion 2), so the locked
+      # dependencies are installed by the current Bun and the suites then run on 1.2.0.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.2.0
       - run: bun --version && test "$(bun --version)" = "1.2.0"
-      - run: bun install --frozen-lockfile
       - run: bun test packages/parley-emit/test packages/parley-read/test

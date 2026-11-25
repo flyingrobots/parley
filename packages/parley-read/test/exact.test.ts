@@ -1026,3 +1026,75 @@ describe("RD-125 a tool's integers beyond the safe range survive the writer, the
     expect(text).toContain(`"resolved":{"command":"ids","limit":18446744073709551615,"floor":-9007199254740993}`);
   });
 });
+
+describe("RD-126 the review of the 0.3.0 candidate (case 2026-11-25): what the reader could not compare, it never calls the same", () => {
+  test("F-1: with a toJSON on BigInt.prototype in the reading process, adjacent integers still do not fold and the lens states the exact digits", async () => {
+    const proto = BigInt.prototype as unknown as { toJSON?: () => unknown };
+    for (const hook of [function (this: bigint) { return Number(this); }, function (this: bigint) { return this.toString(); }]) {
+      proto.toJSON = hook;
+      try {
+        const apart = await ask("9007199254740992", "9007199254740993");
+        expect(apart.sections).toBe(2);
+        expect(apart.folded).toBe(0);
+        const typed = await ask(`"9007199254740993"`, "9007199254740993");
+        expect(typed.sections).toBe(2);
+        expect(typed.folded).toBe(0);
+        const { dir, receipts, env } = scratch();
+        receipt(receipts, 1, "1", `{"command":"count","limit":18446744073709551615}`);
+        const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: WINDOW, budget: { records: 1000 } }, { cwd: dir, env }));
+        const text = answer.lines.join("\n");
+        expect(text).toContain(`"limit":18446744073709551615`);
+        expect(text).not.toContain(`"limit":"18446744073709551615"`);
+        expect(text).not.toContain("18446744073709552000");
+      } finally { delete proto.toJSON; }
+    }
+  });
+
+  test("F-5: digestFor and foldRuns, called as 0.2.0 called them, never fold a run the loader held a line back from", () => {
+    const { dir, receipts, env } = scratch();
+    receipt(receipts, 1, "0.10000000000000001");
+    receipt(receipts, 2, "0.7000000000000000001");
+    receipt(receipts, 3, "1");
+    receipt(receipts, 4, "1");
+    const load = loadReceipts({ cwd: dir, env });
+    const plan = planQuery({ asker: { tool: "t" }, view: "everything", window: WINDOW, budget: { records: 100 } });
+    if (plan.refused) throw new Error("refused");
+    const ranking = rankRecords(plan.query, load.bundles.flatMap((b) => b.records));
+    // Five arguments: no set of held-back runs is passed. The fact travels on the records.
+    const digested = digestFor(plan.query, { run: runId(9), seq: 1 }, ranking.records, { run: runId(9), seq: 9, t: T0 }, ranking.outcomes);
+    const sections = digested.digest.runs.map((r) => [r.run, r.folded?.stands_for ?? null]);
+    // Runs 3 and 4 hold the same result and fold; runs 1 and 2 each lost their result and stand alone.
+    expect(sections).toEqual([[runId(4), [runId(3)]], [runId(2), null], [runId(1), null]]);
+    const folding = foldRuns(ranking.records, ranking.outcomes, "everything");
+    expect([...folding.folds.keys()]).toEqual([runId(4)]);
+    for (const b of load.bundles) for (const r of b.records) expect(r.runHeldBack === true).toBe(b.run === runId(1) || b.run === runId(2));
+    // The mark is the loader's and is on no line the read writes.
+    expect(JSON.stringify(digested.digest)).not.toContain("runHeldBack");
+  });
+
+  test("F-6: a line held back from a receipt rules replay out, as the same record held back in a sidecar does", async () => {
+    const { dir, receipts, env } = scratch();
+    receipt(receipts, 1, "0.10000000000000001");
+    receipt(receipts, 2, "1");
+    const { bundles } = loadReceipts({ cwd: dir, env });
+    const held = bundles.find((b) => b.run === runId(1))!, whole = bundles.find((b) => b.run === runId(2))!;
+    expect(held.replay).toEqual({ unavailable: true, reasons: ["line.number_unrepresentable"] });
+    expect(whole.replay).toEqual({ unavailable: false, reasons: [] });
+    const opened = await openRecords({ asker: { tool: "t" }, view: "everything", window: WINDOW, records: [{ run: runId(1), seq: 1 }] }, { cwd: dir, env });
+    expect(exactJson(opened)).toContain(`"unavailable":true`);
+  });
+
+  test("F-9: the defect for a held-back line quotes a long token in part and says its length; the line itself is kept whole", () => {
+    const { dir, receipts, env } = scratch();
+    const token = "1" + "0".repeat(2_000_000);
+    receipt(receipts, 1, token);
+    const load = loadReceipts({ cwd: dir, env });
+    const d = coded(load.quarantined, "line.number_unrepresentable");
+    expect(d.length).toBe(1);
+    expect(d[0]!.problem.length).toBeLessThan(1000);
+    expect(d[0]!.problem).toContain("2000001 characters");
+    expect(d[0]!.raw!.length).toBeGreaterThan(2_000_000);
+    expect(d[0]!.raw).toContain(token);
+  });
+});
+

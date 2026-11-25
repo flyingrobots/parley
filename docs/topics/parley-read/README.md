@@ -164,7 +164,7 @@ digits survive only through a parser that keeps them, as this one does.
 | `t` | Kept exact in the record. `LoadedRecord.t` is null, so the record is undated: it is in no window, `counts.undated` counts it, and it sorts last in its tier |
 | `end.status` | A status other than zero: the run `failed` and replay is unavailable for `end.status_nonzero`. `Bundle.status` is a `number` or null, and is null |
 | A `sidecar` event's `source` or `bytes` | The sidecar is `unreadable`: it does not name a usable `source` and `bytes` |
-| A run section's `resolved` | Dropped whole and named in `dropped`, whatever its size. The lens line is written by the writer library with `JSON.stringify`, which cannot carry a `bigint`, and a section never states a rounded value. The head, opened by `(run, seq)`, holds it exactly |
+| A run section's `resolved` | Dropped whole and named in `dropped`, whatever its size. The lens line is written by the writer library with `JSON.stringify`, which cannot carry a `bigint` ([flyingrobots/parley#171](https://github.com/flyingrobots/parley/issues/171)), and a section never states a rounded value. The head, opened by `(run, seq)`, holds it exactly |
 | The lines a read writes | Hold no `bigint`: a lens names records by `(run, seq)`, `event`, `t` and `code`, and the one field copied from a record, `resolved`, is the row above |
 
 ### What the scan costs
@@ -928,9 +928,11 @@ still ranks above a succeeded run's. `what-failed` is unaffected: every warning 
   [flyingrobots/parley#2](https://github.com/flyingrobots/parley/issues/2).
 - Make a non-integral decimal exact. A non-integral number is a double; one that is no double's
   digits, and an integer of more than 4096 digits, it cannot hold at all, and it says so and keeps
-  the line's bytes rather than return the number rounded ([numbers](#numbers)).
+  the line's bytes rather than return the number rounded ([numbers](#numbers);
+  [flyingrobots/parley#173](https://github.com/flyingrobots/parley/issues/173)).
 - Validate a record that holds an integer beyond the safe range. It reports that it did not
-  ([numbers](#what-the-reader-does-with-a-bigint)).
+  ([numbers](#what-the-reader-does-with-a-bigint);
+  [flyingrobots/parley#172](https://github.com/flyingrobots/parley/issues/172)).
 - Versions up to 0.2.0 parsed every number into a double, so there an integer outside
   −(2^53)+1 to (2^53)−1 might not be returned exactly, and two results that differed only in such
   integers could compare equal and fold, which they did when both parsed to one double

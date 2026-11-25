@@ -548,7 +548,7 @@ the ids are opened; a drill-down past it declines as a read does and opens nothi
 | The copy from the source with no transform line for the run, and the other as a `Projection` | §8: the receipt copy is the record and a projection is a view of it, so a reader prefers the least-projected copy it can see — and says what the other one was, and which `seq` it withheld |
 | A stray line quarantined, kept, attributed to the run | §1.4: kept and reported, and evidence of nothing but the fact that something wrote it |
 | Each integer with the value its text states: a `bigint` outside the safe-integer range, a number inside it | §1.1: a line is JSON, and a JSON number is a decimal of any size. A record never states an integer its receipt does not hold |
-| A line holding a number it cannot represent at all, held back whole as `line.number_unrepresentable` | The same: a non-integral decimal that is no double's digits is not returned rounded. The bytes are kept, the run never folds, and a read warns |
+| A line holding a number it cannot represent at all, held back whole as `line.number_unrepresentable` | The same: a non-integral decimal a double does not give back is not returned rounded. The bytes are kept, the run never folds, and a read warns |
 | An unterminated final line ignored, including a parseable `end` | §5.4: it is not a line, so it cannot establish termination |
 | `validated`, `invalid`, `partial`, `unvalidated` per record | §4.5: full validation is against the exact pair, and "the part I recognise passed" is never "the contract passed" |
 | A sidecar's bytes checked against `bytes` and `sha256`, and the record restored | §5: a sidecar stands in a record's place, and its path must not leave the bundle |
@@ -590,14 +590,18 @@ if (typeof record.value === "bigint") { /* arithmetic on it is bigint arithmetic
 
 A consumer that parses that text with an ordinary `JSON.parse` loses the precision again.
 
-A record of a `parley.*` schema that holds a `bigint` is not validated: the validator cannot
-evaluate one, so the record is `partial` with `why: "number_undecided"`, never `validated` on a
-rounded value and never `invalid` for being a `bigint`. A `seq` beyond the range is rejected; a
-`t` beyond it leaves the record undated; an `end.status` beyond it is a failed run.
+A record of a `parley.*` schema that holds a `bigint` is validated with the integer's exact
+value: `invalid` on one conclusive failure (an `end.status` of `9007199254740993` is over the
+schema's maximum), `validated` when every constraint that applies was decided, and `partial` with
+`why: "number_undecided"` when one could not be. Never on a rounded value. A `seq` beyond the
+range is rejected; a `t` beyond it leaves the record undated; an `end.status` beyond it is a
+failed run.
 
-A number the reader cannot hold at all is a non-integral decimal that is no double's digits, such
-as `0.1000000000000000055`, or an integer of more than 4096 digits, such as `1e1000000000`. Its
-line is not returned as a record. It is kept verbatim as a `line.number_unrepresentable` defect,
+A non-integral number is a `number` only when writing it back states the decimal it stated: `0.1`,
+`0.10` and `1e-1` are one value. A number the reader cannot hold at all is a non-integral decimal
+a double does not give back, such as `0.10000000000000001` or `0.1000000000000000055`, or an
+integer of more than 4096 digits, such as `1e1000000000` (an implementation limit). Its line is
+not returned as a record. It is kept verbatim as a `line.number_unrepresentable` defect,
 `counts.unrepresentable` counts it, its run never folds, and the read reports a
 `read.number_unrepresentable` warning on its own run. The whole contract, and the measured cost of
 the scan, are in the [living reference](../../docs/topics/parley-read/README.md#numbers).
@@ -618,14 +622,14 @@ the scan, are in the [living reference](../../docs/topics/parley-read/README.md#
   digest the receipt declared, and nothing else.
 - Judge conformance. The doctor under `scripts/` names violated rules; this is a loader, and a
   defect it reports is what it could not read or could not validate.
-- Make a non-integral decimal exact, or hold one that is no double's digits, such as
-  `0.1000000000000000055`, or an integer of more than 4096 digits. It keeps the line's bytes and
+- Make a non-integral decimal exact, or hold one a double does not give back, such as
+  `0.10000000000000001`, or an integer of more than 4096 digits. It keeps the line's bytes and
   says so rather than return the number rounded. Versions up to 0.2.0 parsed every number into a
   double, so there an integer outside −(2^53)+1 to (2^53)−1 might not be returned exactly, and two
   results that differed only in such integers could compare equal and fold
   (flyingrobots/parley#159).
-- Validate a record that holds an integer beyond the safe range: it reports `partial`, not
-  evaluated.
+- Decide every schema keyword for an integer beyond the safe range: one it cannot decide leaves
+  the record `partial` (the living reference lists which).
 - Write, create or repair anything. Locating a location does not create it.
 - Windows paths. v0.2 of the spec is POSIX-only.
 

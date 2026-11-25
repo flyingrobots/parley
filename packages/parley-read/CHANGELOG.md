@@ -39,11 +39,16 @@ the version `package.json` names; the version is not tagged or published by this
   Arithmetic and comparison on such a value are `bigint` arithmetic: `typeof value === "bigint"`
   is the test. `LoadedRecord.t` and `Bundle.status` stay `number | null` and are null for a value
   beyond the range; the record itself holds it exactly.
-- **BREAKING: a record of a shipped schema that holds such an integer is `partial`, not
-  `validated`.** The validator cannot evaluate a `bigint`, so the reader says validation was not
-  completed: `why: "number_undecided"` on the validation and a `record.number_undecided` defect.
-  It is never validated on a rounded stand-in and never called `invalid` for being a `bigint`. In
-  0.2.0 such a record was validated as the nearest double (RD-121).
+- **BREAKING: a record of a shipped schema that holds such an integer is validated with its
+  exact value**, never as the nearest double, which is what 0.2.0 validated. The parts of the
+  record that hold no `bigint` go to the schema validator unchanged; the path to the integer is
+  evaluated by the reader. One conclusive failure is `invalid`: an `end.status` of
+  `9007199254740993` is over the schema's `maximum`, and an unrelated `bigint` hides no ordinary
+  failure beside it. Every applicable constraint decided is `validated`. A constraint that could
+  not be decided (a `$ref`, a numeric `format`, a keyword the reader does not implement, a schema
+  constant itself beyond the safe range) leaves the record `partial` with
+  `why: "number_undecided"` and a `record.number_undecided` defect. The living reference lists
+  both sides exactly (RD-121, flyingrobots/parley#172).
 - **BREAKING: a line whose `seq` is beyond 9007199254740991 is rejected**, held back as below. In
   0.2.0 it was placed at the nearest double's `seq`. A `t` beyond the range leaves the record
   undated; an `end.status` beyond it is a status other than zero.
@@ -54,8 +59,18 @@ the version `package.json` names; the version is not tagged or published by this
 - A read whose load held a line back writes one more line, the `warning` below, before its
   ranking step. A read over receipts that hold no such number writes exactly the lines it did.
 - `recordBytes` measures a record by `exactJson`'s text.
-- A load makes one more pass over each line's text. Measured on a 58.8 MB receipt of 200,002
-  lines on Bun 1.4.5: the median load went from about 235 ms to about 305 ms (the figures are in the living reference).
+- A load makes one more pass over each line's text. Two receipts of 200,002 lines were measured,
+  on one machine, and the figures are not a claim about receipts in general: the median of seven
+  loads was 24 to 31 ms higher on one whose results hold an exponent-form number and 7 to 93 ms
+  higher on one of integers and short decimals only, against medians of 216 to 295 ms before. The
+  workloads, the method and every figure are in the living reference.
+
+- **Erratum to the 0.2.0 entry below.** Under "Two runs whose results differ no longer fold" it
+  said results that differ only in an integer beyond 2^53 "still compare equal" and that such an
+  integer "is not returned exactly". That was broader than the behaviour: they compared equal
+  only when both parsed to one double, and an integer a double holds was returned exactly. The
+  sentence now says "can still compare equal" and "may not be returned exactly", and names the
+  range. A correction to the documentation of 0.2.0, not a change to what 0.2.0 does.
 
 ### Fixed
 
@@ -69,16 +84,21 @@ the version `package.json` names; the version is not tagged or published by this
   compare by the exact value, so two different integers never compare equal and an integer equals
   itself written another way (RD-120). This fixes integer precision; a non-integral number is
   still a double.
-- **A number the reader cannot hold is never returned rounded.** A line holding a non-integral
-  decimal that is no double's digits (`0.1000000000000000055`, `1e-400`), or an integer of more
-  than 4096 digits (`1e1000000000`, which is classified and never built), or a `seq` beyond the
+- **A number the reader cannot hold is never returned rounded.** A non-integral number is a
+  `number` only when its decimal value is the decimal value of that number's own JSON
+  serialisation, so `0.1`, `0.10` and `1e-1` are one value (flyingrobots/parley#173). A line
+  holding a non-integral decimal a double does not give back (`0.10000000000000001`,
+  `0.1000000000000000055`, `1e-400`), or an integer of more
+  than 4096 digits (`1e1000000000`, which is classified and never built; the cap is an
+  implementation limit), or a `seq` beyond the
   range, is held back whole: kept verbatim as a `line.number_unrepresentable` quarantine naming
   its run, its `seq` and its line, and not a record. Its run never folds, the answer counts such
   lines, and the read reports one `read.number_unrepresentable` warning. A sidecar whose contents
   hold such a number is `number_unrepresentable`, is not restored, and makes the bundle
-  unavailable for replay (RD-122). In 0.2.0 such a number was returned as the nearest double. A
-  double written with more digits than its shortest form, as C's `%.17g` writes it, is still read
-  as that double.
+  unavailable for replay (RD-122). In 0.2.0 such a number was returned as the nearest double.
+  The cost: a writer that prints doubles with seventeen significant digits, as C's `%.17g` does,
+  has the spellings that fail the rule held back (`0.1` written `0.10000000000000001`), not every
+  line it writes (`0.5` and `0.30000000000000004` load).
 
 ### Added
 

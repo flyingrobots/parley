@@ -304,7 +304,7 @@ function scan(file: string): Scan {
     // state. It names its own run when it can, which is what keeps that run from folding.
     if (!exact.ok) {
       const shown = exact.tokens.slice(0, 3).join(", ") + (exact.tokens.length > 3 ? `, and ${exact.tokens.length - 3} more` : "");
-      quarantined.push(defect(NUMBER_UNREPRESENTABLE, "§1.1", file, line.n, `the line holds a number this reader cannot represent exactly (${shown}): a non-integral decimal that is no double's digits, or an integer of more than ${MAX_EXACT_DIGITS} digits; the line is kept verbatim and is not returned as a record with the number rounded`, { raw: line.raw, run, ...(seq === null ? {} : { seq }) }));
+      quarantined.push(defect(NUMBER_UNREPRESENTABLE, "§1.1", file, line.n, `the line holds a number this reader cannot represent exactly (${shown}): a non-integral decimal a double does not give back, or an integer of more than ${MAX_EXACT_DIGITS} digits; the line is kept verbatim and is not returned as a record with the number rounded`, { raw: line.raw, run, ...(seq === null ? {} : { seq }) }));
       continue;
     }
     if (typeof obj.seq === "bigint" && obj.seq >= 0n) {

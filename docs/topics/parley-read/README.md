@@ -72,7 +72,7 @@ take one kind of evidence for another):
 | --- | --- |
 | `validated` | The line validated against the schema for its exact advertised `(id, version)` pair |
 | `invalid` | That schema rejected it; the validator's messages come with it |
-| `partial` | The `_schema.id` is `parley.*` but this reader ships no schema for that version. The §1.3 envelope was checked and the contract was not, and the §1.3 gaps are listed. With `why: "number_undecided"` the schema is shipped and the record holds an integer beyond the safe range, which the validator [cannot evaluate](#what-the-reader-does-with-a-bigint): not evaluated, which is not a finding that it is invalid |
+| `partial` | The `_schema.id` is `parley.*` but this reader ships no schema for that version. The §1.3 envelope was checked and the contract was not, and the §1.3 gaps are listed. With `why: "number_undecided"` the schema is shipped, the record holds an integer beyond the safe range, nothing was found to fail, and a constraint that applies to that integer [could not be decided](#validating-a-record-that-holds-one) |
 | `unvalidated` | Not validated at all: `tool_owned` when the id belongs to a tool, `no_schema_ref` when the line advertises no pair |
 
 ## Locating receipts
@@ -129,8 +129,8 @@ range in which every JSON implementation agrees on an integer.
 | --- | --- | --- |
 | Integer-valued, inside the range | A `number` | `9007199254740991`; `5.0` and `1e3` are 5 and 1000 |
 | Integer-valued, outside the range | A `bigint` holding exactly that integer, **always**, even where a double could hold it | `9007199254740992` is `9007199254740992n`; `9007199254740993`, `9007199254740993.0` and `9.007199254740993e15` are all `9007199254740993n`; `1e21` is `10n ** 21n`; `1e400` is `10n ** 400n` |
-| Not an integer, and a double's own digits: the double it parses to, rounded to as many significant digits as the number was written with, is the number | A `number`, that double | `1.5`; `0.1`; `0.30000000000000004`; `0.10000000000000001`, which is how C's `%.17g` writes the double 0.1 |
-| Not an integer, and no double's digits; or an integer of more than `MAX_EXACT_DIGITS` (4096) digits | Nothing. The reader cannot hold it and does not return it rounded: the line is [held back](#quarantine) | `0.1000000000000000055`; `1e-400`; `1e1000000000` |
+| Not an integer, and writing the number back states the same decimal: its decimal value is the decimal value of the number's own JSON serialisation | A `number`, the double it parses to | `1.5`; `0.30000000000000004`; `0.1`, `0.10` and `1e-1`, which are one decimal |
+| Not an integer, and a double does not give that decimal back; or an integer of more than `MAX_EXACT_DIGITS` (4096) digits | Nothing. The reader cannot hold it and does not return it rounded: the line is [held back](#quarantine) | `0.10000000000000001`; `0.1000000000000000055`; `1e-400`; `1e1000000000` |
 | A string of digits | The string it is | `"9007199254740993"` |
 
 Because the boundary is fixed, neighbouring large identifiers never alternate between two types,
@@ -138,9 +138,23 @@ and which type a value has depends on the value alone, never on how it was spelt
 numbers all load as JavaScript numbers, which is nearly every line an ordinary writer produces, is
 parsed by `JSON.parse` and nothing else.
 
-**Bounded.** Nothing is built in proportion to a number's magnitude. `1e1000000000` is classified
-from its digits and its exponent, found to be past the cap, and held back without being
-materialised; a token of two million digits is counted, not converted.
+**Two decimals that round to one double are not the same evidence.** `0.1` and
+`0.10000000000000001` state different values, and the reader does not infer from the digits that
+the longer one was a formatter's rendering of the shorter
+([flyingrobots/parley#173](https://github.com/flyingrobots/parley/issues/173)). Accepting `0.1` is
+not a claim that it has an exact binary form: it is that loading it and serialising it preserves
+the decimal the JSON states. The cost falls on a writer that prints doubles with seventeen
+significant digits, as C's `%.17g` does. Not on every line it writes: on the spellings that fail
+the rule. `0.5`, `0.25` and `0.30000000000000004` print the same either way and load; `0.1` printed
+as `0.10000000000000001` is held back. Keeping a decimal's exact identity beside the number, so
+those spellings load too, is that issue's open follow-up.
+
+**The cap is an implementation limit, not a rule about numbers.** An integer of more than 4096
+digits is a legitimate JSON number; this reader does not build it. Nothing is built in proportion
+to a number's magnitude: `1e1000000000` is classified from its digits and its exponent, found to
+be past the cap, and held back without being materialised, and a token of two million digits is
+counted, not converted. The value stays visible through the refusal: the line's bytes are kept
+verbatim in the defect, with its file and line number.
 
 ### Writing a record back out
 
@@ -159,21 +173,94 @@ digits survive only through a parser that keeps them, as this one does.
 | --- | --- |
 | Copies of one `(run, seq)`, the [least-projected copy](#the-least-projected-copy) and the [fold](#runs-of-one-invocation-are-named-once) | Compared through `exactJson`, by value: two different integers never compare equal, an integer equals the same integer written another way, and a number never equals a string of its digits |
 | The drill-down's [byte bound](#a-byte-bound) | `recordBytes` is the UTF-8 length of the record's `exactJson` text, so the integer counts by its digits |
-| Validation against a shipped schema | **Not evaluated.** The validator checks `integer` and `number` by JavaScript type and holds numbers as doubles, so it cannot evaluate a `bigint`. The record is `partial` with `why: "number_undecided"` and a `record.number_undecided` defect. It is never `validated` on a rounded stand-in, and never `invalid` merely for being a `bigint`: "could not evaluate" and "violates the schema" are different findings, and this is the first. A record that holds none validates as before. Nothing in the reader requires a validated record, so nothing further is refused; a caller that requires one must treat `partial` as not validated, as it already must |
+| Validation against a shipped schema | **Decided exactly, as far as it can be**: see [validating a record that holds one](#validating-a-record-that-holds-one). `invalid` on one conclusive failure, `validated` when every constraint that applies was decided, `partial` with `why: "number_undecided"` otherwise. Never a verdict from a rounded stand-in |
 | `seq` | **Rejected when out of range.** Every identity the reader hands out is a `number`, so the largest `seq` it places is 9007199254740991. A line whose `seq` is beyond it is [held back](#quarantine) whole and never placed at another `seq` |
 | `t` | Kept exact in the record. `LoadedRecord.t` is null, so the record is undated: it is in no window, `counts.undated` counts it, and it sorts last in its tier |
-| `end.status` | A status other than zero: the run `failed` and replay is unavailable for `end.status_nonzero`. `Bundle.status` is a `number` or null, and is null |
+| `end.status` | A status other than zero: the run `failed` and replay is unavailable for `end.status_nonzero`. `Bundle.status` is a `number` or null, and is null. Separately, the record is `invalid` against `parley.end`, whose `maximum` is 255: schema validity and the run's outcome are two findings |
 | A `sidecar` event's `source` or `bytes` | The sidecar is `unreadable`: it does not name a usable `source` and `bytes` |
 | A run section's `resolved` | Dropped whole and named in `dropped`, whatever its size. The lens line is written by the writer library with `JSON.stringify`, which cannot carry a `bigint` ([flyingrobots/parley#171](https://github.com/flyingrobots/parley/issues/171)), and a section never states a rounded value. The head, opened by `(run, seq)`, holds it exactly |
 | The lines a read writes | Hold no `bigint`: a lens names records by `(run, seq)`, `event`, `t` and `code`, and the one field copied from a record, `resolved`, is the row above |
 
+### Validating a record that holds one
+
+The schema validator checks `integer` and `number` by JavaScript type and holds every number as a
+double, so it is never handed a `bigint` and never a rounded stand-in for one. A record that
+holds a `bigint` is decided in two parts (`src/decide.ts`):
+
+- **Every part of the record that holds no `bigint` goes to the schema validator**, with the
+  subschema that applies to it, unchanged. An ordinary `status: 256`, a wrong type or a missing
+  required member beside an unrelated `bigint` is found exactly as it always was.
+- **Along the path to a `bigint`, the reader evaluates the keywords itself**, with the integer's
+  exact value.
+
+| Decided exactly | How |
+| --- | --- |
+| `type` | A `bigint` is an `integer` and a `number` |
+| `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum` | The integer against the schema's number, compared exactly |
+| `multipleOf` a positive integer | Integer arithmetic |
+| `const`, `enum` | By value, at any depth |
+| `required`, `properties`, `patternProperties`, `additionalProperties`, `propertyNames`, `minProperties`, `maxProperties`, `dependentRequired`, `dependentSchemas` | On the object that holds the integer |
+| `items`, `prefixItems`, `minItems`, `maxItems`, `uniqueItems`, `contains` without `minContains` or `maxContains` | On the array that holds it; `uniqueItems` compares by exact value |
+| `allOf`, `anyOf`, `oneOf`, `not`, `if` / `then` / `else` | Three-valued, below |
+| String keywords and non-numeric `format`s | Do not apply to a number, an array or an object |
+
+| Stays undecided | Because |
+| --- | --- |
+| `$ref`, `$dynamicRef`, in the path to the integer or in a subschema handed to the validator | A reference is written against the whole document; a part is not decided alone |
+| A numeric `format` (`int32`, `int64`, `float`, `double`) on the integer | Not implemented |
+| `multipleOf` a non-integer; `contains` with `minContains` or `maxContains`; `unevaluatedProperties`, `unevaluatedItems`; the older tuple form of `items`; any keyword not named above | Not implemented |
+| A bound, `const` or `enum` member in the schema that is itself an integer beyond the safe range | The schema document was parsed into doubles, so that constant may not be the one written |
+
+The verdicts combine as the keywords do, and soundly:
+
+- A schema is a conjunction. **One conclusive failure makes the record `invalid`**, whatever else
+  is undecided, and the rest need not be evaluated to say so. It is `validated` only when every
+  keyword that applies was decided and none failed. Otherwise it is `partial` with
+  `why: "number_undecided"` and a `record.number_undecided` defect.
+- `anyOf` fails only when every branch fails. A failing branch beside an undecided one proves
+  nothing. `oneOf` fails on two passing branches, or on none with none undecided.
+- A failure under `not` is the keyword passing; an undecided schema under `not` stays undecided.
+- `if` takes the branch its condition's verdict selects. With an undecided condition, only what
+  `then` and `else` agree on is concluded.
+
+Every schema the package ships uses only keywords in the first table, with no `$ref` and no
+numeric `format`, so a shipped-schema record holding a `bigint` is decided: an `end` whose `status`
+is `9007199254740993` is `invalid` (`/status must be <= 255`); a `receipt.head` whose `t` is that
+integer is `validated`, because the schema says of `t` only that it is an integer of at least 0.
+That verdict is about the schema. It does not say the reader can date the record: it cannot, and
+`LoadedRecord.t` is null. `partial` arises with a caller's own schemas (RD-121).
+
 ### What the scan costs
 
-Establishing that a line's numbers are ordinary is one pass over its text, skipping strings.
-Measured on one receipt of 200,002 lines and 58.8 MB (half tool results with fractions, digests and
-arrays, half `receipt.step` records), seven loads a round over three alternating rounds on Bun
-1.4.5: the median load took 267, 226 and 211 ms before the scan and 327, 303 and 283 ms with it, about 70 ms or 0.35 µs a line more. A line that does hold a number of more than fifteen digits or an exponent has that number
-parsed; a line that holds a `bigint` is parsed a second time by the package's own parser.
+Establishing that a line's numbers are ordinary is one pass over its text, skipping strings. A
+number of at most fifteen digits with no exponent is settled without parsing it; a longer one, or
+one with an exponent, is parsed and compared; a line that holds a `bigint` is parsed a second time
+by the package's own parser.
+
+Two workloads were measured, and they are two workloads: nothing here is a claim about receipts
+in general. Each is one receipt of 200,002 lines, a head, an `end`, and 200,000 lines alternating
+a `receipt.step` record with a tool's own result holding a path, two integers, a six-digit
+fraction, a 64-character hex digest and an array of four numbers.
+
+| Workload | The array's third number | Size |
+| --- | --- | --- |
+| mixed | `1e3`, an exponent form, which the scan parses | 58.8 MB |
+| ordinary | `1000`: integers and short decimals only | 58.9 MB |
+
+Method: the receipt is written once to a fresh temporary directory; `loadReceipts` is called seven
+times in one process and each call timed with `performance.now()`; the median of the seven is one
+figure. Three rounds, alternating the reader before the change (origin/main's sources) and after
+it, on Bun 1.4.5 on one machine that was running other work at the time.
+
+| Workload | Median before (ms), three rounds | Median after (ms), three rounds |
+| --- | --- | --- |
+| mixed | 292, 225, 295 | 323, 253, 319 |
+| ordinary | 232, 216, 245 | 239, 309, 309 |
+
+The after figure was higher in every pair, by 24 to 31 ms on the mixed receipt and by 7 to 93 ms
+on the ordinary one. The spread between rounds of one configuration is as large as the difference
+being measured, so these figures bound the cost on this machine at between about 0.04 and 0.5 µs a line
+and do not establish it more closely than that.
 
 ## Quarantine
 
@@ -926,13 +1013,13 @@ still ranks above a succeeded run's. `what-failed` is unaffected: every warning 
 - Serve a reader over the network, or hold an index. A read is a function call that loads the
   directory it was pointed at, once, per read; the store's indexing is
   [flyingrobots/parley#2](https://github.com/flyingrobots/parley/issues/2).
-- Make a non-integral decimal exact. A non-integral number is a double; one that is no double's
-  digits, and an integer of more than 4096 digits, it cannot hold at all, and it says so and keeps
+- Make a non-integral decimal exact. A non-integral number is a double; one a double does not
+  give back, and an integer of more than 4096 digits, it cannot hold at all, and it says so and keeps
   the line's bytes rather than return the number rounded ([numbers](#numbers);
   [flyingrobots/parley#173](https://github.com/flyingrobots/parley/issues/173)).
-- Validate a record that holds an integer beyond the safe range. It reports that it did not
-  ([numbers](#what-the-reader-does-with-a-bigint);
-  [flyingrobots/parley#172](https://github.com/flyingrobots/parley/issues/172)).
+- Decide every schema keyword for an integer beyond the safe range. What it decides and what
+  stays `partial` is [listed](#validating-a-record-that-holds-one); complete positive validation
+  is [flyingrobots/parley#172](https://github.com/flyingrobots/parley/issues/172).
 - Versions up to 0.2.0 parsed every number into a double, so there an integer outside
   −(2^53)+1 to (2^53)−1 might not be returned exactly, and two results that differed only in such
   integers could compare equal and fold, which they did when both parsed to one double

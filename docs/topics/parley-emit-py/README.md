@@ -133,6 +133,23 @@ steps in the receipt. Writes to descriptors 1 and 2 themselves (C extensions, `o
 processes), handlers holding the original streams, text after `end`, hard crashes and signals are
 outside it; the package README lists them as the documented exceptions of spec §6.
 
+## Numbers
+
+The writer serialises with `json.dumps`, so a number is written as Python holds it: an `int`
+with every digit, whatever its size, and a `float` as `repr` spells it. `TestNumericCorpus` runs
+the repository's [numeric corpus](../../../conformance/numbers/README.md) through it and pins each
+place the output is not the corpus's text (flyingrobots/parley#176):
+
+- An integral `float` keeps its fraction: `5.0`, where the TypeScript writer writes `5`. A small
+  one has a two-digit exponent: `1e-07` for `1e-7`. Same values, other spellings.
+- There is no digit cap. An integer of more than 4,096 digits is written in full; the TypeScript
+  parser does not hold such a number, and the TypeScript writer refuses to emit one.
+- A `float` that is not finite raises: the run reports `uncaught.exception` and ends with status
+  2. The TypeScript writer writes `null` (flyingrobots/parley#177).
+- The writer writes what it is handed. A tool that reads JSON with `json.loads` has already lost
+  an integer spelt with a fraction or an exponent: `9007199254740993.0` loads as a `float` and is
+  written `9007199254740992.0`. Handed the `int`, the writer emits `9007199254740993`.
+
 ## The schemas it ships
 
 `scripts/sync_schemas.py` (`bun run sync-schemas` in the package) embeds `schemas/*.schema.json`

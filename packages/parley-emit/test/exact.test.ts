@@ -1062,4 +1062,27 @@ describe("PE-38 a payload is read once, and what is checked is what is written (
       expect(evaluated).toBe(0);
     } finally { delete (BigInt.prototype as unknown as { toJSON?: unknown }).toJSON; }
   });
+
+  test("a result's event is checked on the one reading that is written, and a receipt-only __proto__ member is kept (second review of flyingrobots/parley#183)", async () => {
+    let reads = 0;
+    const r = await go((run) => {
+      const shifty = { get event() { return reads++ < 2 ? "result" : undefined; }, value: 1 };
+      expect(() => run.result(shifty as unknown as Record<string, unknown>, P.any)).toThrow(TypeError);
+      let once = 0;
+      run.result({ get event() { once++; return "result"; }, value: 2 } as unknown as Record<string, unknown>, P.any);
+      expect(once).toBe(1);
+      run.result({ event: "result", value: 3 }, P.any, JSON.parse(`{"__proto__":{"rows":[1]}}`) as Record<string, unknown>);
+      expect(() => run.result({ event: "result", value: 4 }, P.any, JSON.parse(`{"toString":1}`) as Record<string, unknown>)).not.toThrow();
+    });
+    expect(r.err).toEqual([]);
+    expect(r.status).toBe(0);
+    expect(of(r.out, "result").map(valueText)).toEqual(["2", "3", "4"]);
+    expect(of(r.receipt, "result").map(valueText)).toEqual(["2", `3,"__proto__":{"rows":[1]}`, `4,"toString":1`]);
+  });
+
+  test("the transform guard keeps its wider rule for numbers: a number whose digits contain a declared secret is withheld (second review of flyingrobots/parley#183)", async () => {
+    const r = await go((run) => { run.result({ event: "result", value: 1 }, P.any); }, { argv: ["count", "--token", "123456789012345"], transform: (rec) => (rec.event === "result" ? { ...rec, value: 91234567890123456n } : rec) });
+    expect(codes(of(r.err, "warning"))).toEqual(["history.transform_unredacted"]);
+    expect(of(r.stream, "result")).toEqual([]);
+  });
 });

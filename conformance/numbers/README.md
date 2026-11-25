@@ -55,7 +55,7 @@ here, because it rounds the expected value and the actual one alike.
 | `string-of-digits`, `string-holding-numbers` | A number against a string of the same digits |
 | `nested`, `nested-adjacent`, `nested-unrepresentable` | Numbers inside objects and arrays, each decided in place |
 
-50 cases: 36 `exact` and 14 `unrepresentable`.
+50 cases: 39 `exact` and 11 `unrepresentable`.
 
 ## Changing it
 

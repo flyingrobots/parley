@@ -77,7 +77,7 @@ conforming (`bun run doctor --stdout ... --stderr ... --receipt ...`).
 | §5, §5.2 | `.parley/receipts/<run>.jsonl` under the initial working directory, after `.parley/.gitignore` holds a line `*` (created if absent, linked into place whole, never overwritten). The receipt goes to `$XDG_STATE_HOME/parley/<repo-hash>/receipts/` instead, with a `receipt.relocated` warning, when the ignore file is a user's (without `*`, or with a negation that can re-include `receipts/`, such as `!receipts/` or `!*/`; a negation the writer cannot evaluate exactly counts as one: an inner `/`, a backslash, any character outside printable ASCII, a bracket expression that is unterminated or holds `[:`, `[=` or `[.` (so `![[:alpha:]]eceipts`), and any line holding a NUL byte; both writers apply the same rule) or when the working-directory path would carry a declared secret value; an unwritable working directory falls back the same way, silently (the bootstrap line says where). No writable location is `startup.receipt_unwritable`; a state path that would also carry the secret is `startup.secret_in_path`; both exit 3 |
 | §1.3 | One counter for the run; copies of one event share `seq`, `t` and `event`; a receipt copy may carry more (`receiptExtra`). A `receiptExtra` field the record also carries must hold an equal JSON value, or the call throws `TypeError` before either copy is written and before a `seq` is taken; an equal shared field is written from the record (flyingrobots/parley#130) |
 | §2.2 | `inv` over tool, version, command, the redacted resolved interpretation and the bytes of every declared input (see below); on the bootstrap line and head when no inputs are declared, else in `receipt.inputs` before `end`; omitted when any input is unreadable. With no declared inputs it identifies the question only, not the state of the world |
-| §5.3 | Scrub widely, resolve narrowly (flyingrobots/parley#93): only the running command's credential sources are resolved and listed in `redacted.sources`, and another command's never are, while the declared flags and variables of every command, whichever command runs, are scrubbed and those present are named in `redacted.env`. Their values are replaced with `[redacted]` in `argv`, `resolved`, `inputs` and the payload of every later record, `end` included, before any copy leaves the process. Replacement is within strings, longest secret first; a number, boolean or bigint whose decimal form is a secret becomes `[redacted]` (a PIN parsed to a number is still the PIN); an object key carrying a secret is renamed. The head's `redacted` records where; a later surfacing is recorded by a `redaction` event; `end.redacted` aggregates. The envelope, the writer's digests and the public identity a writer-built record carries (the tool's name and version, a command's name, a schema's id and version, discovery lines included, and the `code` of a diagnostic the writer itself raises, whose corruption would put an invalid line on the stream; a tool's own diagnostic is not writer-built and its `code` is scrubbed like anything else) are never scrubbed, and a writer-built scalar (`status`, `dry_run`, `network`) is never a secret. Nor are the protocol's own words in a writer-built record: its field names (`paths`, `status`, `op`), a bookkeeping entry's `op` (`create`, `append`, `delete`) and an input's `error` token (`input.unreadable`, `input.unread`). A declared secret that happens to equal one, such as `--token create`, coincides with a public word; replacing the word would publish a line its released schema rejects. Every other string in a writer-built record is scrubbed, an input's `path` and `role`, a command's `intent` and a bookkeeping `scope` included. The records the writer raises on its own account are writer-built as well (flyingrobots/parley#161): `uncaught.exception` and `uncaught.writer_failure`, the retention and history-retention steps, the projection step and the captured-console step. A declared secret equal to `code`, `problem`, `decision`, `because` or `detail` therefore neither renames a field of theirs nor has one withheld, and the text they carry from the tool (an exception's name, message and stack, a captured line, a file name) is scrubbed. A step, warning or error the tool emits is the tool's record: scrubbed in full, keys included, and checked. The schema document a `schema` line publishes is the tool's static declaration and is published as declared (flyingrobots/parley#111); every other discovery field is scrubbed: a run id or receipt path that would carry a secret is never chosen; a session that carries one is `startup.secret_in_identity`, exit 3; the tool's own name and version are public and printed as they are. A record of the tool's that redaction made invalid under its declared schema is not published: one `redaction.schema_conflict` error replaces it and the run ends with status 4 ([below](#a-record-redaction-made-invalid), flyingrobots/parley#131) |
+| §5.3 | Scrub widely, resolve narrowly (flyingrobots/parley#93): only the running command's credential sources are resolved and listed in `redacted.sources`, and another command's never are, while the declared flags and variables of every command, whichever command runs, are scrubbed and those present are named in `redacted.env`. Their values are replaced with `[redacted]` in `argv`, `resolved`, `inputs` and the payload of every later record, `end` included, before any copy leaves the process. Replacement is within strings, longest secret first; a number, boolean or bigint whose decimal form is a secret becomes `[redacted]` (a PIN parsed to a number is still the PIN), and a bigint beside it is written exactly ([below](#integers-beyond-the-safe-range)); an object key carrying a secret is renamed. The head's `redacted` records where; a later surfacing is recorded by a `redaction` event; `end.redacted` aggregates. The envelope, the writer's digests and the public identity a writer-built record carries (the tool's name and version, a command's name, a schema's id and version, discovery lines included, and the `code` of a diagnostic the writer itself raises, whose corruption would put an invalid line on the stream; a tool's own diagnostic is not writer-built and its `code` is scrubbed like anything else) are never scrubbed, and a writer-built scalar (`status`, `dry_run`, `network`) is never a secret. Nor are the protocol's own words in a writer-built record: its field names (`paths`, `status`, `op`), a bookkeeping entry's `op` (`create`, `append`, `delete`) and an input's `error` token (`input.unreadable`, `input.unread`). A declared secret that happens to equal one, such as `--token create`, coincides with a public word; replacing the word would publish a line its released schema rejects. Every other string in a writer-built record is scrubbed, an input's `path` and `role`, a command's `intent` and a bookkeeping `scope` included. The records the writer raises on its own account are writer-built as well (flyingrobots/parley#161): `uncaught.exception` and `uncaught.writer_failure`, the retention and history-retention steps, the projection step and the captured-console step. A declared secret equal to `code`, `problem`, `decision`, `because` or `detail` therefore neither renames a field of theirs nor has one withheld, and the text they carry from the tool (an exception's name, message and stack, a captured line, a file name) is scrubbed. A step, warning or error the tool emits is the tool's record: scrubbed in full, keys included, and checked. The schema document a `schema` line publishes is the tool's static declaration and is published as declared (flyingrobots/parley#111); every other discovery field is scrubbed: a run id or receipt path that would carry a secret is never chosen; a session that carries one is `startup.secret_in_identity`, exit 3; the tool's own name and version are public and printed as they are. A record of the tool's that redaction made invalid under its declared schema is not published: one `redaction.schema_conflict` error replaces it and the run ends with status 4 ([below](#a-record-redaction-made-invalid), flyingrobots/parley#131) |
 | §5 | A receipt record over 65,536 bytes becomes a sidecar `<run>/<seq>.json` with a `sidecar` event in its place; if the sidecar cannot be written the record is kept inline, so the bundle stays complete, and the failure is a `sink.sidecar_failed` error with status 4 |
 | §5.1 | Retention by count of this tool's own receipts per location (another tool's are never counted), oldest completed bundles first (a receipt whose last line is `end`, or one without an `end` older than a day, judged at the decision; a receipt that moved before the unlink is spared; no lock, so a run silent for over a day that then appends while retention deletes its receipt loses it, flyingrobots/parley#112), recorded as a `receipt.step`; never a receipt still in flight; never on `--dry-run` |
 | §4.1, §4.2 | `--schema` and `<command> --help` are runs that emit `command` and `schema` lines. A command's error types default to `parley.error` and `parley.startup.failed`, since every command can produce a startup failure (flyingrobots/parley#92); a command that declares `errors` replaces the default and names both itself |
@@ -146,6 +146,11 @@ over different files will share it. A tool whose answer depends on content it do
 an input should carry that content's address in `resolved`, as footprint carries the commit ids
 of the range it compares. Two invocations differing only in a declared secret share an `inv`,
 which is why a redacted receipt is never replayed (spec §2.3).
+
+A `bigint` in `resolved` is canonical as its exact digits, so two questions that differ in an
+integer beyond the safe range have two identities, and `5n` has the canonical form `5` has. Every
+value the writer accepted before 0.5.0 has the canonical form and the `inv` it had: a test
+reproduces 25 identities pinned from the 0.4.0 source (`test/fixtures/inv-pinned.jsonl`).
 
 ## Declared inputs
 
@@ -330,6 +335,119 @@ There are two remedies:
 Deleting the `schema` document from the declaration is not a fix. It removes the refusal and the
 check together, because spec §5.3 exempts a program that holds no schema document for the pair:
 the record is then published with `[redacted]` in it and nothing has established that it is valid.
+
+## Integers beyond the safe range
+
+A JSON number is a decimal of any size, and JavaScript's number is a double: it holds every
+integer from -9007199254740991 to 9007199254740991 and not every integer beyond. A 64-bit id does
+not fit. Pass such an integer as a `bigint`, and the writer writes it as the JSON number it is:
+exact unquoted digits, never a string and never with an `n`.
+
+```ts
+run.result({ event: "row", id: 9007199254740993n, amount: 0.1 }, { id: "ledger.row", version: "1.0.0" });
+```
+
+Captured from that call, the stdout line; the receipt's line is the same bytes:
+
+```jsonl
+{"event":"row","t":1795576112342,"seq":2,"run":"01M88AT96EYT1522W75SDBMSPX","id":9007199254740993,"amount":0.1,"_schema":{"id":"ledger.row","version":"1.0.0"}}
+```
+
+Before 0.5.0 the call threw `TypeError: JSON.stringify cannot serialize BigInt.` and the run ended
+with `uncaught.exception` and status 2.
+
+| Where | What happens to a `bigint` |
+| --- | --- |
+| stdout, stderr, the receipt | The same exact digits on each: one serialiser writes every copy |
+| A sidecar | The stored bytes hold the digits, and the `sidecar` event's `bytes` and `sha256` describe those bytes |
+| The shared history stream | The receipt's bytes. With a transform, the receipt line is parsed exactly first, so the transform is handed a `bigint` and what it returns is written exactly |
+| `resolved`, `inv`, `canonical` | Exact digits in the head and in the canonical form |
+| Redaction | A `bigint` whose digits are a declared secret becomes `[redacted]`; one beside another redacted field is untouched |
+| The post-redaction check | A JSON number and an integer, decided by exact comparison ([below](#a-bigint-under-a-schema)) |
+| `--human` | The default rendering holds the digits; a tool's renderer is handed the `bigint` |
+| `seq`, `t`, `status` | Always numbers. `run.end(1n)` throws `TypeError` |
+
+A `bigint` inside the safe range is the same JSON number a number is: `5n` is written `5`.
+
+### Reading the text back: `parseExact` and `exactJson`
+
+`JSON.parse` rounds on the way in, so a consumer that parses a line with it has
+`9007199254740992` where the line says `9007199254740993`. The writer exports the pair that does
+not, and uses it wherever it reads its own text:
+
+```ts
+import { exactJson, parseExact } from "@flyingrobots/parley-emit";
+
+const parsed = parseExact(line);
+if (parsed.ok) exactJson(parsed.value);   // the line again, digit for digit
+else parsed.tokens;                       // the numbers that could not be held, as written
+```
+
+`parseExact` decides each number from its text:
+
+| The number | Held as | Examples |
+| --- | --- | --- |
+| An integer from -9007199254740991 to 9007199254740991, however spelt | `number` | `5`, `5.0`, `5e0`, `1e3`, `120e-1` |
+| An integer outside that range, however spelt | `bigint`, always, even where a double could hold it | `9007199254740992`, `9007199254740993.0`, `9.007199254740993e15`, `1e21`, `1e400` |
+| Not an integer, and its decimal value equals that of the number's standard JSON serialisation (what `JSON.stringify` writes) | `number` | `0.1`, `0.10`, `1e-1`, `0.30000000000000004` |
+| Anything else | not held: `ok: false`, and the number is in `tokens` | `0.10000000000000001`, `0.1000000000000000055`, `1e-400`, an integer of more than 4,096 digits |
+
+The third row is the owner's ruling on flyingrobots/parley#173: `0.1` and `0.10000000000000001`
+round to one double and are two decimals, so the second is not accepted as the first. Accepting
+`0.1` does not claim it has an exact binary form; it means reading it and writing it back
+preserves the decimal the text states. This makes integers exact. It does nothing for a decimal
+with more digits than a double returns: carry such a value as a string.
+
+`MAX_EXACT_DIGITS` is 4,096, an implementation limit and not a property of JSON. A longer token,
+or one with an enormous exponent (`1e1000000000`), is classified from its length without being
+built. `parseExact` throws exactly when `JSON.parse` throws; for a text with no such number it
+returns `JSON.parse`'s own value. When it returns `ok: false`, `partial` is the value with the
+symbol `UNREPRESENTABLE` where each such number was, for reading the fields beside it.
+`holdsExact(value)` says whether a value holds a `bigint` at any depth.
+
+The same rules are pinned as data in the repository's
+[numeric corpus](../../conformance/numbers/README.md), which this package's suite runs through a
+real run, case by case.
+
+### A bigint under a schema
+
+`checkRecord`, which the writer uses after a redaction and after a history transform, treats a
+`bigint` as a JSON number and an integer and never converts it to check it. `type`, `const`,
+`enum`, `minimum`, `maximum`, `exclusiveMinimum` and `exclusiveMaximum` are decided by exact
+comparison: `9007199254740993n` is above a `maximum` of 9007199254740991, and `5n` satisfies
+`const: 5`.
+
+One case it cannot decide. A schema document in memory holds its numbers as doubles, and one
+beyond the safe range may be a rounded reading of the schema's text: `maximum:
+18446744073709551615` loads as 18446744073709551616. An integer beyond the safe range beside
+such a number would be judged against a bound the schema never stated, so the checker answers
+`unsupported`. For a record redaction changed that is `redaction.schema_unchecked`: not checked,
+which is not the same as invalid. A `bigint` inside the safe range is decided against any bound.
+
+### What the writer refuses
+
+- **A `bigint` of more than 4,096 digits.** The emitting call throws `TypeError` before a `seq`
+  is taken and nothing is written; `resolved` holding one is `startup.arguments_invalid`, exit 3;
+  a transform's body holding one is withheld as `history.transform_invalid`. The writer does not
+  write a number its own parser could not read back.
+- **A `bigint` exit status.** `run.end(1n)` throws `TypeError`; through `main` that is an
+  `uncaught.exception` line and status 2.
+- **Receipt text it cannot hold exactly, in front of a transform.** No emission writes such text.
+  If it ever met some, the writer would neither hand the transform a rounded record nor append
+  the line past the transform: it withholds the line from the stream and warns with
+  `history.number_unrepresentable`. The receipt is unaffected.
+
+### Four decisions the owner may overrule
+
+- **The oversized `bigint` is refused, not written.** Writing it would be exact too, and the
+  reader would then hold the line back. Refusing keeps the writer inside what its parser reads.
+- **A number the tool passed beyond the safe range reaches a transform as a `bigint`.** `2 ** 53`
+  is written `9007199254740992`, and the transform is handed `9007199254740992n`, because the
+  rule is decided from the text. A transform written for numbers sees a type change for such
+  values, and the stream copy of `1e21` is spelt as 22 digits.
+- **The undecidable bound is "unchecked" only for an integer beyond the safe range.** A stricter
+  rule would refuse to compare any `bigint` with a schema number beyond the safe range.
+- **`NaN` and `Infinity` are still written as `null`**, as before (flyingrobots/parley#177).
 
 ## What a receipt can contain
 

@@ -23,6 +23,7 @@ it. This page is the reference for what the package does on `main`; the package
 | `declaredProjection(values)` | A built-in transform: the writer's own §5.3 scrubber applied to the stream copy's body with a second declared set; `undefined` for an empty set, so no transform is configured at all |
 | `refuseSuspectedSecrets`, `findSuspectedSecret`, `SECRET_PATTERNS`, `refuse`, `isHistoryRefusal` | The built-in transform that withholds a line whose body matches one of ten documented token shapes, the shapes themselves as data, and the typed refusal a transform returns to withhold a line under a code of its own |
 | `checkRecord` | The bounded JSON Schema check the writer re-validates a projected line and a redacted record with, in a package with no runtime dependencies. A failing result carries `errors` and, in the same order, the JSON Pointer of each in `pointers` |
+| `parseExact`, `exactJson`, `holdsExact`, `MAX_EXACT_DIGITS`, `UNREPRESENTABLE` | The exact parser and serialiser ([below](#numbers)): JSON text read with every number's value kept or named as one that could not be, and a value written with a `bigint` as exact digits. The writer owns them; the reader is to import them |
 | `classifySecrets`, `collectSecretValues`, `redactArgv`, `scrub` | Redaction |
 | `ulid` | Run ids |
 
@@ -271,6 +272,42 @@ pair: the ones it ships and the ones the tool declared on its emitted and error 
 | Report | One writer-built `error`, code `redaction.schema_conflict`, on stderr and in the receipt. `problem` and `detail` (`schema: {id, version}`, `at`, `redacted`) name the fields by JSON Pointer and the schema pair. The checker's text is deliberately not used: it can quote the schema, and the value is the secret or sits beside it. Being writer-built, the error is not checked again, so it cannot raise another |
 | Refusal | The call throws `ParleyRedactionConflict`. `main` does not turn it into `uncaught.exception`; a handler may catch it and continue |
 | Status | 4, forced at `end` exactly as a sink failure forces it, whatever status the handler passes, for a conflict and for a schema that could not be evaluated alike. `run.redactionRefused` is true |
+
+## Numbers
+
+A record's payload may hold a `bigint` (flyingrobots/parley#171). It is written as a JSON number
+of exact unquoted digits and stays exact through every place a record travels. `seq`, `t` and
+`status` are the writer's and are always numbers.
+
+| Boundary | Behaviour |
+| --- | --- |
+| Serialisation | Every line on every sink is written by `exactJson`: `JSON.stringify`'s own text for a value holding no `bigint`, and the same rules with a `bigint` as its digits otherwise. stdout, stderr and the receipt are serialised from one value, so their copies hold the same digits. A `bigint` inside the safe range is written as the number it equals (`5n` is `5`) |
+| Sidecar | The stored bytes are that text; `bytes` and `sha256` on the `sidecar` event are of the stored bytes |
+| History stream | Without a transform, the receipt's bytes. With one, the receipt line is parsed by `parseExact`, the transform is handed the result, and what it returns is checked and written by `exactJson`. A number the tool passed beyond the safe range therefore reaches a transform as the `bigint` its text states (`2 ** 53` as `9007199254740992n`), and the stream copy states the same value, spelt as digits |
+| Reparsed text the writer cannot hold | The line is not handed to the transform and not appended past it: it is withheld from the stream with a `history.number_unrepresentable` warning naming the `seq` and the numbers as written. No emission writes such text, because the writer refuses a `bigint` its parser could not read back; this is the second guard |
+| Redaction | A `bigint` whose decimal digits are a declared secret is replaced with `[redacted]`, as a number is. Any other `bigint` passes through the scrub unchanged |
+| Post-redaction check, projection re-validation | `checkRecord` treats a `bigint` as a JSON number and an integer. `type`, `const`, `enum` and the four bounds are decided by exact comparison. An integer beyond the safe range beside a schema number that is itself beyond the safe range is not decided, since that number may be a rounded reading of the schema's text: the answer is `unsupported`, which a redaction reports as `redaction.schema_unchecked` and a projection as `history.transform_uncheckable`. A `bigint` inside the safe range is decided against any bound. Nothing is ever checked as a converted double |
+| `inv`, `canonical` | A `bigint` is canonical as its digits; `5n` and `5` share a form. Every value accepted before 0.5.0 keeps its canonical form and its `inv` |
+| `--human`, errors, the top-level handler | The default rendering uses `exactJson`; a tool's renderer is handed the `bigint`; a diagnostic's `detail` may hold one; captured console output of an object holding one keeps its JSON form |
+| Refusals | A `bigint` of more than `MAX_EXACT_DIGITS` (4,096) digits: the emitting call throws `TypeError` before a `seq` is taken, `resolved` holding one is `startup.arguments_invalid`, and a transform's body holding one is `history.transform_invalid`. A `bigint` passed to `end` as the status: `TypeError` |
+
+`parseExact` decides each number from its text:
+
+| The number | Held as |
+| --- | --- |
+| An integer from -9007199254740991 to 9007199254740991, however spelt (`5`, `5.0`, `5e0`, `1e3`) | `number` |
+| An integer outside that range, however spelt (`9007199254740992`, `9007199254740993.0`, `9.007199254740993e15`, `1e400`) | `bigint` |
+| Not an integer, with the decimal value of the number's standard JSON serialisation (`0.1`, `0.10`, `1e-1`), per flyingrobots/parley#173 | `number` |
+| Any other decimal (`0.10000000000000001`, `1e-400`), or an integer of more than 4,096 digits | not held: `ok: false`, with the numbers as written in `tokens` and `UNREPRESENTABLE` in their places in `partial` |
+
+The cap is an implementation limit. A token past it, or one with an enormous exponent, is
+classified from its length and never built. `parseExact` throws exactly when `JSON.parse` does.
+
+Not exact: a number that is not finite is written as `null`, as `JSON.stringify` writes it
+(flyingrobots/parley#177). The writer's two reads of another receipt during retention use
+`JSON.parse`; they read `event` and `tool`, which are strings.
+
+The rules are pinned as data in the [numeric corpus](../../../conformance/numbers/README.md).
 
 ## What it does not do
 

@@ -7,6 +7,16 @@ the entry under it names each schema version it releases, and those are separate
 
 ## [Unreleased]
 
+### Added
+
+- A release-review rule, in [docs/workflows/release-review](docs/workflows/release-review/README.md):
+  a confirmed finding that violates evidence fidelity, privacy, identity or a published contract
+  blocks a release by default, whether the change under review introduced it or not, and a
+  release that goes ahead despite one records an exception the owner accepted, with its artifact,
+  reproduction, containment, follow-up and deadline. The one exception on record is
+  `@flyingrobots/parley-read` 0.2.0 and flyingrobots/parley#159, which now blocks the next reader
+  release. No spec text, schema or package changes (flyingrobots/parley#168).
+
 ### Fixed
 
 - An intermittent test failure, in both writers' suites (flyingrobots/parley#142). Several

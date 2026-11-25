@@ -43,9 +43,12 @@
 //   differed only in a secret, so equal `inv` does not make it the same invocation as anything.
 //   Nor a run the window cannot show is unredacted, because it holds neither its head nor an `end`
 //   saying `redacted: false`: a missing statement is not a negative one (§1.2a).
-// - A run the caller names in `heldBack`: one with a line the loader held back because it holds a
-//   number the reader cannot represent (`line.number_unrepresentable`, flyingrobots/parley#159).
-//   The run has a record the fold cannot compare, so it is not known to be the same as any other.
+// - A run with a line the loader held back because it holds a number the reader cannot represent
+//   (`line.number_unrepresentable`, flyingrobots/parley#159). The run has a record the fold
+//   cannot compare, so it is not known to be the same as any other. The loader marks every
+//   record of such a run (`runHeldBack`), so the fold knows it from the records it is given; a
+//   caller may also name runs in `heldBack`, which covers a run none of whose records were
+//   handed over.
 // - Anything when the caller states no outcomes: "the same result" cannot be established.
 // - Anything when the read states `fold: false` (`digestFor` then does not call this module).
 //
@@ -221,7 +224,7 @@ export function foldRuns(ranked: readonly LoadedRecord[], outcomes?: Readonly<Re
 
   const groups = new Map<string, string[]>();
   for (const [run, own] of byRun) {
-    if (heldBack?.has(run) === true) continue;
+    if (heldBack?.has(run) === true || own.some((r) => r.runHeldBack === true)) continue;
     const key = foldKey(own, outcomes[run], view);
     if (key === null) continue;
     const group = groups.get(key);

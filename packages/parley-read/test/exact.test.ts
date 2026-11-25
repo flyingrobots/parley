@@ -9,7 +9,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
-  RUN_SECTION_BYTES, digestBytes, digestFor, digestLine, exactJson, foldRuns, loadReceipts, openRecords, planQuery, queryReceipts, readReceiptFile, recordBytes, runSection, validator,
+  RUN_SECTION_BYTES, digestBytes, digestFor, digestLine, exactJson, foldRuns, loadReceipts, openRecords, planQuery, queryReceipts, rankRecords, readReceiptFile, recordBytes, runSection, validator,
   type Bundle, type Defect, type LoadedRecord, type OpenAnswer, type QueryAnswer,
 } from "../src/index.ts";
 import { UNREPRESENTABLE, parseExact } from "@flyingrobots/parley-emit";
@@ -1062,9 +1062,10 @@ describe("RD-126 the review of the 0.3.0 candidate (case 2026-11-25): what the r
     const ranking = rankRecords(plan.query, load.bundles.flatMap((b) => b.records));
     // Five arguments: no set of held-back runs is passed. The fact travels on the records.
     const digested = digestFor(plan.query, { run: runId(9), seq: 1 }, ranking.records, { run: runId(9), seq: 9, t: T0 }, ranking.outcomes);
-    const sections = digested.digest.runs.map((r) => [r.run, r.folded?.stands_for ?? null]);
+    // The order of sections is the ranking's and is not what this case is about.
+    const sections = digested.digest.runs.map((r) => [r.run, r.folded?.stands_for ?? null] as const).sort((a, b) => a[0].localeCompare(b[0]));
     // Runs 3 and 4 hold the same result and fold; runs 1 and 2 each lost their result and stand alone.
-    expect(sections).toEqual([[runId(4), [runId(3)]], [runId(2), null], [runId(1), null]]);
+    expect(sections).toEqual([[runId(1), null], [runId(2), null], [runId(4), [runId(3)]]]);
     const folding = foldRuns(ranking.records, ranking.outcomes, "everything");
     expect([...folding.folds.keys()]).toEqual([runId(4)]);
     for (const b of load.bundles) for (const r of b.records) expect(r.runHeldBack === true).toBe(b.run === runId(1) || b.run === runId(2));

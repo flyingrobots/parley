@@ -523,7 +523,7 @@ the ids are opened; a drill-down past it declines as a read does and opens nothi
 | `planQuery(request)`, `queryRecord(query)` | The refusal rules and the recorded payload, without any reading or writing |
 | `rankRecords(query, records)` | The view's order over records, pure: the same records reordered, never a subset |
 | `digestFor(query, answers, ranked, envelope, outcomes?, heldBack?)` | The bound over that order, pure: the digest's payload, the records it names, the count it excluded and how many of those it `folded`, the bytes its line takes and whether it `fits` a stated byte bound at all |
-| `foldRuns(ranked, outcomes?, view?, heldBack?)` | The fold `digestFor` applies first unless the read states `fold: false`, pure: runs of one invocation with one result named by the most recent of them, which lists the others in `stands_for`; a run named in `heldBack` never folds |
+| `foldRuns(ranked, outcomes?, view?, heldBack?)` | The fold `digestFor` applies first unless the read states `fold: false`, pure: runs of one invocation with one result named by the most recent of them, which lists the others in `stands_for`; a run whose records carry `runHeldBack`, or one named in `heldBack`, never folds |
 | `sufficientBytes(query, answers, total, envelope, folded?)` | The smallest `budget.bytes` that holds a digest naming no records, which a byte decline names |
 | `Deadline`, `MONOTONIC`, `OVER_BUDGET`, `declineOnRun(run, budget, phase, last, over)` | The deadline `budget.ms` is checked against, the default clock, the decline code, and the step and error a decline reports on its run |
 | `digestLine`, `digestBytes` | The line the writer will write for a digest, and its length in UTF-8 bytes |
@@ -553,7 +553,7 @@ the ids are opened; a drill-down past it declines as a read does and opens nothi
 | An unterminated final line ignored, including a parseable `end` | §5.4: it is not a line, so it cannot establish termination |
 | `validated`, `invalid`, `partial`, `unvalidated` per record | §4.5: full validation is against the exact pair, and "the part I recognise passed" is never "the contract passed" |
 | A sidecar's bytes checked against `bytes` and `sha256`, and the record restored | §5: a sidecar stands in a record's place, and its path must not leave the bundle |
-| `replay.unavailable` with its reasons | §5, §5.3, §5.4: a broken sidecar, no terminated `end`, a non-zero status or a redacted receipt each rule replay out |
+| `replay.unavailable` with its reasons | §5, §5.3, §5.4: a broken sidecar, a line or sidecar holding a number the reader cannot hold, no terminated `end`, a non-zero status or a redacted receipt each rule replay out |
 
 `replay.unavailable: false` means only that nothing in the bundle rules replay out. Eligibility
 under §2.3 and §5.3 for the invocation at hand — whether that invocation supplied a declared
@@ -568,12 +568,13 @@ is JavaScript's safe-integer range, decided from the number as written:
 | --- | --- |
 | `9007199254740991`, `5.0`, `1e3`: integer-valued, inside −9007199254740991 to 9007199254740991 | `number` |
 | `9007199254740992`, `9007199254740993`, `9007199254740993.0`, `9.007199254740993e15`, `1e400`: integer-valued, outside it | `bigint`, exact to the digit, **always**, even where a double could hold it |
-| `1.5`, `0.1`: not an integer | `number` |
+| `1.5`, `0.1`, `0.10`, `1e-1`: not an integer, and a double gives the decimal back | `number` |
+| `0.10000000000000001`, `1e-400`: not an integer, and a double does not give it back | not returned: the line is held back (below) |
 | `"9007199254740993"` | the string it is |
 
 So a caller receives a `bigint` exactly when a receipt line, or a sidecar's contents, holds an
 integer-valued number outside that range, at any depth. `ExactValue` is the type of a value a
-record can hold. This fixes integer precision only: a non-integral number is still a double.
+record can hold. This fixes integer precision only: a non-integral number is still a double, or its line is held back.
 
 **`JSON.stringify` throws on such a record.** Use the exported serialiser, which writes the
 integer as the JSON number it is, exact unquoted digits, and is otherwise `JSON.stringify` byte
@@ -607,7 +608,7 @@ A non-integral number is a `number` only when writing it back states the decimal
 a double does not give back, such as `0.10000000000000001` or `0.1000000000000000055`, or an
 integer of more than 4096 digits, such as `1e1000000000` (an implementation limit). Its line is
 not returned as a record. It is kept verbatim as a `line.number_unrepresentable` defect,
-`counts.unrepresentable` counts it, its run never folds, and the read reports a
+`counts.unrepresentable` counts it, its run never folds and is unavailable for replay, and the read reports a
 `read.number_unrepresentable` warning on its own run. The whole contract, and the measured cost of
 the scan, are in the [living reference](../../docs/topics/parley-read/README.md#numbers).
 

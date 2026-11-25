@@ -155,6 +155,14 @@ export interface LoadedRecord {
    */
   readonly record: Record<string, unknown>;
   readonly validation: Validation;
+  /**
+   * Present, and true, on every record of a run the loader held a line back from
+   * (`line.number_unrepresentable`): the run has a record this reader could not return, so
+   * nothing establishes that it is the same as another run. The fold reads this and folds no
+   * such run, whatever arguments it is called with. It is the loader's mark: it is on no line a
+   * read writes, and a `LoadedRecord` built by hand has none.
+   */
+  readonly runHeldBack?: true;
 }
 
 export interface BundleSource {
@@ -302,7 +310,9 @@ function scan(file: string): Scan {
     // but it is not returned as a record with a number changed or placed at a `seq` it does not
     // state. It names its own run when it can, which is what keeps that run from folding.
     if (!exact.ok) {
-      const shown = exact.tokens.slice(0, 3).join(", ") + (exact.tokens.length > 3 ? `, and ${exact.tokens.length - 3} more` : "");
+      // A token is quoted in part: the line is kept whole in `raw`, and the message stays small
+      // however long a number the line holds.
+      const shown = exact.tokens.slice(0, 3).map((t) => (t.length > 40 ? `${t.slice(0, 40)}… (${t.length} characters)` : t)).join(", ") + (exact.tokens.length > 3 ? `, and ${exact.tokens.length - 3} more` : "");
       quarantined.push(defect(NUMBER_UNREPRESENTABLE, "§1.1", file, line.n, `the line holds a number this reader cannot represent exactly (${shown}): a non-integral decimal a double does not give back, or an integer of more than ${MAX_EXACT_DIGITS} digits; the line is kept verbatim and is not returned as a record with the number rounded`, { raw: line.raw, run, ...(seq === null ? {} : { seq }) }));
       continue;
     }
@@ -576,6 +586,9 @@ function buildBundle(run: string, raw: readonly Raw[], sources: readonly BundleS
     note.superseded.sort((a, b) => a - b);
   }
 
+  // A line of this run was held back: every record of the run carries that, so the fold knows it
+  // from the records alone, and replay is ruled out below.
+  const heldBack = quarantined.some((q) => q.code === NUMBER_UNREPRESENTABLE);
   const records: LoadedRecord[] = [...held.entries()]
     .sort((a, b) => a[0] - b[0])
     .map(([seq, entry]) => {
@@ -594,6 +607,7 @@ function buildBundle(run: string, raw: readonly Raw[], sources: readonly BundleS
         file: entry.file, line: entry.line, copies: entry.copies, fromSidecar: entry.fromSidecar,
         projected: entry.projectedBy.length > 0, projectedBy: [...entry.projectedBy],
         record: entry.base, validation,
+        ...(heldBack ? { runHeldBack: true as const } : {}),
       };
     });
 
@@ -613,6 +627,9 @@ function buildBundle(run: string, raw: readonly Raw[], sources: readonly BundleS
   if (!terminated) reasons.add("receipt.no_end");
   if ((status !== null && status !== 0) || beyond) reasons.add("end.status_nonzero");
   if (redacted) reasons.add("receipt.redacted");
+  // The reader could not return one of this run's lines without changing a number in it, so the
+  // records replay would need are not all here: the same reasoning as a sidecar it could not restore.
+  if (heldBack) reasons.add(NUMBER_UNREPRESENTABLE);
 
   const duplicates = raw.length + sidecars.filter((s) => s.state === "intact" && opts.sidecars).length - records.length;
 

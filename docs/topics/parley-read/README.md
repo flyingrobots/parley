@@ -241,7 +241,7 @@ That verdict is about the schema. It does not say the reader can date the record
 Establishing that a line's numbers are ordinary is one pass over its text, skipping strings. A
 number of at most fifteen digits with no exponent is settled without parsing it; a longer one, or
 one with an exponent, is parsed and compared; a line that holds a `bigint` is parsed a second time
-by the package's own parser.
+by the writer's exact parser, which the reader imports.
 
 Two workloads were measured, and they are two workloads: nothing here is a claim about receipts
 in general. Each is one receipt of 200,002 lines, a head, an `end`, and 200,000 lines alternating
@@ -418,6 +418,7 @@ rule:
 | --- | --- |
 | `sidecar.missing`, `sidecar.digest_mismatch`, `sidecar.bytes_mismatch`, `sidecar.escapes_bundle`, `sidecar.unparseable`, `sidecar.unreadable` | §5: a reader that finds a sidecar missing or its digest mismatched must treat the bundle as unavailable for replay |
 | `sidecar.number_unrepresentable` | §5.4: replay requires the records it needs, and this reader could not restore one without changing a number in it |
+| `line.number_unrepresentable` | §5.4: the same, for a line of the receipt itself: the reader held it back, so a record of the run is not among the bundle's |
 | `sidecar.unchecked` | §5.4: replay requires intact sidecars, and with resolution off this reader has not established that they are |
 | `receipt.no_end` | §5.4: replay requires the records it needs, and nothing establishes termination |
 | `end.status_nonzero` | §5.4: replay requires a successful outcome |
@@ -658,7 +659,7 @@ named by the last of them, which reads as this run plus nine others like it.
 | A run with no `inv` never folds | §2.2 omits `inv` when a program cannot make it safe, and a discovery run has none. Argument vectors are not identity |
 | A run the window shows to be redacted does not fold: its head carries `redacted`, an `end` in the window says `redacted: true`, or the window holds a `redaction` of it. Nor does a run whose window holds neither its head nor an `end`, since nothing then shows it is unredacted | A redacted receipt shares its `inv` with every run that differed only in a secret (§2.3), and a missing statement is not a negative one (§1.2a) |
 | **Every comparison above is of the records the window holds.** A run only partly inside the window is compared by that part, so two runs can fold under one window and not under a wider one that shows where they differ | The reader answers for a window and reads nothing outside it. A section marks a run the window did not hold whole in two cases: `head: "not_in_window"` when the window does not hold its head, and `outcome: "undetermined"` with `reason: "no_end_in_window"` when it holds no `end` for it and no failure either. A run the window shows to have failed is `failed` with or without its `end`, so its section does not say whether the window holds the `end`. Runs that fold agree on outcome, reason and the head's `resolved`, so a run whose head the window holds does not fold with one whose head it does not. To see such runs apart, read with `fold: false` or under a window that holds them whole (RD-112) |
-| A run the loader held a line back from never folds (`line.number_unrepresentable`, [numbers](#numbers)) | The run has a record the reader could not return, so nothing establishes that it is the same as another. `queryReceipts` hands those runs to `digestFor` as `heldBack`; a caller composing `digestFor` or `foldRuns` itself passes `heldBackRuns(load)` |
+| A run the loader held a line back from never folds (`line.number_unrepresentable`, [numbers](#numbers)) | The run has a record the reader could not return, so nothing establishes that it is the same as another. The loader marks every record of such a run (`LoadedRecord.runHeldBack`), and `foldRuns` and `digestFor` fold no run whose records carry the mark, whatever arguments they are called with. `heldBack` names such runs as well, for a run none of whose records were handed over; a `LoadedRecord` built by hand has no mark |
 | Nothing folds when `digestFor` is given no outcomes | "The same result" cannot be established without them |
 | The representative is the run whose latest dated record in the window is latest, ties to the greater run id | The most recent run is the one a resuming reader is likeliest to act on |
 

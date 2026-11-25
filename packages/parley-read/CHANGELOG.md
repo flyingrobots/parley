@@ -20,8 +20,12 @@ the version `package.json` names; the version is not tagged or published by this
   9007199254740991, at any depth and however it is spelt: `9007199254740992`,
   `9007199254740993.0`, `9.007199254740993e15`, `1e400`. That is always a `bigint`, even where a
   double could hold it, so neighbouring large ids never alternate types. An integer-valued number
-  inside the range (`9007199254740991`, `5.0`, `1e3`) and every non-integral number are `number`s,
-  and a string of digits stays a string. `ExactValue` is the type.
+  inside the range (`9007199254740991`, `5.0`, `1e3`) and every non-integral number the reader
+  can hold are `number`s, and a string of digits stays a string. `ExactValue` is the type.
+
+  **A non-integral number the reader cannot hold is no longer returned at all**, which is
+  breaking too: its line is held back, its run does not fold and cannot be replayed from the
+  bundle (under Fixed below). `0.10000000000000001`, as C's `%.17g` prints 0.1, is one.
 
   **`JSON.stringify` throws on a record that holds one.** Migrating a caller that serialises
   records (illustrative):
@@ -107,6 +111,25 @@ the version `package.json` names; the version is not tagged or published by this
   has the spellings that fail the rule held back (`0.1` written `0.10000000000000001`), not every
   line it writes (`0.5` and `0.30000000000000004` load).
 
+- **A run with a held-back line could still fold, and could still be offered for replay**
+  (review case 2026-11-25, before any release):
+  - `digestFor` and `foldRuns` refused to fold such a run only when the caller passed the new
+    last argument. Called with 0.2.0's arguments, two runs whose held-back results stated
+    different numbers folded into one. The loader now marks the run's records and the fold
+    reads the mark.
+  - `Bundle.replay` now says `unavailable: true` with the reason `line.number_unrepresentable`
+    for such a run, as it already did for a sidecar holding such a number. In 0.2.0 the bundle
+    was open to replay, with the number rounded. A writer that prints seventeen significant
+    digits therefore costs its bundles replay as well as folding.
+- **A `toJSON` on `BigInt.prototype` in the reading process changes nothing a read states.**
+  With the common polyfill installed, the candidate's serialiser wrote a `bigint` as what that
+  hook returned, so the fold's key and the lens text held a quoted or rounded integer and two
+  runs differing beyond 2^53 folded again. `exactJson`, from `@flyingrobots/parley-emit` 0.5.0,
+  never asks that hook (review case 2026-11-25).
+- The `line.number_unrepresentable` defect quotes at most forty characters of each number and
+  says how long it is. It quoted the whole token, so a line holding a two-million-digit number
+  made a two-million-character message beside the line kept in `raw`.
+
 ### Added
 
 - `exactJson(value)`, `ExactValue` and `MAX_EXACT_DIGITS`, re-exported from
@@ -119,8 +142,12 @@ the version `package.json` names; the version is not tagged or published by this
   gains an optional `seq`; a `partial` validation gains an optional `why`; `QueryAnswer.counts`
   gains `unrepresentable`; `digestFor` and `foldRuns` take an optional last argument naming runs
   that never fold.
+- `LoadedRecord` gains an optional `runHeldBack`, present and true on every record of a run the
+  loader held a line back from. `foldRuns` and `digestFor` fold no run whose records carry it,
+  so a caller composing them with 0.2.0's arguments needs to change nothing to be safe. The
+  optional last argument remains, for a run none of whose records were handed over. A
+  `LoadedRecord` built by hand has no mark.
 
-||||||| 5a3bfeb
 ## [0.2.0] — 2026-11-24
 
 A fold could hide a run whose result differed, and said only how many runs it stood for
@@ -136,7 +163,7 @@ commit of that release, and carry the wording the pre-freeze review settled
 - **Two runs whose results differ no longer fold**, with one known exception: results that differ
   only in integers outside −(2^53)+1 to (2^53)−1 can still compare equal, because a record is
   parsed into doubles, and such an integer may not be returned exactly (flyingrobots/parley#159;
-  fixed under Unreleased above). The fold compared `inv`, the outcome, the
+  fixed in 0.3.0 above). The fold compared `inv`, the outcome, the
   `end` statuses, the diagnostic codes and `resolved`, and no result, so two successful runs of
   one invocation that answered 1 and 2 came back as one run with `folded: {others: 1}` under every
   view and every budget. Runs now fold only when every result record is equal too: the tool's own

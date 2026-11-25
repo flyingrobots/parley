@@ -485,6 +485,37 @@ describe("PE-35 redaction of and beside a bigint", () => {
     expect(of(r.receipt, "result")[0]).not.toContain("plain_fn");
   });
 
+  test("PE-36 the scrub follows the serialiser's own rules for a hook's result and for a box (second review of flyingrobots/parley#179)", async () => {
+    const body = (run: Run) => {
+      run.result({
+        event: "result",
+        // A hook's result is not asked for a hook again, so a throwing `toJSON` getter on it is never read.
+        guarded: { toJSON: () => Object.defineProperty({ kept: 1 }, "toJSON", { get() { throw new Error("unexpected lookup"); } }) },
+        // A boxed number is converted as the serialiser converts it, which honours Symbol.toPrimitive.
+        boxed: { toJSON: () => Object.assign(new Number(5), { [Symbol.toPrimitive]() { return 8; } }) },
+        text: Object.assign(new String("a"), { toString() { return "b"; } }),
+      }, P.any);
+    };
+    const without = await go(body);
+    const withSecret = await go(body, { argv: ["count", "--token", "zq7kx9unrelated"] });
+    const text = '"guarded":{"kept":1},"boxed":8,"text":"b",';
+    expect(without.status).toBe(0);
+    expect(of(without.receipt, "result")[0]).toContain(text);
+    expect(withSecret.status).toBe(0);
+    expect(of(withSecret.receipt, "result")[0]).toContain(text);
+  });
+
+  test("PE-36 with a toJSON installed on BigInt.prototype, a bigint in a payload is scrubbed as what that hook returns (second review of flyingrobots/parley#179)", async () => {
+    const secret = "zq7kx9protosecret";
+    const proto = BigInt.prototype as unknown as { toJSON?: () => unknown };
+    proto.toJSON = function (this: bigint) { return `${secret}:${this.toString()}`; };
+    try {
+      const r = await go((run) => { run.result({ event: "result", id: 42n, list: [7n] }, P.any); }, { argv: ["count", "--token", secret] });
+      for (const lines of [r.out, r.err, r.receipt]) expect(lines.join("\n")).not.toContain(secret);
+      expect(of(r.receipt, "result")[0]).toContain('"id":"[redacted]:42","list":["[redacted]:7"],');
+    } finally { delete proto.toJSON; }
+  });
+
   test("a bigint secret under a schema that requires an integer is a conflict, never a rounded or a quoted number", async () => {
     const r = await go((run) => { run.result({ event: "result", value: BigInt(SECRET) }, P.count); }, { argv: ["count", "--token", SECRET] });
     expect(r.status).toBe(4);

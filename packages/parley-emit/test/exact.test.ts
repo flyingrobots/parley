@@ -820,6 +820,23 @@ describe("PE-37 a number that is not finite is refused, never written as null (f
     expect(seqs).toEqual(seqs.map((_, i) => seqs[0]! + i));
   });
 
+  test("the guard refuses only what the serialiser would write: a hook is given its key, and a box's own properties are not read (review of flyingrobots/parley#181)", async () => {
+    const keyed = { toJSON(key: string) { return key === "value" ? 42 : Number.POSITIVE_INFINITY; } };
+    const indexed = { toJSON(key: string) { return key === "1" ? 7 : Number.NaN; } };
+    const r = await go((run) => {
+      run.result({ event: "result", value: keyed }, P.any);
+      run.result({ event: "result", value: [0, indexed] }, P.any);
+      run.result({ event: "result", value: [Object.assign(new Boolean(true), { ignored: Number.POSITIVE_INFINITY }), Object.assign(new String("s"), { ignored: Number.NaN })] }, P.any);
+      run.result({ event: "result", value: [1, Object.assign(() => 1, { ignored: Number.NaN })] }, P.any);
+      // And the other way: what a hook on a function returns is written, so it is looked at.
+      expect(() => run.result({ event: "result", value: Object.assign(() => 1, { toJSON: () => Number.NaN }) }, P.any)).toThrow(TypeError);
+      expect(() => run.result({ event: "result", value: { toJSON(key: string) { return key === "value" ? Number.NaN : 1; } } }, P.any)).toThrow(TypeError);
+    });
+    expect(r.err).toEqual([]);
+    expect(r.status).toBe(0);
+    expect(of(r.out, "result").map(valueText)).toEqual(["42", "[0,7]", `[true,"s"]`, "[1,null]"]);
+  });
+
   test("a value whose own toJSON gives null is still null: an invalid Date is what its hook says", async () => {
     const r = await go((run) => { run.result({ event: "result", value: new Date(Number.NaN) }, P.any); });
     expect(r.status).toBe(0);

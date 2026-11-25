@@ -52,6 +52,10 @@ the version `package.json` names; the version is not tagged or published by this
 - **BREAKING: a line whose `seq` is beyond 9007199254740991 is rejected**, held back as below. In
   0.2.0 it was placed at the nearest double's `seq`. A `t` beyond the range leaves the record
   undated; an `end.status` beyond it is a status other than zero.
+- The dependency on `@flyingrobots/parley-emit` is `^0.5.0`. It was widened to
+  `^0.4.0 || ^0.5.0` on the way (flyingrobots/parley#171); the reader now takes its exact parser
+  and serialiser from the writer and writes a `bigint` through it, so it requires the writer that
+  has them.
 - A run section whose head's `resolved` holds such an integer drops `resolved` whole and names it
   in `dropped`, whatever its size: the lens line is written with `JSON.stringify`, which cannot
   carry a `bigint`, and the section never states a rounded value. No schema's shape or version
@@ -110,6 +114,7 @@ the version `package.json` names; the version is not tagged or published by this
   gains `unrepresentable`; `digestFor` and `foldRuns` take an optional last argument naming runs
   that never fold.
 
+||||||| 5a3bfeb
 ## [0.2.0] — 2026-11-24
 
 A fold could hide a run whose result differed, and said only how many runs it stood for

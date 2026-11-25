@@ -4,6 +4,10 @@
 //   inv = SHA-256 over the canonical JSON (keys sorted, no whitespace, UTF-8) of
 //     { tool, v, command, resolved, inputs: [{ path, role?, sha256 }] }
 //
+// A `bigint` in `resolved` is canonical as its exact digits, the JSON number it is written as
+// (flyingrobots/parley#171), so two questions that differ in an integer beyond the safe range
+// have two identities. Every other value has the canonical form it always had.
+//
 // `resolved` is the interpretation after defaults, with every declared secret already replaced by
 // `[redacted]`, so the fact of supply enters by name and the value never does; the input
 // descriptors in the preimage are the redacted ones for the same reason. Input digests are over
@@ -21,6 +25,7 @@ export function canonical(v: unknown): string {
     const o = v as Record<string, unknown>;
     return "{" + Object.keys(o).sort().filter((k) => o[k] !== undefined).map((k) => JSON.stringify(k) + ":" + canonical(o[k])).join(",") + "}";
   }
+  if (typeof v === "bigint") return v.toString();
   return JSON.stringify(v) ?? "null";
 }
 

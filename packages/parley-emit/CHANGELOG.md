@@ -5,6 +5,91 @@ on its own; the spec and each message schema move separately (spec §4.4).
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-11-24
+
+This version is in the repository only: it is not tagged and not published. The heading is dated
+because the repository's checks require a dated heading for the manifest's version.
+
+The writer accepts a `bigint` in a payload and writes it as a JSON number of exact unquoted
+digits, everywhere a record travels (flyingrobots/parley#171). Before, a record holding one threw
+`TypeError: JSON.stringify cannot serialize BigInt.` and the run ended with `uncaught.exception`
+and status 2, so a TypeScript tool had no exact numeric form for an integer beyond the safe range
+(a 64-bit id) and had to round it or write a string.
+
+**No emitted byte changes for a value the writer accepted before**, and no `inv` moves: a record
+with no `bigint` is serialised by `JSON.stringify` as it was, and the canonical form is the same
+text. `test/fixtures/inv-pinned.jsonl` holds 25 identities printed from the previous source, and
+a test requires this source to reproduce each.
+
+### Added
+
+- **A `bigint` is written exactly**, on stdout, on stderr, in the receipt, in a sidecar and on the
+  shared history stream: `9007199254740993n` is `9007199254740993`, never a quoted string and
+  never with an `n`. Every sink's copy comes from one serialiser, and stdout and the receipt hold
+  the same digits. A `bigint` inside the safe range is the same JSON number a number is: `5n` is
+  `5`. It is accepted anywhere a record carries a value: a result, a page, a step's `detail`, a
+  diagnostic's `detail`, `receiptExtra`, and `resolved`.
+- **`parseExact`, `exactJson`, `holdsExact`, `MAX_EXACT_DIGITS`, `UNREPRESENTABLE`** and the types
+  `ExactParse` and `ExactValue` are exported. `exactJson(value)` is `JSON.stringify` with a
+  `bigint` written as its digits. `parseExact(text)` reads JSON text with every number's value
+  kept: an integer-valued number from -9007199254740991 to 9007199254740991 is a `number` however
+  it is spelt (`5`, `5.0`, `5e0`, `1e3`), and outside that range it is a `bigint`, decided from
+  the text (`9007199254740993.0`, `9.007199254740993e15`, `1e400`). A number that is not an
+  integer is a `number` only when its decimal value equals that of the number's standard JSON
+  serialisation (flyingrobots/parley#173): `0.1`, `0.10` and `1e-1` are accepted,
+  `0.10000000000000001` is not. For a text holding a number it cannot hold, `parseExact` returns
+  `ok: false` with the numbers as written, and never a rounded value. An integer of more than
+  4,096 digits (`MAX_EXACT_DIGITS`, an implementation limit) is one of those. The reader will
+  import these in place of its own copies.
+- **`inv` and `canonical`** write a `bigint` as its digits, so two questions that differ by one
+  beyond the safe range have two identities. `resolved` may hold a `bigint`.
+- **Redaction.** A `bigint` whose digits are a declared secret is replaced with `[redacted]`, as
+  a number already was; one beside another redacted field is written exactly.
+- **The post-redaction check and `checkRecord`.** A `bigint` is a JSON number and an integer.
+  `type`, `const`, `enum`, `minimum`, `maximum`, `exclusiveMinimum` and `exclusiveMaximum` are
+  decided for it by exact comparison, never on a converted double. One case cannot be decided: an
+  integer beyond the safe range against a schema number that is itself beyond the safe range,
+  which may be a rounded reading of the schema's text (`maximum: 18446744073709551615` loads as
+  18446744073709551616). There `checkRecord` answers `unsupported`, and a record redaction
+  changed is withheld as `redaction.schema_unchecked`, which means not checked and does not say
+  the record was invalid.
+- A shared numeric corpus, `conformance/numbers/` at the repository root: 50 JSON texts with the
+  exact value and the emitted text of each. This package's suite runs every case through a real
+  run, and the Python writer's suite runs the same file.
+
+### Changed
+
+- **A history transform is handed exact values.** The receipt line is parsed with `parseExact`
+  before the transform runs, and its result is written with `exactJson`. A transform therefore
+  receives a `bigint` for any integer the receipt writes beyond the safe range, including one the
+  tool passed as a number: `2 ** 53` and `1e21` arrive as `9007199254740992n` and `10n ** 21n`,
+  where 0.4.0 handed over numbers. A transform that does arithmetic on such a field with a number
+  now throws, and the line is withheld as `history.transform_failed`. The stream copy of `1e21`
+  after a transform is `1000000000000000000000`, the same value as the receipt's `1e+21`. A
+  transform may return a `bigint`; 0.4.0 withheld such a line as `history.transform_failed`.
+- **A `bigint` of more than 4,096 digits is refused**: the emitting call throws `TypeError`
+  before a `seq` is taken and nothing is written, `resolved` holding one is
+  `startup.arguments_invalid` (exit 3), and a transform's body holding one is withheld as
+  `history.transform_invalid`. The writer does not write a number its own parser could not read
+  back. Carry such a value as a string.
+- `run.end` refuses a `bigint` status with a `TypeError` that says so. `seq`, `t` and `status`
+  stay numbers.
+- Captured console output of an object holding a `bigint` keeps its JSON form with exact digits,
+  where it was `[object Object]`.
+- A new warning code, `history.number_unrepresentable`: receipt text holding a number the writer
+  cannot hold exactly is not handed to a transform and not appended past it. No emission writes
+  such text; the code exists so that a rounded value cannot reach a transform by a path nobody
+  has found.
+
+### Not changed, and stated
+
+- A number that is not finite (`NaN`, `Infinity`) is still written as `null`, as `JSON.stringify`
+  writes it (flyingrobots/parley#177).
+- `retain`'s reads of another receipt's first and last line use `JSON.parse`: they read `event`
+  and `tool`, which are strings, and no number.
+- A schema document that itself holds a `bigint` bound is outside the checker's subset
+  (`maximum that is not a number`), so a redacted record under it is `redaction.schema_unchecked`.
+
 ## [0.4.0] — 2026-11-24
 
 The writer no longer publishes a record that redaction made invalid under its declared schema

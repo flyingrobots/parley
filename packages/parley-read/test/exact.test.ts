@@ -8,14 +8,11 @@ import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import * as reader from "../src/index.ts";
 import {
-  digestFor, foldRuns, loadReceipts, openRecords, planQuery, queryReceipts, readReceiptFile, recordBytes, runSection, validator,
+  digestFor, exactJson, foldRuns, loadReceipts, openRecords, planQuery, queryReceipts, readReceiptFile, recordBytes, runSection, validator,
   type Bundle, type Defect, type LoadedRecord, type OpenAnswer, type QueryAnswer,
 } from "../src/index.ts";
-
-/** The exact serialiser the package exports for records that hold an integer beyond a double. */
-const exactJson = (value: unknown): string => (reader as unknown as { exactJson: (v: unknown) => string }).exactJson(value);
+import { UNREPRESENTABLE, parseExact } from "../src/exact.ts";
 
 const T0 = 1795326412346;
 const DAY = 86_400_000;
@@ -235,6 +232,36 @@ describe("RD-120 an integer beyond a double's range is loaded exactly and compar
     }
   });
 
+  test("a number of at most fifteen digits is the double it parses to, which is what lets the scan pass it unparsed", () => {
+    // The scan accepts such a token without parsing it. This is the claim it relies on, checked
+    // against a normaliser written here rather than the module's own.
+    const normal = (token: string) => {
+      const m = /^(-?)(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/.exec(token)!;
+      const digits = (m[2]! + (m[3] ?? "")).replace(/^0+/, "");
+      const kept = digits.replace(/0+$/, "");
+      if (kept === "") return "0";
+      return `${m[1]}${kept}e${Number(m[4] ?? 0) - (m[3] ?? "").length + digits.length - kept.length}`;
+    };
+    let seed = 159;
+    const next = (n: number) => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
+    const digits = (n: number) => Array.from({ length: n }, () => String(next(10))).join("");
+    for (let i = 0; i < 20_000; i++) {
+      const whole = 1 + next(15);
+      const fraction = next(16 - whole);
+      const int = digits(whole).replace(/^0+(?=\d)/, "");
+      const token = `${next(2) === 0 ? "-" : ""}${int}${fraction === 0 ? "" : `.${digits(fraction)}`}${next(3) === 0 ? `${next(2) === 0 ? "e" : "E"}${["", "+", "-"][next(3)]}${next(100)}` : ""}`;
+      const parsed = parseExact(`[${token}]`);
+      if (!parsed.ok) throw new Error(`${token} was not held`);
+      const [value] = parsed.value as [unknown];
+      expect(typeof value).toBe("number");
+      expect(`${token} is ${normal(String(value))}`).toBe(`${token} is ${normal(token)}`);
+    }
+    // And one digit more is where it stops being true, so those are parsed and compared.
+    expect((parseExact("[0.1000000000000001,0.30000000000000004,12345678901234567]") as { value: unknown[] }).value).toEqual([0.1000000000000001, 0.30000000000000004, 12345678901234567n]);
+    // Seventeen digits where the double prints in fewer: the text states a value the double does not print as.
+    expect(parseExact("[0.10000000000000001]")).toEqual({ ok: false, tokens: ["0.10000000000000001"], partial: [UNREPRESENTABLE] });
+  });
+
   test("a line that is not JSON is quarantined as before, whatever numbers it holds", () => {
     const { dir, receipts, env } = scratch();
     const run = runId(1);
@@ -260,7 +287,9 @@ describe("RD-121 a record holding such an integer is validated exactly or report
     const path = writeLines(receipts, run, [headLine(run, T0), line(valueText), endLine(run, T0 + 3, join(receipts, `${run}.jsonl`))]);
     const read = readReceiptFile(path, { validate: schemaFor(value) });
     const bundle = read.bundles[0]!;
-    return { record: bundle.records.find((r) => r.seq === 2)!, defects: bundle.defects };
+    // The validator under test ships this one schema, so the head and the `end` beside the
+    // record are unknown pairs to it; the defects that matter are the record's own line's.
+    return { record: bundle.records.find((r) => r.seq === 2)!, defects: bundle.defects.filter((d) => d.line === 2) };
   }
 
   test("an integer beyond a double is an integer, and is inside a lower bound it exceeds", () => {
@@ -274,7 +303,7 @@ describe("RD-121 a record holding such an integer is validated exactly or report
   test("it is outside an upper bound it exceeds, a lower bound it is below, and a type it is not", () => {
     const over = validated("9007199254740993", { type: "integer", minimum: 0, maximum: 255 });
     expect(over.record.validation.state).toBe("invalid");
-    expect((over.record.validation as { errors: string[] }).errors.join(" ")).toContain("/value must be <= 255");
+    expect((over.record.validation as unknown as { errors: string[] }).errors.join(" ")).toContain("/value must be <= 255");
     expect(coded(over.defects, "record.invalid").length).toBe(1);
     expect(validated("-9007199254740993", { type: "integer", minimum: 0 }).record.validation.state).toBe("invalid");
     expect(validated("9007199254740993", { type: "string" }).record.validation.state).toBe("invalid");
@@ -328,7 +357,7 @@ describe("RD-121 a record holding such an integer is validated exactly or report
 // ---- RD-122 a number the reader cannot hold at all ------------------------------------------
 
 describe("RD-122 a number the reader cannot hold exactly is held back whole and said so", () => {
-  const INEXACT = ["0.1000000000000000055", "1e-400", "-0.30000000000000004999", `1e5000`, `{"deep":[0.1,{"x":1.00000000000000000001}]}`];
+  const INEXACT = ["0.1000000000000000055", "0.10000000000000001", "1e-400", "-0.30000000000000004999", `1e5000`, `{"deep":[0.1,{"x":1.00000000000000000001}]}`];
 
   test("the line is kept verbatim under its own code, attributed, and is not a record", () => {
     for (const text of INEXACT) {
@@ -344,7 +373,7 @@ describe("RD-122 a number the reader cannot hold exactly is held back whole and 
       expect(held.length).toBe(1);
       expect(held[0]!.raw).toBe(raw);
       expect(held[0]!.run).toBe(run);
-      expect((held[0] as Defect & { seq?: number }).seq).toBe(2);
+      expect(held[0]!.seq).toBe(2);
       expect(held[0]!.line).toBe(2);
       expect(bundle.quarantined).toEqual(held);
       expect(load.counts.quarantined).toBe(1);
@@ -369,7 +398,7 @@ describe("RD-122 a number the reader cannot hold exactly is held back whole and 
       expect(r.sections).toBe(2);
       expect(r.folded).toBe(0);
       const heldBack = y === "0.1" ? 1 : 2;
-      expect((r.answer.counts as unknown as { unrepresentable: number }).unrepresentable).toBe(heldBack);
+      expect(r.answer.counts.unrepresentable).toBe(heldBack);
       expect(r.a).toBeUndefined();
       if (y === "0.1") expect(r.b).toBe(0.1);
       expect(r.answer.status).toBe(0);
@@ -386,7 +415,7 @@ describe("RD-122 a number the reader cannot hold exactly is held back whole and 
 
   test("a read over receipts that hold no such number warns of nothing and counts none", async () => {
     const r = await ask("1", "9007199254740993");
-    expect((r.answer.counts as unknown as { unrepresentable: number }).unrepresentable).toBe(0);
+    expect(r.answer.counts.unrepresentable).toBe(0);
     const own = loadReceipts({ cwd: r.dir, env: r.env }).bundles.find((b) => b.run === r.answer.run)!;
     expect(own.records.filter((rec) => rec.event === "warning")).toEqual([]);
   });
@@ -402,12 +431,12 @@ describe("RD-122 a number the reader cannot hold exactly is held back whole and 
     ]);
     const outcomes = Object.fromEntries(runs.map((r) => [r, "succeeded" as const]));
     expect(foldRuns(ranked, outcomes, "everything").folds.get(runs[2]!)!.others).toBe(2);
-    const fold = (foldRuns as unknown as (...a: unknown[]) => ReturnType<typeof foldRuns>)(ranked, outcomes, "everything", new Set([runs[2]!]));
+    const fold = foldRuns(ranked, outcomes, "everything", new Set([runs[2]!]));
     expect([...fold.folds.keys()]).toEqual([runs[1]!]);
     expect(fold.folds.get(runs[1]!)!.stands_for).toEqual([runs[0]!]);
     const plan = planQuery({ asker: { tool: "t" }, view: "everything", window: WINDOW, budget: { records: 100 } });
     if (plan.refused) throw new Error("refused");
-    const digested = (digestFor as unknown as (...a: unknown[]) => ReturnType<typeof digestFor>)(plan.query, { run: runId(9), seq: 1 }, ranked, { run: runId(9), seq: 9, t: T0 }, outcomes, new Set(runs));
+    const digested = digestFor(plan.query, { run: runId(9), seq: 1 }, ranked, { run: runId(9), seq: 9, t: T0 }, outcomes, new Set(runs));
     expect(digested.digest.runs.length).toBe(3);
     expect(digested.folded).toBe(0);
   });
@@ -436,7 +465,7 @@ describe("RD-122 a number the reader cannot hold exactly is held back whole and 
     ]);
     const bundle = only(dir, env);
     expect(bundle.records.map((r) => r.seq)).toEqual([1, 3, 4]);
-    expect(bundle.sidecars[0]!.state as string).toBe("number_unrepresentable");
+    expect(bundle.sidecars[0]!.state).toBe("number_unrepresentable");
     expect(bundle.sidecars[0]!.actual).toEqual({ bytes: Buffer.byteLength(stored), sha256: sha(stored) });
     const defects = coded(bundle.defects, "sidecar.number_unrepresentable");
     expect(defects.length).toBe(1);
@@ -459,7 +488,7 @@ describe("RD-122 a number the reader cannot hold exactly is held back whole and 
     const held = coded(bundle.defects, "line.number_unrepresentable");
     expect(held.map((d) => d.raw)).toEqual([raw]);
     expect(held[0]!.run).toBe(run);
-    expect((held[0] as Defect & { seq?: number }).seq).toBeUndefined();
+    expect(held[0]!.seq).toBeUndefined();
     expect(held[0]!.problem).toContain("seq");
   });
 

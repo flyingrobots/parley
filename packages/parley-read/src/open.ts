@@ -33,7 +33,8 @@
 import { resolve } from "node:path";
 import { defineTool, main } from "@flyingrobots/parley-emit";
 import type { RecordRef } from "./digest.ts";
-import { loadReceipts, type Bundle, type Load, type LoadedRecord, type Replay, type SidecarResolution } from "./load.ts";
+import { exactJson } from "./exact.ts";
+import { NUMBER_UNREPRESENTABLE, loadReceipts, type Bundle, type Load, type LoadedRecord, type Replay, type SidecarResolution } from "./load.ts";
 import { repoReceiptDir, stateReceiptDir } from "./locate.ts";
 import {
   Deadline, MONOTONIC, NO_RETENTION, QUERY_SCHEMA, READER, Tee, declineOnRun, planQuery, queryRecord, shipped,
@@ -207,9 +208,12 @@ export function planOpen(request: OpenRequest): OpenPlan {
   return { refused: false, query: plan.query, records: ids.map((r) => ({ run: r.run as string, seq: r.seq as number })) };
 }
 
-/** UTF-8 bytes of a record's JSON as the drill-down returns it, envelope fields and all. */
+/**
+ * UTF-8 bytes of a record's JSON as the drill-down returns it, envelope fields and all. The JSON
+ * is `exactJson`'s, so an integer beyond a double counts by its digits (flyingrobots/parley#159).
+ */
 export function recordBytes(r: LoadedRecord | undefined): number {
-  return r === undefined ? 0 : Buffer.byteLength(JSON.stringify(r), "utf8");
+  return r === undefined ? 0 : Buffer.byteLength(exactJson(r), "utf8");
 }
 
 /**
@@ -247,6 +251,9 @@ function ruling(bundle: Bundle): BundleRuling {
 }
 
 function sidecarProblem(s: SidecarResolution): string {
+  if (s.state === "number_unrepresentable") {
+    return `the sidecar at ${s.path} holding seq ${s.source} holds a number this reader cannot represent exactly, so the record it stands for is not opened with the number rounded`;
+  }
   return s.state === "unchecked"
     ? `the sidecar at ${s.path} was not resolved, so its contents are not established either way`
     : `the sidecar at ${s.path} holding seq ${s.source} is ${s.state.replace("_", " ")}, so the record it stands for cannot be opened`;
@@ -277,10 +284,21 @@ export function openOne(id: RecordRef, bundles: ReadonlyMap<string, Bundle>): Op
       problem: sidecarProblem(sidecar),
       remedy: sidecar.state === "unchecked"
         ? "open it again with sidecar resolution on"
+        : sidecar.state === "number_unrepresentable"
+        ? "read the stored bytes at the sidecar's resolved path with a parser that keeps decimal numbers exactly; they are the bytes the receipt declares"
         : "the receipt and its sidecars are one bundle (§5): restore the bundle from wherever it was copied whole",
     };
   }
   if (!record) {
+    // A line at this seq that the loader held back is not a missing record, and the answer says which it is.
+    const held = bundle.defects.find((d) => d.code === NUMBER_UNREPRESENTABLE && d.seq === id.seq);
+    if (held !== undefined) {
+      return {
+        id, outcome: "seq_not_found", bundle: bundleRuling,
+        problem: `run ${id.run} has a line at seq ${id.seq} that holds a number this reader cannot represent exactly, so it is not a record and is not opened with the number rounded`,
+        remedy: `read the line verbatim: it is line ${held.line} of ${held.file}, and the load keeps its bytes in the bundle's defects under ${NUMBER_UNREPRESENTABLE}`,
+      };
+    }
     return {
       id, outcome: "seq_not_found", bundle: bundleRuling,
       problem: `run ${id.run} holds no record at seq ${id.seq}`,

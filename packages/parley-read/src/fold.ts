@@ -43,6 +43,9 @@
 //   differed only in a secret, so equal `inv` does not make it the same invocation as anything.
 //   Nor a run the window cannot show is unredacted, because it holds neither its head nor an `end`
 //   saying `redacted: false`: a missing statement is not a negative one (§1.2a).
+// - A run the caller names in `heldBack`: one with a line the loader held back because it holds a
+//   number the reader cannot represent (`line.number_unrepresentable`, flyingrobots/parley#159).
+//   The run has a record the fold cannot compare, so it is not known to be the same as any other.
 // - Anything when the caller states no outcomes: "the same result" cannot be established.
 // - Anything when the read states `fold: false` (`digestFor` then does not call this module).
 //
@@ -62,6 +65,7 @@
 // **A fold names what it stands for** (flyingrobots/parley#133): `stands_for` lists the other
 // runs' ids, most recent first, so a reader can open their records by `(run, seq)` instead of
 // taking the count on trust.
+import { exactJson } from "./exact.ts";
 import type { LoadedRecord } from "./load.ts";
 import type { View } from "./query.ts";
 import { PROTOCOL_EVENTS, onViewSurface, toolOwned, type Outcome } from "./rank.ts";
@@ -178,7 +182,8 @@ function foldKey(own: readonly LoadedRecord[], outcome: Outcome | undefined, vie
   const decisions = view === undefined
     ? []
     : inSeq.filter((r) => (DECISIONS as readonly string[]).includes(r.event ?? "") && onViewSurface(view, r)).map(payload);
-  return JSON.stringify([inv, outcome, reason, ends.map((r) => r.record.status ?? null), codes, canonical(head?.record.resolved), results, decisions]);
+  // `exactJson`, so an integer beyond a double is compared by its digits (flyingrobots/parley#159).
+  return exactJson([inv, outcome, reason, ends.map((r) => r.record.status ?? null), codes, canonical(head?.record.resolved), results, decisions]);
 }
 
 /** A JSON value with every object's keys sorted, so two equal values serialise alike. */
@@ -200,9 +205,10 @@ function latest(own: readonly LoadedRecord[]): number {
  * writes and mutates nothing. `ranked` is the whole window in rank order and `outcomes` the
  * ranking's verdict per run over it; without `outcomes` nothing folds. `view` is the view the
  * answer is for: under one whose surface holds the decision records, runs must agree on those
- * too. Without it only results are compared.
+ * too. Without it only results are compared. `heldBack` names runs that never fold: the ones the
+ * loader held a line back from (`heldBackRuns`).
  */
-export function foldRuns(ranked: readonly LoadedRecord[], outcomes?: Readonly<Record<string, Outcome>>, view?: View): Folding {
+export function foldRuns(ranked: readonly LoadedRecord[], outcomes?: Readonly<Record<string, Outcome>>, view?: View, heldBack?: ReadonlySet<string>): Folding {
   const none: Folding = { records: ranked, folds: new Map(), folded: 0 };
   if (outcomes === undefined) return none;
 
@@ -215,6 +221,7 @@ export function foldRuns(ranked: readonly LoadedRecord[], outcomes?: Readonly<Re
 
   const groups = new Map<string, string[]>();
   for (const [run, own] of byRun) {
+    if (heldBack?.has(run) === true) continue;
     const key = foldKey(own, outcomes[run], view);
     if (key === null) continue;
     const group = groups.get(key);

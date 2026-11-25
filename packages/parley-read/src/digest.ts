@@ -67,6 +67,12 @@
 // argument reads as a different argument. The run's id, outcome, reason and head statement are
 // never dropped: without them the section does not say which run it is or what became of it.
 //
+// **A `resolved` the line cannot carry is dropped too** (flyingrobots/parley#159). The loader holds
+// an integer beyond a double as a `bigint`, and the lens line is written by a JSON writer that
+// cannot carry one. A section whose head's `resolved` holds such an integer drops `resolved` whole
+// and names it in `dropped`, as it does a `resolved` too large: the head, opened by `(run, seq)`,
+// holds the value exactly, and the section never states a rounded one.
+//
 // **Runs of one invocation with one result are named once** (flyingrobots/parley#79, `fold.ts`).
 // Before the bound is applied, runs are folded into their most recent run when their `inv` is
 // equal, what a section states about their result is equal (outcome, reason, `end` statuses,
@@ -79,6 +85,7 @@
 // so the count still accounts for every record not named, and `excluded − folded` is what the
 // budget cut. A read that states `fold: false` skips all of it: the lens echoes `fold`, and
 // `loss.folded` is 0.
+import { holdsExact } from "./exact.ts";
 import { foldRuns, type RunFold } from "./fold.ts";
 import type { LoadedRecord } from "./load.ts";
 import type { AcceptedQuery, Asker, Budget, QueryWindow, View } from "./query.ts";
@@ -294,11 +301,12 @@ export function runSection(run: string, window: readonly LoadedRecord[], outcome
       ...(dropped.length === 0 ? {} : { dropped: [...dropped] }),
     } as RunSection;
   };
-  const dropped: Droppable[] = [];
+  // Before anything is measured: a `bigint` has no place on the line and `JSON.stringify` throws on it.
+  const dropped: Droppable[] = "resolved" in fields && holdsExact(fields.resolved) ? ["resolved"] : [];
   let section = build(dropped);
   for (const field of DROPPABLE) {
     if (sectionBytes(section) <= RUN_SECTION_BYTES) break;
-    if (!(field in fields)) continue;
+    if (!(field in fields) || dropped.includes(field)) continue;
     dropped.push(field);
     section = build(dropped);
   }
@@ -390,7 +398,8 @@ export function sufficientBytes(query: AcceptedQuery, answers: RecordRef, total:
  * same order, and `excluded` is the rest of the window counted, the folded records included.
  * `outcomes` is the ranking's verdict per run over that whole window, and each run section carries
  * its run's; without it, no section carries an outcome or a reason. Each section is read off the
- * whole window too, so a head the bound cut from the entries still identifies its run.
+ * whole window too, so a head the bound cut from the entries still identifies its run. `heldBack`
+ * names the runs the loader held a line back from (`heldBackRuns`), which never fold.
  *
  * The byte search is a binary search over the prefix length, which is sound because the line only
  * grows as the prefix does: one more record adds its entry, at least its `(run, seq)` pair, and
@@ -403,10 +412,11 @@ export function digestFor(
   ranked: readonly LoadedRecord[],
   envelope: LineEnvelope,
   outcomes?: Readonly<Record<string, Outcome>>,
+  heldBack?: ReadonlySet<string>,
 ): Digested {
   // The fold depends on the window, its outcomes and the view, never on the budget. A read that
   // states `fold: false` is given every run (flyingrobots/parley#133).
-  const folding = query.fold === false ? foldRuns(ranked) : foldRuns(ranked, outcomes, query.view);
+  const folding = query.fold === false ? foldRuns(ranked) : foldRuns(ranked, outcomes, query.view, heldBack);
   const named = folding.records;
   // Built once, so every candidate prefix the byte search measures is cut from the same entries.
   const entries = named.map((record) => lensEntry(record));

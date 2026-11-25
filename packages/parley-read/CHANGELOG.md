@@ -5,6 +5,60 @@ on its own; the spec and each message schema move separately (spec §4.4).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A returned record holds the numbers its receipt holds** (flyingrobots/parley#159). Receipt
+  lines and sidecar contents were parsed by `JSON.parse`, which holds every number as a double, so
+  in 0.2.0 an integer outside −(2^53)+1 to (2^53)−1 might not be returned exactly
+  (`9007199254740993` came back as `9007199254740992`, `1e400` as `Infinity`), and two runs whose
+  results differed only in such integers could compare equal and fold, which they did whenever
+  both parsed to one double. The number was altered before validation, copy comparison, ranking
+  and folding saw it. Now a number is loaded with the value its text states: the JavaScript
+  number where its decimal value is the double's as JavaScript prints it, and a `bigint` where it
+  is an integer a double cannot hold, written in digits or with an exponent. Copies of one
+  `(run, seq)`, the least-projected-copy rule and the fold compare by that value, so two different
+  integers never compare equal and an integer equals itself written another way (RD-120).
+- **A number the reader cannot hold is never returned rounded.** A line holding a number that is
+  neither an integer nor a double's value (`0.1000000000000000055`, and `0.10000000000000001`
+  from a writer that prints seventeen digits), or an integer of more than 4096 digits, or whose
+  `seq` is an integer beyond a double, is held back whole: kept verbatim as a
+  `line.number_unrepresentable` quarantine naming its run, its `seq` and its line, and not a
+  record. Its run never folds, the answer counts such lines, and the read reports one
+  `read.number_unrepresentable` warning. A sidecar whose contents hold such a number is
+  `number_unrepresentable`, is not restored, and makes the bundle unavailable for replay
+  (RD-122). In 0.2.0 such a number was returned as the nearest double.
+- **A record holding such an integer is never `validated` on a rounded value.** It is validated
+  with the integer's exact value where the schema's numeric constraints can be decided for it, and
+  is `partial` with `why: "number_undecided"` and a `record.number_undecided` defect where they
+  cannot (RD-121). An `end` whose `status` is such an integer is a status other than zero.
+
+### Added
+
+- `exactJson(value)`: `JSON.stringify` for a value that may hold a `bigint`, written as the JSON
+  number it is. **`JSON.stringify` throws on a returned record that holds one**, so a consumer
+  that serialises records whose receipts carry integers beyond a double must use it (RD-123).
+  Also `MAX_EXACT_DIGITS`, `heldBackRuns(load)`, `NUMBER_UNREPRESENTABLE` and
+  `UNREPRESENTABLE_WARNING`.
+- `DefectCode` gains `line.number_unrepresentable` (a quarantine code), `record.number_undecided`
+  and `sidecar.number_unrepresentable`; `SidecarState` gains `number_unrepresentable`; `Defect`
+  gains an optional `seq`; a `partial` validation gains an optional `why`; `QueryAnswer.counts`
+  gains `unrepresentable`; `digestFor` and `foldRuns` take an optional last argument naming runs
+  that never fold.
+
+### Changed
+
+- A value in a returned record can be a `bigint`. `LoadedRecord.t` and `Bundle.status` stay
+  numbers or null, and are null for a `bigint`; the record itself holds the exact value.
+- A run section whose head's `resolved` holds such an integer drops `resolved` whole and names it
+  in `dropped`, whatever its size: the lens line is written by a JSON writer that cannot carry a
+  `bigint`, and the section never states a rounded value. No schema's shape or version moves.
+- A read whose load held a line back writes one more line, the `warning` above, before its
+  ranking step. A read over receipts that hold no such number writes exactly the lines it did.
+- `recordBytes` measures a record by `exactJson`'s text.
+- A load makes one more pass over each line's text to establish that its numbers are faithful.
+  Measured on a 58.8 MB receipt of 200,002 lines, the median load went from about 224 ms to about
+  286 ms on Bun 1.4.5 (the figures are in the living reference).
+
 ## [0.2.0] — 2026-11-24
 
 A fold could hide a run whose result differed, and said only how many runs it stood for
@@ -18,9 +72,9 @@ commit of that release, and carry the wording the pre-freeze review settled
 ### Fixed
 
 - **Two runs whose results differ no longer fold**, with one known exception: results that differ
-  only in an integer beyond 2^53 still compare equal, because a record is parsed into doubles, and
-  such an integer is not returned exactly (flyingrobots/parley#159; stated under "What it does not
-  do" in the README). The fold compared `inv`, the outcome, the
+  only in integers outside −(2^53)+1 to (2^53)−1 can still compare equal, because a record is
+  parsed into doubles, and such an integer may not be returned exactly (flyingrobots/parley#159;
+  fixed under Unreleased above). The fold compared `inv`, the outcome, the
   `end` statuses, the diagnostic codes and `resolved`, and no result, so two successful runs of
   one invocation that answered 1 and 2 came back as one run with `folded: {others: 1}` under every
   view and every budget. Runs now fold only when every result record is equal too: the tool's own

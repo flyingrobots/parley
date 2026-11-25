@@ -521,8 +521,8 @@ the ids are opened; a drill-down past it declines as a read does and opens nothi
 | `openRecords(request, opts)`, `planOpen(request)`, `openOne(id, bundles)` | The drill-down: records by `(run, seq)`, one outcome per id, recorded as a `parley.query` carrying `records`; its refusal rules as a pure function; one id resolved against loaded bundles |
 | `planQuery(request)`, `queryRecord(query)` | The refusal rules and the recorded payload, without any reading or writing |
 | `rankRecords(query, records)` | The view's order over records, pure: the same records reordered, never a subset |
-| `digestFor(query, answers, ranked, envelope, outcomes?)` | The bound over that order, pure: the digest's payload, the records it names, the count it excluded and how many of those it `folded`, the bytes its line takes and whether it `fits` a stated byte bound at all |
-| `foldRuns(ranked, outcomes?, view?)` | The fold `digestFor` applies first unless the read states `fold: false`, pure: runs of one invocation with one result named by the most recent of them, which lists the others in `stands_for` |
+| `digestFor(query, answers, ranked, envelope, outcomes?, heldBack?)` | The bound over that order, pure: the digest's payload, the records it names, the count it excluded and how many of those it `folded`, the bytes its line takes and whether it `fits` a stated byte bound at all |
+| `foldRuns(ranked, outcomes?, view?, heldBack?)` | The fold `digestFor` applies first unless the read states `fold: false`, pure: runs of one invocation with one result named by the most recent of them, which lists the others in `stands_for`; a run named in `heldBack` never folds |
 | `sufficientBytes(query, answers, total, envelope, folded?)` | The smallest `budget.bytes` that holds a digest naming no records, which a byte decline names |
 | `Deadline`, `MONOTONIC`, `OVER_BUDGET`, `declineOnRun(run, budget, phase, last, over)` | The deadline `budget.ms` is checked against, the default clock, the decline code, and the step and error a decline reports on its run |
 | `digestLine`, `digestBytes` | The line the writer will write for a digest, and its length in UTF-8 bytes |
@@ -535,6 +535,8 @@ the ids are opened; a drill-down past it declines as a read does and opens nothi
 | `validator(schemas?)`, `schemaRef`, `envelopeGaps` | Exact-pair validation and the version-independent core (§4.5, §4.6) |
 | `SCHEMAS`, `SCHEMA_SOURCE` | The nineteen schemas this reader ships: each of the seventeen messages at its current released version, and the released 1.0.0 of `parley.query` and `parley.lens` beside their 1.1.0, with the commit and digest of each |
 | `QUARANTINE_CODES` | Which defect codes are a kept line rather than a judgement about a record |
+| `exactJson(value)`, `MAX_EXACT_DIGITS` | `JSON.stringify` for a record that may hold a `bigint`, which it writes as the JSON number it is; and the most digits an integer may have and still be held exactly (4096) |
+| `heldBackRuns(load)`, `NUMBER_UNREPRESENTABLE`, `UNREPRESENTABLE_WARNING` | The runs a load held a line back from, which never fold; that line's defect code; and the code of the warning a read reports for them |
 
 ## What a load says, rule by rule
 
@@ -545,6 +547,8 @@ the ids are opened; a drill-down past it declines as a read does and opens nothi
 | A copy's extra fields folded in, a disagreement as a defect | §1.3: a copy may carry fields another omits, but copies must agree on every field they share |
 | The copy from the source with no transform line for the run, and the other as a `Projection` | §8: the receipt copy is the record and a projection is a view of it, so a reader prefers the least-projected copy it can see — and says what the other one was, and which `seq` it withheld |
 | A stray line quarantined, kept, attributed to the run | §1.4: kept and reported, and evidence of nothing but the fact that something wrote it |
+| Each number with the value its text states: a number, or a `bigint` for an integer a double cannot hold | §1.1: a line is JSON, and a JSON number is a decimal of any size. A record never states a value its receipt does not hold |
+| A line holding a number it cannot represent at all, held back whole as `line.number_unrepresentable` | The same: a number that is neither an integer nor a double's value is not returned rounded. The bytes are kept, the run never folds, and a read warns |
 | An unterminated final line ignored, including a parseable `end` | §5.4: it is not a line, so it cannot establish termination |
 | `validated`, `invalid`, `partial`, `unvalidated` per record | §4.5: full validation is against the exact pair, and "the part I recognise passed" is never "the contract passed" |
 | A sidecar's bytes checked against `bytes` and `sha256`, and the record restored | §5: a sidecar stands in a record's place, and its path must not leave the bundle |
@@ -553,6 +557,25 @@ the ids are opened; a drill-down past it declines as a read does and opens nothi
 `replay.unavailable: false` means only that nothing in the bundle rules replay out. Eligibility
 under §2.3 and §5.3 for the invocation at hand — whether that invocation supplied a declared
 secret, whether its `inv` matches — is the caller's to decide, and this reader does not know it.
+
+## Numbers a double cannot hold
+
+A record comes back with the value its receipt states (flyingrobots/parley#159). An integer a
+double cannot hold, such as `9007199254740993` or `1e400`, is a `bigint` in the returned record,
+exact to the digit, from a receipt line and from a sidecar alike; every other number is the
+JavaScript number it always was. Integers from −(2^53)+1 to (2^53)−1 are always numbers.
+
+**`JSON.stringify` throws on a record that holds a `bigint`.** Serialise a returned record with
+`exactJson(record)`, which writes the integer as the JSON number it is and is otherwise
+`JSON.stringify`, byte for byte.
+
+A number the reader cannot hold at all is neither an integer nor the value of a double as
+JavaScript prints it: `0.1000000000000000055`, or `0.10000000000000001` from a writer that prints
+seventeen digits. Its line is not returned as a record. It is kept verbatim as a
+`line.number_unrepresentable` defect, `counts.unrepresentable` counts it, its run never folds, and
+the read reports a `read.number_unrepresentable` warning on its own run. The rule, what validation
+does with a `bigint`, and the measured cost of the scan are in the
+[living reference](../../docs/topics/parley-read/README.md#numbers).
 
 ## What it does not do
 
@@ -570,9 +593,11 @@ secret, whether its `inv` matches — is the caller's to decide, and this reader
   digest the receipt declared, and nothing else.
 - Judge conformance. The doctor under `scripts/` names violated rules; this is a loader, and a
   defect it reports is what it could not read or could not validate.
-- Return an integer beyond 2^53 exactly. A record is parsed as JSON into doubles, so
-  `9007199254740993` comes back as `9007199254740992`, and two results that differ only in such an
-  integer compare equal and fold (flyingrobots/parley#159).
+- Hold a number that is neither an integer nor a double's value, such as
+  `0.1000000000000000055`, or an integer of more than 4096 digits. It keeps the line's bytes and
+  says so rather than return the number rounded. Version 0.2.0 parsed every number into a double,
+  so there an integer outside −(2^53)+1 to (2^53)−1 might not be returned exactly, and two results
+  that differed only in such integers could compare equal and fold (flyingrobots/parley#159).
 - Write, create or repair anything. Locating a location does not create it.
 - Windows paths. v0.2 of the spec is POSIX-only.
 

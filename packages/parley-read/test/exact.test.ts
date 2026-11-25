@@ -287,7 +287,7 @@ describe("RD-120 an integer beyond a double's range is loaded exactly and compar
   });
 
   test("ordinary numbers load as they always did, whichever path parsed the line", () => {
-    const ordinary = `{"a":0,"b":-0,"c":0.1,"d":1e3,"e":1.5e-7,"f":9007199254740991,"g":-9007199254740991,"h":1e15,"i":123456789012345,"j":0.30000000000000004,"k":1.0,"l":[1,2.5,{"m":-3e2}],"n":"9007199254740993","o":"a \\"quoted\\" 1e400 \\\\","p":true,"q":null,"r":5e-324,"s":1.7976931348623157e-308,"t":5.0,"t2":0.10000000000000001,"__proto__":{"u":1},"dup":1,"dup":2,"v":{},"w":[]}`;
+    const ordinary = `{"a":0,"b":-0,"c":0.1,"d":1e3,"e":1.5e-7,"f":9007199254740991,"g":-9007199254740991,"h":1e15,"i":123456789012345,"j":0.30000000000000004,"k":1.0,"l":[1,2.5,{"m":-3e2}],"n":"9007199254740993","o":"a \\"quoted\\" 1e400 \\\\","p":true,"q":null,"r":5e-324,"s":2.2250738585072014e-308,"t":5.0,"t2":0.10000000000000001,"__proto__":{"u":1},"dup":1,"dup":2,"v":{},"w":[]}`;
     const { dir, receipts, env } = scratch();
     const run = runId(1);
     const path = join(receipts, `${run}.jsonl`);

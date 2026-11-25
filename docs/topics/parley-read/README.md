@@ -42,7 +42,7 @@ suite and `bun run typecheck` checks it strictly, over `src`, `scripts` and `tes
 | `validator(schemas?)`, `schemaRef`, `envelopeGaps`, `ENVELOPE`, `PROTOCOL_PREFIX` | Exact-pair validation, and the version-independent core a partial check uses |
 | `SCHEMAS`, `SCHEMA_SOURCE` | The nineteen schemas the package ships: each message at its current released version, and the released 1.0.0 of `parley.query` and `parley.lens` beside their 1.1.0, with the commit and digest of each |
 | `QUARANTINE_CODES` | Which defect codes are a kept line rather than a judgement about a record |
-| `exactJson(value)`, `MAX_EXACT_DIGITS` | `JSON.stringify` for a value that may hold a `bigint`, written as the JSON number it is, and the most digits an integer may have and still be held (4096): see [numbers](#numbers) |
+| `exactJson(value)`, `MAX_EXACT_DIGITS`, `ExactValue` | `JSON.stringify` for a value that may hold a `bigint`, written as the JSON number it is; the most digits an integer may have and still be held (4096); and the type of a value a returned record can hold: see [numbers](#numbers) |
 | `heldBackRuns(load)`, `NUMBER_UNREPRESENTABLE`, `UNREPRESENTABLE_WARNING` | The runs a load held a line back from, which a read hands to the fold; the defect code of such a line (`line.number_unrepresentable`); and the code of the warning a read reports for them (`read.number_unrepresentable`) |
 | `isDirectory`, `isFile` | The two existence questions the loader asks, exported because callers ask them too |
 
@@ -72,7 +72,7 @@ take one kind of evidence for another):
 | --- | --- |
 | `validated` | The line validated against the schema for its exact advertised `(id, version)` pair |
 | `invalid` | That schema rejected it; the validator's messages come with it |
-| `partial` | The `_schema.id` is `parley.*` but this reader ships no schema for that version. The §1.3 envelope was checked and the contract was not, and the §1.3 gaps are listed. With `why: "number_undecided"` the schema is shipped and the record holds an integer the schema's numeric constraints [cannot be decided for](#numbers) |
+| `partial` | The `_schema.id` is `parley.*` but this reader ships no schema for that version. The §1.3 envelope was checked and the contract was not, and the §1.3 gaps are listed. With `why: "number_undecided"` the schema is shipped and the record holds an integer beyond the safe range, which the validator [cannot evaluate](#what-the-reader-does-with-a-bigint): not evaluated, which is not a finding that it is invalid |
 | `unvalidated` | Not validated at all: `tool_owned` when the id belongs to a tool, `no_schema_ref` when the line advertises no pair |
 
 ## Locating receipts
@@ -114,68 +114,66 @@ tests is the buffering in use and not a pretence.
 ## Numbers
 
 A JSON number is a decimal of any size, and JavaScript's parser holds every number as a double. A
-record is loaded with **the value its text states**, in a receipt line and in a sidecar's contents
-alike ([flyingrobots/parley#159](https://github.com/flyingrobots/parley/issues/159)).
+record is loaded with **the integer its text states**, in a receipt line and in a sidecar's
+contents alike ([flyingrobots/parley#159](https://github.com/flyingrobots/parley/issues/159)).
+This is a fix to **integer** precision. A `bigint` does nothing for a non-integral decimal: those
+are doubles, or they are not held.
 
-A number is *faithful* when its exact decimal value is the value of the double it parses to, as
-JavaScript prints that double: the shortest decimal that parses back to it. `0.1`, `1e3`, `-0`,
-`9007199254740992` and `1e21` are faithful; `9007199254740993`, `1e400`, `0.1000000000000000055`
-and `0.10000000000000001` are not.
+### The representation
 
-| The number | Is loaded as |
+The rule is decided from the number as written, and there is one boundary: JavaScript's
+safe-integer range, −9007199254740991 to 9007199254740991, which is −(2^53)+1 to (2^53)−1 and the
+range in which every JSON implementation agrees on an integer.
+
+| The number, as written | Is loaded as | Examples |
+| --- | --- | --- |
+| Integer-valued, inside the range | A `number` | `9007199254740991`; `5.0` and `1e3` are 5 and 1000 |
+| Integer-valued, outside the range | A `bigint` holding exactly that integer, **always**, even where a double could hold it | `9007199254740992` is `9007199254740992n`; `9007199254740993`, `9007199254740993.0` and `9.007199254740993e15` are all `9007199254740993n`; `1e21` is `10n ** 21n`; `1e400` is `10n ** 400n` |
+| Not an integer, and a double's own digits: the double it parses to, rounded to as many significant digits as the number was written with, is the number | A `number`, that double | `1.5`; `0.1`; `0.30000000000000004`; `0.10000000000000001`, which is how C's `%.17g` writes the double 0.1 |
+| Not an integer, and no double's digits; or an integer of more than `MAX_EXACT_DIGITS` (4096) digits | Nothing. The reader cannot hold it and does not return it rounded: the line is [held back](#quarantine) | `0.1000000000000000055`; `1e-400`; `1e1000000000` |
+| A string of digits | The string it is | `"9007199254740993"` |
+
+Because the boundary is fixed, neighbouring large identifiers never alternate between two types,
+and which type a value has depends on the value alone, never on how it was spelt. A line whose
+numbers all load as JavaScript numbers, which is nearly every line an ordinary writer produces, is
+parsed by `JSON.parse` and nothing else.
+
+**Bounded.** Nothing is built in proportion to a number's magnitude. `1e1000000000` is classified
+from its digits and its exponent, found to be past the cap, and held back without being
+materialised; a token of two million digits is counted, not converted.
+
+### Writing a record back out
+
+**`JSON.stringify` throws on a record that holds a `bigint`.** `exactJson(value)` is
+`JSON.stringify` for such a value: the integer is written as the JSON number it is, exact unquoted
+digits (`{"value":9007199254740993}`), never a string and never with a suffix; a value holding
+none comes out byte for byte as `JSON.stringify` writes it. A record loaded and written with
+`exactJson` carries the digits its receipt carries (RD-120h).
+
+A consumer that parses that text with an ordinary `JSON.parse` **loses the precision again**. The
+digits survive only through a parser that keeps them, as this one does.
+
+### What the reader does with a `bigint`
+
+| Where | What happens |
 | --- | --- |
-| Faithful | The JavaScript number `JSON.parse` gives. A line whose numbers are all faithful, which is every line an ordinary writer produces, is parsed by `JSON.parse` and nothing else |
-| Not faithful, and an integer, written in digits or with an exponent | A `bigint` holding exactly that integer. `9007199254740993` and `9.007199254740993e15` are the same `bigint`; `1e400` is `10n ** 400n` |
-| Not faithful, and not an integer; or an integer of more than `MAX_EXACT_DIGITS` (4096) digits | Nothing. The reader cannot hold it, and it does not return it rounded: the line is [held back](#quarantine) |
+| Copies of one `(run, seq)`, the [least-projected copy](#the-least-projected-copy) and the [fold](#runs-of-one-invocation-are-named-once) | Compared through `exactJson`, by value: two different integers never compare equal, an integer equals the same integer written another way, and a number never equals a string of its digits |
+| The drill-down's [byte bound](#a-byte-bound) | `recordBytes` is the UTF-8 length of the record's `exactJson` text, so the integer counts by its digits |
+| Validation against a shipped schema | **Not evaluated.** The validator checks `integer` and `number` by JavaScript type and holds numbers as doubles, so it cannot evaluate a `bigint`. The record is `partial` with `why: "number_undecided"` and a `record.number_undecided` defect. It is never `validated` on a rounded stand-in, and never `invalid` merely for being a `bigint`: "could not evaluate" and "violates the schema" are different findings, and this is the first. A record that holds none validates as before. Nothing in the reader requires a validated record, so nothing further is refused; a caller that requires one must treat `partial` as not validated, as it already must |
+| `seq` | **Rejected when out of range.** Every identity the reader hands out is a `number`, so the largest `seq` it places is 9007199254740991. A line whose `seq` is beyond it is [held back](#quarantine) whole and never placed at another `seq` |
+| `t` | Kept exact in the record. `LoadedRecord.t` is null, so the record is undated: it is in no window, `counts.undated` counts it, and it sorts last in its tier |
+| `end.status` | A status other than zero: the run `failed` and replay is unavailable for `end.status_nonzero`. `Bundle.status` is a `number` or null, and is null |
+| A `sidecar` event's `source` or `bytes` | The sidecar is `unreadable`: it does not name a usable `source` and `bytes` |
+| A run section's `resolved` | Dropped whole and named in `dropped`, whatever its size. The lens line is written by the writer library with `JSON.stringify`, which cannot carry a `bigint`, and a section never states a rounded value. The head, opened by `(run, seq)`, holds it exactly |
+| The lines a read writes | Hold no `bigint`: a lens names records by `(run, seq)`, `event`, `t` and `code`, and the one field copied from a record, `resolved`, is the row above |
 
-Every integer from −(2^53)+1 to (2^53)−1 is a double, and that is the range in which every JSON
-implementation agrees on an integer (the range I-JSON, RFC 7493, calls interoperable). An integer
-outside it is a number when a double holds it and prints it back, as `9007199254740994` is, and a
-`bigint` otherwise. Which of the two a value is depends on the value alone, never on how it was
-written.
+### What the scan costs
 
-What follows from a record holding a `bigint`:
-
-- **Comparison is by value.** Copies of one `(run, seq)`, the least-projected-copy rule and the
-  [fold](#runs-of-one-invocation-are-named-once) compare records through `exactJson`, so two
-  different integers never compare equal, an integer equals the same integer written another way,
-  and a number never equals a string of its digits.
-- **`JSON.stringify` throws on it**, as it does on any `bigint`. `exactJson(value)` is
-  `JSON.stringify` for a value that may hold one: the integer is written as the JSON number it is,
-  digit for digit, and a value holding none comes out byte for byte as `JSON.stringify` writes it.
-  The drill-down's [byte bound](#a-byte-bound) measures a record by that text.
-- **Validation decides it exactly or says it did not.** The schema validator holds numbers as
-  doubles, so the integer is handed to it as the nearest double, which is an integer on the same
-  side of every bound as the real one unless it lands on the bound itself. The verdict is therefore
-  the integer's own, except where the schema holds that very double as a bound, a `const` or an
-  `enum` member, or uses `multipleOf`, `uniqueItems`, a numeric `format` or a `$ref` outside
-  itself. There the record is `partial` with `why: "number_undecided"` and a
-  `record.number_undecided` defect: never `validated` on a rounded value. No schema the package
-  ships uses any of those keywords.
-- **The reader's own summaries hold only what they can state.** `LoadedRecord.t` and
-  `Bundle.status` are numbers or null. A `t` that is a `bigint` stays exact in the record, and the
-  record is undated: it is in no window, and `counts.undated` counts it. An `end` whose `status`
-  is a `bigint` is a status other than zero: the run `failed`, replay is unavailable for
-  `end.status_nonzero`, `Bundle.status` is null, and the record is `invalid` against `parley.end`,
-  whose maximum is 255. A `sidecar` event whose `source` or `bytes` is one is `unreadable`.
-- **A `seq` that is a `bigint` cannot place the line**, because every identity the reader hands
-  out is a number. The line is held back like one holding a number it cannot represent, and no
-  record appears at a neighbouring `seq`.
-- **A run section never states a rounded value.** A section whose head's `resolved` holds a
-  `bigint` drops `resolved` whole and names it in `dropped`, because the lens line is written by a
-  JSON writer that cannot carry one. The head, opened by `(run, seq)`, holds it exactly.
-
-A writer that prints a double with more digits than its shortest form is on the wrong side of this
-rule: C's `%.17g` writes the double 0.1 as `0.10000000000000001`, which is not the decimal that
-double prints as, so the line is held back rather than read as 0.1. The reader does not guess that
-a longer decimal meant a double.
-
-**What the scan costs.** Establishing that a line's numbers are faithful is one pass over its
-text, skipping strings. Measured on one receipt of 200,002 lines and 58.8 MB (half tool results
-with fractions, digests and arrays, half `receipt.step` records), seven loads a round over three
-alternating rounds on Bun 1.4.5: the median load took 226, 226 and 219 ms before the scan and 294,
-272 and 291 ms with it, about 65 ms or 0.3 µs a line more. A line that does hold an unfaithful
-number is parsed a second time by the package's own parser.
+Establishing that a line's numbers are ordinary is one pass over its text, skipping strings.
+Measured on one receipt of 200,002 lines and 58.8 MB (half tool results with fractions, digests and
+arrays, half `receipt.step` records), seven loads a round over three alternating rounds on Bun
+1.4.5: the median load took 267, 226 and 211 ms before the scan and 327, 303 and 283 ms with it, about 70 ms or 0.35 µs a line more. A line that does hold a number of more than fifteen digits or an exponent has that number
+parsed; a line that holds a `bigint` is parsed a second time by the package's own parser.
 
 ## Quarantine
 
@@ -189,7 +187,7 @@ attributed to:
 | `line.blank` | Empty or whitespace, which is not a JSON object either | §1.4 |
 | `line.no_envelope` | A JSON object with no usable `run` and `seq`, so it cannot be placed in a run or deduplicated | §1.3 |
 | `line.unterminated` | The final fragment, with no newline | §5.4 |
-| `line.number_unrepresentable` | A JSON object holding a [number the reader cannot represent](#numbers), or whose `seq` is an integer beyond a double | §1.1, §1.3 |
+| `line.number_unrepresentable` | A JSON object holding a [number the reader cannot represent](#numbers), or whose `seq` is beyond the safe-integer range | §1.1, §1.3 |
 
 §1.4 asks that a quarantined line be attributed to the run. A receipt file is one run's by name
 (§5: `<run>.jsonl`), so that is the attribution; a file holding more than one run, with a name
@@ -519,7 +517,7 @@ the tool's own shape, while `argv` is the protocol's. A string or an object is n
 because a cut argument reads as a different argument. `run`, `outcome`, `reason`, `head` and `folded` are never dropped, because without them
 the section does not say which run it is or what became of it; a run id long enough to break the
 bound on its own is left whole, and the line's `budget.bytes` still holds. A `resolved` that holds
-an integer beyond a double is dropped the same way, whatever its size, and named in `dropped`: the
+an integer beyond the safe range is dropped the same way, whatever its size, and named in `dropped`: the
 line cannot carry it ([numbers](#numbers)). The ids in
 `folded.stands_for` are not counted against the section's bound: a section that stands for forty
 runs carries over a kilobyte of them, and counting them would drop `resolved` and `argv` from
@@ -928,11 +926,14 @@ still ranks above a succeeded run's. `what-failed` is unaffected: every warning 
 - Serve a reader over the network, or hold an index. A read is a function call that loads the
   directory it was pointed at, once, per read; the store's indexing is
   [flyingrobots/parley#2](https://github.com/flyingrobots/parley/issues/2).
-- Hold a number that is neither an integer nor a double's value, or an integer of more than 4096
-  digits. It says so and keeps the line's bytes rather than return the number rounded
-  ([numbers](#numbers)). Version 0.2.0 parsed every number into a double, so there an integer
-  outside −(2^53)+1 to (2^53)−1 might not be returned exactly, and two results that differed only
-  in such integers could compare equal and fold, which they did when both parsed to one double
+- Make a non-integral decimal exact. A non-integral number is a double; one that is no double's
+  digits, and an integer of more than 4096 digits, it cannot hold at all, and it says so and keeps
+  the line's bytes rather than return the number rounded ([numbers](#numbers)).
+- Validate a record that holds an integer beyond the safe range. It reports that it did not
+  ([numbers](#what-the-reader-does-with-a-bigint)).
+- Versions up to 0.2.0 parsed every number into a double, so there an integer outside
+  −(2^53)+1 to (2^53)−1 might not be returned exactly, and two results that differed only in such
+  integers could compare equal and fold, which they did when both parsed to one double
   ([flyingrobots/parley#159](https://github.com/flyingrobots/parley/issues/159)).
 - Write, create or repair anything.
 - Windows paths. v0.2 of the spec is POSIX-only.

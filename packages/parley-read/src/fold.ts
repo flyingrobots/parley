@@ -182,7 +182,7 @@ function foldKey(own: readonly LoadedRecord[], outcome: Outcome | undefined, vie
   const decisions = view === undefined
     ? []
     : inSeq.filter((r) => (DECISIONS as readonly string[]).includes(r.event ?? "") && onViewSurface(view, r)).map(payload);
-  // `exactJson`, so an integer beyond a double is compared by its digits (flyingrobots/parley#159).
+  // `exactJson`, so an integer beyond the safe range is compared by its digits (flyingrobots/parley#159).
   return exactJson([inv, outcome, reason, ends.map((r) => r.record.status ?? null), codes, canonical(head?.record.resolved), results, decisions]);
 }
 

@@ -19,17 +19,17 @@ the entry under it names each schema version it releases, and those are separate
 
 ### Fixed
 
-- **The reader returns the numbers a receipt holds** (`@flyingrobots/parley-read`, unreleased;
+- **The reader returns the integers a receipt holds** (`@flyingrobots/parley-read` 0.3.0, unreleased;
   flyingrobots/parley#159). The `0.2.1` entry below records this as a known exception of reader
   0.2.0, and its wording is broader than the behaviour was: in 0.2.0 an integer outside the range
   every JSON implementation agrees on, −(2^53)+1 to (2^53)−1, *might* not be returned exactly, and
   two results that differed only in such integers *could* compare equal and fold, which they did
   when both parsed to one double (`9007199254740993` against `…992` folded; `…993` against `…994`
-  did not, though `…993` still came back as `…992`). The reader now loads a number with the value
-  its text states, a `bigint` where an integer is beyond a double, compares by that value, and
-  holds back, verbatim and said, a line holding a number it cannot represent at all. A fold is
-  again what the `parley.lens` 1.1.0 description says it is. No schema's shape, meaning or version
-  moves; the package's own changelog is the record.
+  did not, though `…993` still came back as `…992`). The reader now loads an integer-valued number
+  outside that range as a `bigint`, which is a breaking change to what it returns, compares by
+  the exact value, and holds back, verbatim and said, a line holding a number it cannot represent
+  at all. A fold is again what the lens message's description says it is. No schema's shape,
+  meaning or version moves; the package's own changelog is the record.
 
 - An intermittent test failure, in both writers' suites (flyingrobots/parley#142). Several
   redaction tests declared a short numeric secret (`4321`, `8675309`) and searched whole receipts

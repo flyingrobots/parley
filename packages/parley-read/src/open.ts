@@ -210,7 +210,7 @@ export function planOpen(request: OpenRequest): OpenPlan {
 
 /**
  * UTF-8 bytes of a record's JSON as the drill-down returns it, envelope fields and all. The JSON
- * is `exactJson`'s, so an integer beyond a double counts by its digits (flyingrobots/parley#159).
+ * is `exactJson`'s, so an integer beyond the safe range counts by its digits (flyingrobots/parley#159).
  */
 export function recordBytes(r: LoadedRecord | undefined): number {
   return r === undefined ? 0 : Buffer.byteLength(exactJson(r), "utf8");

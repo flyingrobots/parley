@@ -68,7 +68,7 @@
 // never dropped: without them the section does not say which run it is or what became of it.
 //
 // **A `resolved` the line cannot carry is dropped too** (flyingrobots/parley#159). The loader holds
-// an integer beyond a double as a `bigint`, and the lens line is written by a JSON writer that
+// an integer beyond the safe range as a `bigint`, and the lens line is written by a JSON writer that
 // cannot carry one. A section whose head's `resolved` holds such an integer drops `resolved` whole
 // and names it in `dropped`, as it does a `resolved` too large: the head, opened by `(run, seq)`,
 // holds the value exactly, and the section never states a rounded one.

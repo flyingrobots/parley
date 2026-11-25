@@ -15,9 +15,9 @@
 //         must not leave it; `bytes` and `sha256` describe the stored bytes; a sidecar found missing
 //         or mismatched makes the bundle unavailable for replay.
 //   §1.1  a line is JSON, and a JSON number is a decimal of any size. A number is loaded with the
-//         value its text states (`exact.ts`, flyingrobots/parley#159): a double where a double
-//         holds it, a `bigint` where it is an integer a double cannot hold, and where the reader
-//         cannot hold it at all the line is held back whole rather than returned rounded.
+//         value its text states (`exact.ts`, flyingrobots/parley#159): a `bigint` where it is an
+//         integer outside the safe-integer range, a number otherwise, and where the reader cannot
+//         hold it at all the line is held back whole rather than returned rounded.
 //   §8    a copy of a run on the shared history stream may be a projection of the receipt copy, and
 //         a reader that finds the same record in more than one copy prefers the least-projected one,
 //         because the receipt copy is the record and a projection is a view of it.
@@ -131,7 +131,7 @@ export interface LoadedRecord {
   readonly run: string;
   readonly seq: number;
   readonly event: string | null;
-  /** The record's `t` when it is a non-negative integer a double holds; a `t` beyond that stays exact in `record` and is null here. */
+  /** The record's `t` when it is a non-negative integer in the safe range; a `t` beyond it stays exact in `record` and is null here. */
   readonly t: number | null;
   /** The file the first copy of this event was read from. */
   readonly file: string;
@@ -149,8 +149,9 @@ export interface LoadedRecord {
   /** The transforms whose copies this body came from, named; empty when the body is an unprojected copy's. */
   readonly projectedBy: readonly string[];
   /**
-   * The record, with each number as its text states it: a JavaScript number, or a `bigint` for an
-   * integer a double cannot hold (flyingrobots/parley#159). `JSON.stringify` throws on a `bigint`;
+   * The record, with each number as its text states it: a `bigint` for an integer-valued number
+   * outside -9007199254740991..9007199254740991, a JavaScript number otherwise (`ExactValue`,
+   * flyingrobots/parley#159). `JSON.stringify` throws on a `bigint`;
    * `exactJson` serialises the record with the integer's digits.
    */
   readonly record: Record<string, unknown>;
@@ -189,7 +190,7 @@ export interface Bundle {
   readonly duplicates: number;
   /** A newline-terminated `end` was read: the run reported termination (§5.4). */
   readonly terminated: boolean;
-  /** `end.status`, when there is one a double holds. A status beyond that is null here, exact in the `end` record, and counts as non-zero. */
+  /** `end.status`, when there is one in the safe range. A status beyond it is null here, exact in the `end` record, and counts as non-zero. */
   readonly status: number | null;
   /** The receipt is partial: the head carries `redacted`, a `redaction` event was emitted, or `end.redacted` is true (§3.3, §5.3). */
   readonly redacted: boolean;
@@ -303,11 +304,11 @@ function scan(file: string): Scan {
     // state. It names its own run when it can, which is what keeps that run from folding.
     if (!exact.ok) {
       const shown = exact.tokens.slice(0, 3).join(", ") + (exact.tokens.length > 3 ? `, and ${exact.tokens.length - 3} more` : "");
-      quarantined.push(defect(NUMBER_UNREPRESENTABLE, "§1.1", file, line.n, `the line holds a number this reader cannot represent exactly (${shown}): not an integer and not a value a double holds, or an integer of more than ${MAX_EXACT_DIGITS} digits; the line is kept verbatim and is not returned as a record with the number rounded`, { raw: line.raw, run, ...(seq === null ? {} : { seq }) }));
+      quarantined.push(defect(NUMBER_UNREPRESENTABLE, "§1.1", file, line.n, `the line holds a number this reader cannot represent exactly (${shown}): a non-integral decimal that is no double's digits, or an integer of more than ${MAX_EXACT_DIGITS} digits; the line is kept verbatim and is not returned as a record with the number rounded`, { raw: line.raw, run, ...(seq === null ? {} : { seq }) }));
       continue;
     }
     if (typeof obj.seq === "bigint" && obj.seq >= 0n) {
-      quarantined.push(defect(NUMBER_UNREPRESENTABLE, "§1.3", file, line.n, `the line's seq is ${obj.seq.toString()}, an integer beyond what this reader holds a seq in, so the line cannot be placed without changing it; kept verbatim, never a record at another seq`, { raw: line.raw, run }));
+      quarantined.push(defect(NUMBER_UNREPRESENTABLE, "§1.3", file, line.n, `the line's seq is ${obj.seq.toString()}, beyond the largest seq this reader places (9007199254740991), so the line cannot be placed without changing it; kept verbatim, never a record at another seq`, { raw: line.raw, run }));
       continue;
     }
     if (run === null || seq === null) {
@@ -583,7 +584,7 @@ function buildBundle(run: string, raw: readonly Raw[], sources: readonly BundleS
       if (validation.state === "invalid") {
         defects.push(defect("record.invalid", "§4.5", entry.file, entry.line, `${validation.schema.id}@${validation.schema.version}: ${validation.errors.join("; ")}`, { run }));
       } else if (validation.state === "partial" && validation.why === "number_undecided") {
-        defects.push(defect("record.number_undecided", "§4.5", entry.file, entry.line, `${validation.schema.id}@${validation.schema.version}: the record holds an integer beyond what a double holds, and this schema constrains numbers in a way the reader cannot decide exactly for it; reported as partial, never as validated`, { run }));
+        defects.push(defect("record.number_undecided", "§4.5", entry.file, entry.line, `${validation.schema.id}@${validation.schema.version}: the record holds an integer beyond the safe range, which this reader's validator cannot evaluate, so validation was not completed; the record is neither validated nor found invalid`, { run }));
       } else if (validation.state === "partial") {
         defects.push(defect("record.unknown_pair", "§4.5", entry.file, entry.line, `no schema for ${validation.schema.id}@${validation.schema.version}; reported as partial, never as validated`, { run }));
       }
@@ -601,7 +602,7 @@ function buildBundle(run: string, raw: readonly Raw[], sources: readonly BundleS
   const head = records.find((r) => r.event === "receipt.head");
   const terminated = end !== undefined;
   const status = end && Number.isInteger(end.record.status) ? (end.record.status as number) : null;
-  // A status no double holds is still a status other than zero (§3.4), though `status` cannot state it.
+  // A status beyond the safe range is still a status other than zero (§3.4), though `status` cannot state it.
   const beyond = end !== undefined && typeof end.record.status === "bigint" && end.record.status !== 0n;
   const redacted =
     (end?.record.redacted === true) ||

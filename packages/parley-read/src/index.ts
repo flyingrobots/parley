@@ -1,7 +1,7 @@
 export { CHUNK_BYTES, LineBuffer, readFileLines, splitLines, type Line, type Split } from "./lines.ts";
 export { isDirectory, isFile, receiptLocations, repoReceiptDir, stateReceiptDir, type LocateOptions, type ReceiptLocation, type Where } from "./locate.ts";
 export { ENVELOPE, PROTOCOL_PREFIX, envelopeGaps, schemaRef, validator, type SchemaRef, type Validation, type Validator } from "./validate.ts";
-export { MAX_EXACT_DIGITS, exactJson } from "./exact.ts";
+export { MAX_EXACT_DIGITS, exactJson, type ExactValue } from "./exact.ts";
 export { NUMBER_UNREPRESENTABLE, QUARANTINE_CODES, heldBackRuns, loadReceipts, readHistorySegment, readReceiptFile, type Bundle, type BundleSource, type Defect, type DefectCode, type FileRead, type FileSummary, type Load, type LoadOptions, type LoadedRecord, type Projection, type ReadOptions, type Replay, type SidecarResolution, type SidecarState } from "./load.ts";
 export { DROPPABLE, LENS_SCHEMA, RUN_SECTION_BYTES, UNDETERMINED_REASONS, digestBytes, digestFor, digestLine, lensEntry, runSection, sufficientBytes, type Digest, type Digested, type Droppable, type LensEntry, type LineEnvelope, type Loss, type LossBound, type RecordRef, type RunSection, type UndeterminedReason } from "./digest.ts";
 export { DEFAULT_BUDGET, Deadline, MONOTONIC, NO_RETENTION, OVER_BUDGET, QUERY_SCHEMA, UNREPRESENTABLE_WARNING, VIEWS, declineOnRun, planQuery, queryReceipts, queryRecord, type AcceptedQuery, type Asker, type Budget, type BudgetDecline, type BudgetPhase, type QueryAnswer, type QueryDeclined, type QueryOptions, type QueryOutcome, type QueryPlan, type QueryRefusal, type QueryRefusalCode, type QueryRefused, type QueryRequest, type QueryWindow, type View } from "./query.ts";

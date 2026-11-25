@@ -116,7 +116,7 @@ function declaresWrite(record: LoadedRecord): boolean {
 
 /**
  * `end` with a status that is a number other than zero: a run that did not succeed (§3.3, §3.4).
- * An integer no double holds, which the loader keeps as a `bigint`, is a number other than zero.
+ * An integer beyond the safe range, which the loader keeps as a `bigint`, is a number other than zero.
  */
 function endedBadly(record: LoadedRecord): boolean {
   const status = record.record.status;

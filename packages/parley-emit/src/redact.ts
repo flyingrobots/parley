@@ -5,6 +5,7 @@
 // scrubbed: the writer refuses, at startup, to choose a run id or receipt path that carries a
 // secret (location.ts, tool.ts), so there is nothing in them to replace.
 import { types } from "node:util";
+import { isBoxedBigInt } from "./exact.ts";
 
 export const REDACTED = "[redacted]";
 
@@ -134,7 +135,7 @@ function scrubValue(value: unknown, values: ReadonlySet<string>, pointer: string
   if (types.isNumberObject(value)) return scrubValue(Number(value), values, pointer, found, opts, key, true);
   if (types.isStringObject(value)) return scrubValue(String(value), values, pointer, found, opts, key, true);
   if (types.isBooleanObject(value)) return scrubValue(Boolean.prototype.valueOf.call(value), values, pointer, found, opts, key, true);
-  if (types.isBigIntObject(value)) return scrubValue(BigInt.prototype.valueOf.call(value), values, pointer, found, opts, key, true);
+  if (isBoxedBigInt(value)) return scrubValue(BigInt.prototype.valueOf.call(value), values, pointer, found, opts, key, true);
   // A function left here has no JSON form: its hook, if it had one, has been applied, and a
   // hook's own result is not asked again. It is absent from the copy, so nothing callable
   // survives the scrub for the serialiser to call.

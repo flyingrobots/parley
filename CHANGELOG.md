@@ -27,6 +27,11 @@ the entry under it names each schema version it releases, and those are separate
 
 ### Changed
 
+- The checks workflow runs both packages' own suites on Bun 1.2.0, the oldest version their
+  `engines` and READMEs promise, in a job of its own. The first run found one difference: on Bun
+  1.2.0 a boxed `bigint` from another realm was not recognised, which parley-emit 0.5.0 now
+  handles. The repository's tooling under `scripts/` needs a newer Bun and is not part of that
+  promise.
 - **BREAKING in `@flyingrobots/parley-emit` 0.5.0: `NaN`, `Infinity` and `-Infinity` are refused,
   never written as `null`** (flyingrobots/parley#177; the package's changelog). The TypeScript
   writer wrote `null` for them, silently and with status 0, since 0.1.0; `parley_emit.py` has

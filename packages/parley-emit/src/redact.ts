@@ -119,12 +119,20 @@ export function scrub(value: unknown, values: ReadonlySet<string>, pointer = "",
 
 function scrubValue(value: unknown, values: ReadonlySet<string>, pointer: string, found: string[], opts: ScrubOptions, key: string, hooked: boolean): unknown {
   if (values.size === 0) return value;
-  // An object or a function can carry the hook, and `JSON.stringify` consults it on either.
-  if ((value !== null && typeof value === "object") || typeof value === "function") {
+  // What `JSON.stringify` consults for a hook: an object, a function, and a `bigint` primitive
+  // (through `BigInt.prototype`). The lookup itself is made only where the serialiser makes it:
+  // never on a hook's own result, so a getter there is not read.
+  if (!hooked && ((value !== null && typeof value === "object") || typeof value === "function" || typeof value === "bigint")) {
     const json = (value as { toJSON?: unknown }).toJSON;
-    if (!hooked && typeof json === "function") return scrubValue((json as (key: string) => unknown).call(value, key), values, pointer, found, opts, key, true);
-    if (value instanceof Number || value instanceof String || value instanceof Boolean || value instanceof BigInt) return scrubValue(value.valueOf(), values, pointer, found, opts, key, true);
+    if (typeof json === "function") return scrubValue((json as (key: string) => unknown).call(value, key), values, pointer, found, opts, key, true);
   }
+  // A boxed primitive is written as its primitive, by the serialiser's conversions: a Number by
+  // ToNumber and a String by ToString, which honour what the object overrides, and a Boolean and
+  // a BigInt by the value they hold.
+  if (value instanceof Number) return scrubValue(Number(value), values, pointer, found, opts, key, true);
+  if (value instanceof String) return scrubValue(String(value), values, pointer, found, opts, key, true);
+  if (value instanceof Boolean) return scrubValue(Boolean.prototype.valueOf.call(value), values, pointer, found, opts, key, true);
+  if (value instanceof BigInt) return scrubValue(BigInt.prototype.valueOf.call(value), values, pointer, found, opts, key, true);
   // A function left here has no JSON form: its hook, if it had one, has been applied, and a
   // hook's own result is not asked again. It is absent from the copy, so nothing callable
   // survives the scrub for the serialiser to call.

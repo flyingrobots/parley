@@ -86,7 +86,11 @@ it. This page is the reference for what the package does on `main`; the package
    booleans whose decimal form is a secret, and in object keys; the envelope never is. What is
    scrubbed is what is written: a value with a `toJSON` hook (a `Date`, a `URL`) is scrubbed as
    what the hook returns, applied once, and a boxed primitive as its primitive
-   (flyingrobots/parley#178). The default
+   (flyingrobots/parley#178). One known limit: in a process that installs a `toJSON` on
+   `BigInt.prototype`, a `bigint` that a payload's own hook returns is written through that
+   prototype hook when a secret is present (`"42"` where a run with no secret writes `42`),
+   because the writer cannot mark a primitive as already hooked. A `bigint` equal to a secret is
+   still replaced; what is not scrubbed is the prototype hook's own output for it. The default
    descriptor sinks retry a full pipe and continue a partial write; a sidecar that cannot be
    written is kept inline.
 

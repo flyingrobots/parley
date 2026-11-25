@@ -516,6 +516,25 @@ describe("PE-35 redaction of and beside a bigint", () => {
     } finally { delete proto.toJSON; }
   });
 
+  test("PE-36 known limit, pinned: with a toJSON on BigInt.prototype, a bigint that a payload hook returns is written through that prototype hook when a secret is present", async () => {
+    // Without a secret the serialiser applies the payload's hook once and writes the bigint it
+    // returned as digits. With one, the scrubbed copy holds that bigint as a plain value, and the
+    // serialiser, meeting it for the first time, consults BigInt.prototype. The writer cannot
+    // mark a primitive as already hooked. A bigint equal to a secret is still replaced, because
+    // the scrub sees it before the serialiser does.
+    const secret = "900719925474099312";
+    const proto = BigInt.prototype as unknown as { toJSON?: () => unknown };
+    proto.toJSON = function (this: bigint) { return this.toString(); };
+    try {
+      const body = (run: Run) => { run.result({ event: "result", id: { toJSON: () => 42n }, pin: { toJSON: () => BigInt(secret) } }, P.any); };
+      const without = await go(body);
+      expect(of(without.receipt, "result")[0]).toContain(`"id":42,"pin":${secret},`);
+      const r = await go(body, { argv: ["count", "--token", secret] });
+      for (const lines of [r.out, r.err, r.receipt]) expect(lines.join("\n")).not.toContain(secret);
+      expect(of(r.receipt, "result")[0]).toContain('"id":"42","pin":"[redacted]",');
+    } finally { delete proto.toJSON; }
+  });
+
   test("a bigint secret under a schema that requires an integer is a conflict, never a rounded or a quoted number", async () => {
     const r = await go((run) => { run.result({ event: "result", value: BigInt(SECRET) }, P.count); }, { argv: ["count", "--token", SECRET] });
     expect(r.status).toBe(4);

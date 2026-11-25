@@ -96,6 +96,12 @@ a test requires this source to reproduce each.
   unboxed nothing, so with any secret supplied `new Date(0)` was written as `{}` and
   `new Number(5)` as `{}`, where a run with no secret wrote `"1970-01-01T00:00:00.000Z"` and `5`.
   A record now says the same thing with a secret present as without.
+- The scrub follows the serialiser's own rules: a hook is looked up only where the serialiser
+  looks it up (on an object, a function and a `bigint`, never on a hook's own result), and a
+  boxed `Number` or `String` is converted as the serialiser converts it. **Known limit:** in a
+  process that installs a `toJSON` on `BigInt.prototype`, a `bigint` that a payload's own hook
+  returns is written through that prototype hook when a secret is present, so the prototype
+  hook's output for it is not scrubbed. A `bigint` equal to a secret is still replaced.
 - A function in a payload is scrubbed as the serialiser would write it: one with a `toJSON` hook
   as what the hook returns, and one without, or one a hook returned, as nothing. Nothing callable
   is left in the scrubbed copy for the serialiser to call afterwards.

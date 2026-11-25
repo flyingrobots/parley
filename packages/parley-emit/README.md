@@ -379,7 +379,7 @@ not, and uses it wherever it reads its own text:
 import { exactJson, parseExact } from "@flyingrobots/parley-emit";
 
 const parsed = parseExact(line);
-if (parsed.ok) exactJson(parsed.value);   // the line again, digit for digit
+if (parsed.ok) exactJson(parsed.value);   // the same JSON value, every integer exact; a spelling may change (1e21 is written as 22 digits, 5.0 as 5)
 else parsed.tokens;                       // the numbers that could not be held, as written
 ```
 

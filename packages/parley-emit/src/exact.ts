@@ -252,15 +252,19 @@ let pastCap: bigint | undefined;
 /**
  * True when the value holds, at any depth, a `bigint` of more than `MAX_EXACT_DIGITS` digits:
  * one `exactJson` would write and `parseExact` could not read back. The comparison is against one
- * constant, so no digit string is built to find out.
+ * constant, so no digit string is built to find out. It follows `toJSON` as the serialiser does.
  */
-export function holdsUnreadable(value: unknown): boolean {
+export function holdsUnreadable(value: unknown, hooked = false): boolean {
   if (typeof value === "bigint") {
     pastCap ??= 10n ** BigInt(MAX_EXACT_DIGITS);
     return value >= pastCap || value <= -pastCap;
   }
   if (value === null || typeof value !== "object") return false;
-  if (Array.isArray(value)) return value.some(holdsUnreadable);
+  // What the serialiser writes is what a `toJSON` hook returns, so that is what is looked at:
+  // once per value, as `write` applies it (`hooked` marks a hook's own result).
+  const json = (value as { toJSON?: unknown }).toJSON;
+  if (!hooked && typeof json === "function") return holdsUnreadable((json as (key: string) => unknown).call(value, ""), true);
+  if (Array.isArray(value)) { for (let i = 0; i < value.length; i++) if (holdsUnreadable(value[i])) return true; return false; }
   for (const key of Object.keys(value)) if (holdsUnreadable((value as Record<string, unknown>)[key])) return true;
   return false;
 }

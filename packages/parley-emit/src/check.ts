@@ -203,6 +203,22 @@ function same(a: unknown, b: unknown, keyword = "const"): boolean {
   return false;
 }
 
+/**
+ * How many of the alternatives hold, when some may be undecidable (`beside` throws for an exact
+ * integer beside a schema number beyond the safe range). Every alternative is read: one that
+ * cannot be decided never hides a definite answer after it. `undecided` is the first refusal, for
+ * the caller to rethrow when the definite answers do not settle the keyword.
+ */
+function among<T>(alternatives: readonly T[], holds: (alternative: T) => boolean): { matches: number; undecided: Unsupported | null } {
+  let matches = 0;
+  let undecided: Unsupported | null = null;
+  for (const alternative of alternatives) {
+    try { if (holds(alternative)) matches++; }
+    catch (e) { if (!(e instanceof Unsupported)) throw e; undecided ??= e; }
+  }
+  return { matches, undecided };
+}
+
 function satisfies(schema: unknown, value: unknown): boolean {
   const scratch: Issue[] = [];
   validate(schema, value, "", scratch);
@@ -256,12 +272,23 @@ function validate(schema: unknown, value: unknown, path: string, errors: Issue[]
   if (s.const !== undefined && !same(value, s.const)) fail(`must be ${exactJson(s.const)}`);
   if (s.enum !== undefined) {
     const options = s.enum as unknown[];
-    if (!options.some((o) => same(value, o, "enum"))) fail(`must be one of ${exactJson(options)}`);
+    // A definite match decides it. With none, an option that could not be compared leaves it undecided.
+    const { matches, undecided } = among(options, (o) => same(value, o, "enum"));
+    if (matches === 0) { if (undecided) throw undecided; fail(`must be one of ${exactJson(options)}`); }
   }
   if (s.not !== undefined && satisfies(s.not, value)) fail(`must not match the excluded shape`);
   if (s.allOf !== undefined) for (const sub of s.allOf as unknown[]) validate(sub, value, path, errors);
-  if (s.anyOf !== undefined && !(s.anyOf as unknown[]).some((sub) => satisfies(sub, value))) fail(`matches none of the allowed shapes`);
-  if (s.oneOf !== undefined && (s.oneOf as unknown[]).filter((sub) => satisfies(sub, value)).length !== 1) fail(`must match exactly one of the allowed shapes`);
+  if (s.anyOf !== undefined) {
+    const { matches, undecided } = among(s.anyOf as unknown[], (sub) => satisfies(sub, value));
+    if (matches === 0) { if (undecided) throw undecided; fail(`matches none of the allowed shapes`); }
+  }
+  if (s.oneOf !== undefined) {
+    // Two definite matches fail it whatever the rest are; otherwise an undecided branch could be a second match, or the only one.
+    const { matches, undecided } = among(s.oneOf as unknown[], (sub) => satisfies(sub, value));
+    if (matches > 1) fail(`must match exactly one of the allowed shapes`);
+    else if (undecided) throw undecided;
+    else if (matches !== 1) fail(`must match exactly one of the allowed shapes`);
+  }
   if (s.if !== undefined) {
     const branch = satisfies(s.if, value) ? s.then : s.else;
     if (branch !== undefined) validate(branch, value, path, errors);

@@ -142,8 +142,13 @@ place the output is not the corpus's text (flyingrobots/parley#176):
 
 - An integral `float` keeps its fraction: `5.0`, where the TypeScript writer writes `5`. A small
   one has a two-digit exponent: `1e-07` for `1e-7`. Same values, other spellings.
-- There is no digit cap. An integer of more than 4,096 digits is written in full; the TypeScript
-  parser does not hold such a number, and the TypeScript writer refuses to emit one.
+- The writer sets no digit cap of its own, so the limit is the interpreter's. Where Python has
+  no limit on converting an integer to text (3.9.6, measured), an integer of more than 4,096
+  digits is written in full; the TypeScript parser does not hold such a number, and the
+  TypeScript writer refuses to emit one. Where Python limits that conversion (4,300 digits by
+  default; measured on 3.13), `json.dumps` raises `ValueError` for a longer integer, and the run
+  reports `uncaught.exception` and ends with status 2. `sys.set_int_max_str_digits` and
+  `PYTHONINTMAXSTRDIGITS` change that limit; the writer touches neither.
 - A `float` that is not finite raises: the run reports `uncaught.exception` and ends with status
   2. The TypeScript writer writes `null` (flyingrobots/parley#177).
 - The writer writes what it is handed. A tool that reads JSON with `json.loads` has already lost

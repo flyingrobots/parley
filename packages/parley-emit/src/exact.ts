@@ -265,12 +265,17 @@ export function holdsUnreadable(value: unknown): boolean {
   return false;
 }
 
-/** `JSON.stringify`'s rules, with a `bigint` written as its digits. `undefined` where `JSON.stringify` gives none. */
-function write(value: unknown, key: string): string | undefined {
+/**
+ * `JSON.stringify`'s rules, with a `bigint` written as its digits. `undefined` where
+ * `JSON.stringify` gives none. `hooked` is true for a value a `toJSON` hook returned: the hook is
+ * applied once per value, so its result is serialised as it is and its own `toJSON`, if it has
+ * one, is not called. Its members are values of their own and their hooks still apply.
+ */
+function write(value: unknown, key: string, hooked = false): string | undefined {
   if (typeof value === "bigint") return value.toString();
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   const json = (value as { toJSON?: unknown }).toJSON;
-  if (typeof json === "function") return write((json as (key: string) => unknown).call(value, key), key);
+  if (!hooked && typeof json === "function") return write((json as (key: string) => unknown).call(value, key), key, true);
   if (value instanceof Number || value instanceof String || value instanceof Boolean) return JSON.stringify(value); // a boxed primitive is its primitive
   if (Array.isArray(value)) {
     // By index, so a hole is `null` as `JSON.stringify` writes it; `map` would skip it.
@@ -298,11 +303,10 @@ function write(value: unknown, key: string): string | undefined {
 export function exactJson(value: unknown): string {
   try { return JSON.stringify(value) ?? "null"; } catch (e) {
     if (!(e instanceof TypeError)) throw e;
-    // A `bigint`, or a cycle. A cycle exhausts the stack of either walk below, and is reported as
-    // what `JSON.stringify` said about it.
-    try {
-      if (!holdsExact(value)) throw e;
-      return write(value, "") ?? "null";
-    } catch (inner) { throw inner instanceof RangeError ? e : inner; }
+    // A `bigint`, or a cycle. The `bigint` may exist only in what a `toJSON` hook returns, so
+    // the value is not inspected first: it is written, hooks and all. A cycle exhausts the stack
+    // of that walk, and is reported as what `JSON.stringify` said about it.
+    try { return write(value, "") ?? "null"; }
+    catch (inner) { throw inner instanceof RangeError ? e : inner; }
   }
 }

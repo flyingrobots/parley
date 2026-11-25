@@ -83,7 +83,14 @@ it. This page is the reference for what the package does on `main`; the package
    reported, else 0; 4 if any sink or sidecar failed, or a record was withheld because redaction
    made it invalid (§3.3, §3.4, §5.4, §5.3). Every record's payload is
    scrubbed of declared secrets before any copy is written, within strings, in numbers and
-   booleans whose decimal form is a secret, and in object keys; the envelope never is. The default
+   booleans whose decimal form is a secret, and in object keys; the envelope never is. What is
+   scrubbed is what is written: a value with a `toJSON` hook (a `Date`, a `URL`) is scrubbed as
+   what the hook returns, applied once, and a boxed primitive as its primitive
+   (flyingrobots/parley#178). One known limit: in a process that installs a `toJSON` on
+   `BigInt.prototype`, a `bigint` that a payload's own hook returns is written through that
+   prototype hook when a secret is present (`"42"` where a run with no secret writes `42`),
+   because the writer cannot mark a primitive as already hooked. A `bigint` equal to a secret is
+   still replaced; what is not scrubbed is the prototype hook's own output for it. The default
    descriptor sinks retry a full pipe and continue a partial write; a sidecar that cannot be
    written is kept inline.
 
@@ -287,9 +294,9 @@ of exact unquoted digits and stays exact through every place a record travels. `
 | Reparsed text the writer cannot hold | The line is not handed to the transform and not appended past it: it is withheld from the stream with a `history.number_unrepresentable` warning naming the `seq` and the numbers as written. No emission writes such text, because the writer refuses a `bigint` its parser could not read back; this is the second guard |
 | Redaction | A `bigint` whose decimal digits are a declared secret is replaced with `[redacted]`, as a number is. Any other `bigint` passes through the scrub unchanged |
 | Post-redaction check, projection re-validation | `checkRecord` treats a `bigint` as a JSON number and an integer. `type`, `const`, `enum` and the four bounds are decided by exact comparison. An integer beyond the safe range beside a schema number that is itself beyond the safe range is not decided, since that number may be a rounded reading of the schema's text: the answer is `unsupported`, which a redaction reports as `redaction.schema_unchecked` and a projection as `history.transform_uncheckable`. A `bigint` inside the safe range is decided against any bound. Nothing is ever checked as a converted double |
-| `inv`, `canonical` | A `bigint` is canonical as its digits; `5n` and `5` share a form. Every value accepted before 0.5.0 keeps its canonical form and its `inv` |
+| `inv`, `canonical` | A `bigint` is canonical as its digits; `5n` and `5` share a form. The canonical form is of the value as the serialiser writes it: a `toJSON` hook's result, a boxed primitive's primitive, no member for a function. `resolved` is taken in that form once, at startup, for the head and for `inv`. Plain JSON data accepted before 0.5.0 keeps its canonical form and its `inv`; a `resolved` holding a `Date` or another hooked value moves, since before 0.5.0 it was identified by its own keys (a `Date` as `{}`) |
 | `--human`, errors, the top-level handler | The default rendering uses `exactJson`; a tool's renderer is handed the `bigint`; a diagnostic's `detail` may hold one; captured console output of an object holding one keeps its JSON form |
-| Refusals | A `bigint` of more than `MAX_EXACT_DIGITS` (4,096) digits: the emitting call throws `TypeError` before a `seq` is taken, `resolved` holding one is `startup.arguments_invalid`, and a transform's body holding one is `history.transform_invalid`. A `bigint` passed to `end` as the status: `TypeError` |
+| Refusals | A `bigint` of more than `MAX_EXACT_DIGITS` (4,096) digits: the emitting call throws `TypeError` before a `seq` is taken, `resolved` holding one is `startup.arguments_invalid`, and a transform's body holding one is `history.transform_invalid`. A number that is not finite (`NaN`, `Infinity`, `-Infinity`) is refused in the same three places, and `canonical` and `computeInv` throw `TypeError` for one (flyingrobots/parley#177). A `bigint` passed to `end` as the status: `TypeError` |
 
 `parseExact` decides each number from its text:
 
@@ -303,8 +310,9 @@ of exact unquoted digits and stays exact through every place a record travels. `
 The cap is an implementation limit. A token past it, or one with an enormous exponent, is
 classified from its length and never built. `parseExact` throws exactly when `JSON.parse` does.
 
-Not exact: a number that is not finite is written as `null`, as `JSON.stringify` writes it
-(flyingrobots/parley#177). The writer's two reads of another receipt during retention use
+A number that is not finite is never written: before 0.5.0 it was written as `null`, as
+`JSON.stringify` writes it (flyingrobots/parley#177). A value whose own `toJSON` returns `null`,
+such as an invalid `Date`, is still `null`. The writer's two reads of another receipt during retention use
 `JSON.parse`; they read `event` and `tool`, which are strings.
 
 The rules are pinned as data in the [numeric corpus](../../../conformance/numbers/README.md).

@@ -463,6 +463,28 @@ describe("PE-35 redaction of and beside a bigint", () => {
     expect(of(r.receipt, "result")[0]).toContain('"url":"https://user:[redacted]@example.test/p","twice":{"kept":true},');
   });
 
+  test("PE-36 a function with a toJSON hook is scrubbed as what its hook returns, and a hook's callable result is never called again (review of flyingrobots/parley#179)", async () => {
+    const secret = "zq7kx9fnsecret";
+    const body = (run: Run) => {
+      const callable = Object.assign(function () { /* no JSON form of its own */ }, { toJSON: () => secret });
+      run.result({
+        event: "result",
+        hooked_fn: Object.assign(function () { /* */ }, { toJSON: () => ({ kept: 1, note: secret }) }),
+        returns_callable: { toJSON: () => callable },
+        plain_fn: () => 1,
+        list: [Object.assign(function () { /* */ }, { toJSON: () => "from a function" }), () => 2],
+      }, P.any);
+    };
+    const without = await go(body);
+    // With no secret, JSON.stringify decides: a hooked function is its hook's result, a hook's callable result is absent.
+    expect(of(without.receipt, "result")[0]).toContain(`"hooked_fn":{"kept":1,"note":"${secret}"},"list":["from a function",null],`);
+    const r = await go(body, { argv: ["count", "--token", secret], stream: true });
+    for (const lines of [r.out, r.err, r.receipt, r.stream]) expect(lines.join("\n")).not.toContain(secret);
+    expect(of(r.receipt, "result")[0]).toContain('"hooked_fn":{"kept":1,"note":"[redacted]"},"list":["from a function",null],');
+    expect(of(r.receipt, "result")[0]).not.toContain("returns_callable");
+    expect(of(r.receipt, "result")[0]).not.toContain("plain_fn");
+  });
+
   test("a bigint secret under a schema that requires an integer is a conflict, never a rounded or a quoted number", async () => {
     const r = await go((run) => { run.result({ event: "result", value: BigInt(SECRET) }, P.count); }, { argv: ["count", "--token", SECRET] });
     expect(r.status).toBe(4);

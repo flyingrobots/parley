@@ -431,6 +431,38 @@ describe("PE-35 redaction of and beside a bigint", () => {
     expect(of(r.receipt, "redaction").some((l) => l.includes('"at":"/value"'))).toBe(true);
   });
 
+  // flyingrobots/parley#178: with a secret present, the scrub rebuilt every object from its own
+  // keys, so a value whose JSON form comes from a hook or a box was rewritten or let through.
+  test("PE-36 a Date, a boxed primitive and a hooked value are the same record with a secret present as without", async () => {
+    const body = (run: Run) => { run.result({ event: "result", when: new Date(0), n: new Number(5), s: new String("x"), b: new Boolean(true), big: Object(BIG), hook: { toJSON: () => ({ kept: 1 }) } }, P.any); };
+    const without = await go(body);
+    const withSecret = await go(body, { argv: ["count", "--token", "zq7kx9unrelated"] });
+    const text = `"when":"1970-01-01T00:00:00.000Z","n":5,"s":"x","b":true,"big":${BIG_TEXT},"hook":{"kept":1},`;
+    expect(of(without.receipt, "result")[0]).toContain(text);
+    expect(of(withSecret.receipt, "result")[0]).toContain(text);
+    expect(of(withSecret.out, "result")[0]).toContain(text);
+    expect(withSecret.status).toBe(0);
+  });
+
+  test("PE-36 a secret that only a toJSON hook returns is replaced, on every sink", async () => {
+    const secret = "zq7kx9hooksecret";
+    class Carrier { toJSON() { return { token: secret, note: `the ${secret} inside` }; } }
+    const r = await go((run) => { run.result({ event: "result", own: { toJSON: () => secret }, inherited: new Carrier(), list: [{ toJSON: () => [secret] }] }, P.any); }, { argv: ["count", "--token", secret], stream: true });
+    for (const lines of [r.out, r.err, r.receipt, r.stream]) expect(lines.join("\n")).not.toContain(secret);
+    expect(of(r.receipt, "result")[0]).toContain('"own":"[redacted]","inherited":{"token":"[redacted]","note":"the [redacted] inside"},"list":[["[redacted]"]],');
+    expect(of(r.receipt, "redaction").length).toBeGreaterThan(0);
+  });
+
+  test("PE-36 a URL holding a secret, and a hook's result that carries its own hook, are scrubbed as what is written", async () => {
+    const secret = "zq7kx9urlsecret";
+    const r = await go((run) => {
+      run.result({ event: "result", url: new URL(`https://user:${secret}@example.test/p`), twice: { toJSON() { return { kept: true, toJSON() { return secret; } }; } } }, P.any);
+    }, { argv: ["count", "--token", secret] });
+    for (const lines of [r.out, r.err, r.receipt]) expect(lines.join("\n")).not.toContain(secret);
+    // The hook is applied once, as JSON.stringify applies it: the result's own hook is not called.
+    expect(of(r.receipt, "result")[0]).toContain('"url":"https://user:[redacted]@example.test/p","twice":{"kept":true},');
+  });
+
   test("a bigint secret under a schema that requires an integer is a conflict, never a rounded or a quoted number", async () => {
     const r = await go((run) => { run.result({ event: "result", value: BigInt(SECRET) }, P.count); }, { argv: ["count", "--token", SECRET] });
     expect(r.status).toBe(4);

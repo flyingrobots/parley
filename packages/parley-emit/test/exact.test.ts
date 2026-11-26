@@ -1152,5 +1152,88 @@ describe("PE-39 nothing a tool is handed, or hands over in parts, changes what w
     const seqs = r.receipt.map((l) => Number(/"seq":(\d+)/.exec(l)![1]));
     expect(seqs).toEqual(seqs.map((_, i) => seqs[0]! + i));
   });
-});
 
+  test("a page's event is page: a record that carries another is refused, whatever its type", async () => {
+    const secret = "hunter2secret-zq7";
+    const r = await go((run) => {
+      expect(() => run.page(null, false, { event: { leak: secret } })).toThrow(TypeError);
+      expect(() => run.page(null, false, { event: "other" })).toThrow(TypeError);
+      run.page(null, false, { rows: 1 });
+    }, { argv: ["count", "--token", secret], stream: true });
+    expect(r.status).toBe(0);
+    for (const lines of [r.out, r.err, r.receipt, r.stream]) expect(lines.join("\n")).not.toContain(secret);
+    expect(of(r.out, "page").length).toBe(1);
+  });
+
+  test("inv is the identity of resolved as the head writes it even when a declared secret is a piece of the text [redacted]", async () => {
+    for (const secret of ["red", "act", "[", "e"]) {
+      const r = await go(() => {}, { argv: ["count", "--token", secret], extra: { resolved: () => ({ command: "count", note: `x-${secret}-y` }) } });
+      expect(r.status).toBe(0);
+      const head = r.receipt[0]!;
+      const resolvedText = head.slice(head.indexOf('"resolved":') + '"resolved":'.length, head.indexOf(',"inputs"'));
+      expect(resolvedText).toContain(`"note":"x-[redacted]-y"`);
+      const inv = createHash("sha256").update(`{"command":"count","inputs":[],"resolved":${emit.canonical(emit.parseExact(resolvedText).ok ? (emit.parseExact(resolvedText) as { value: unknown }).value : null)},"tool":"t","v":"0.0.1"}`).digest("hex");
+      expect(head).toContain(`"inv":"${inv}"`);
+    }
+  });
+
+  test("a secret that JSON escapes is replaced where the writer itself encodes a value as text: captured console output of an object, and a transform's refusal", async () => {
+    for (const secret of ['pa"ss"word-9911', "-----BEGIN KEY-----\nabc123def456\n-----END KEY-----", "back\\slash-7788"]) {
+      const r = await go((run) => { console.log("cfg", { token: secret, list: [secret] }); console.error({ key: secret }); run.result({ event: "result", value: 1 }, P.any); },
+        { argv: ["count", "--token", secret], transform: () => ({ refuse: { code: "NOT A CODE", problem: `kept out: ${secret}` } }) as never });
+      const everything = [...r.out, ...r.err, ...r.receipt, ...r.stream].join("\n");
+      expect(everything).not.toContain("word-9911");
+      expect(everything).not.toContain("abc123def456");
+      expect(everything).not.toContain("slash-7788");
+    }
+  });
+
+  test("captured console output of a number that is not finite is its name, not null; a thrown error's stack is recorded only when it is text", async () => {
+    const secret = "hunter2secret-zq7";
+    const r = await go(() => {
+      console.log(Number.NaN); console.log(Number.POSITIVE_INFINITY, 5n);
+      const e = new Error("failed on purpose");
+      Object.defineProperty(e, "stack", { value: { name: secret, code: secret, frames: [secret] } });
+      throw e;
+    }, { argv: ["count", "--token", secret] });
+    expect(r.status).toBe(2);
+    const text = r.receipt.join("\n");
+    expect(text).toContain(`"text":"NaN"`);
+    expect(text).toContain(`"text":"Infinity 5"`);
+    expect([...r.out, ...r.err, ...r.receipt].join("\n")).not.toContain(secret);
+  });
+
+  test("a history transform's name is scrubbed like any other text of the tool's, on the stream's opening line too", async () => {
+    const secret = "hunter2secret-zq7";
+    const r = await go((run) => { run.result({ event: "result", value: 1 }, P.any); }, { argv: ["count", "--token", secret], extra: { history: { transform: (rec) => rec, name: `proj-${secret}` } }, stream: true });
+    expect(r.stream.join("\n")).not.toContain(secret);
+    expect(of(r.stream, "history.transform")[0]).toContain(`"name":"proj-[redacted]"`);
+    for (const lines of [r.out, r.err, r.receipt]) expect(lines.join("\n")).not.toContain(secret);
+  });
+
+  test("a bigint is its digits whatever the process has put on BigInt.prototype: toString and valueOf as well as toJSON", async () => {
+    const proto = BigInt.prototype as unknown as Record<string, unknown>;
+    const realToString = proto.toString, realValueOf = proto.valueOf;
+    for (const patch of [
+      () => { proto.toString = function (this: bigint) { return `"${String(this)}"`; }; },
+      () => { proto.toString = function (this: bigint) { return String(Number(this)); }; },
+      () => { proto.valueOf = function () { return { toJSON: () => "FROM-VALUEOF" }; }; },
+    ]) {
+      patch();
+      try {
+        expect(emit.exactJson({ n: BIG, boxed: Object(BIG) })).toBe(`{"n":${BIG_TEXT},"boxed":${BIG_TEXT}}`);
+        expect(emit.canonical({ n: BIG })).toBe(`{"n":${BIG_TEXT}}`);
+        const r = await go((run) => { run.result({ event: "result", value: [BIG, Object(BIG)] }, P.any); }, { stream: true, extra: { resolved: () => ({ command: "count", id: BIG }) } });
+        expect(r.status).toBe(0);
+        for (const lines of [r.out, r.receipt, r.stream]) expect(of(lines, "result").map(valueText)).toEqual([`[${BIG_TEXT},${BIG_TEXT}]`]);
+        expect(r.receipt[0]).toContain(`"resolved":{"command":"count","id":${BIG_TEXT}}`);
+      } finally { proto.toString = realToString; proto.valueOf = realValueOf; }
+    }
+  });
+
+  test("a clock that answers with something that is not a time does not put a null where t belongs", async () => {
+    let calls = 0;
+    const r = await go((run) => { run.result({ event: "result", value: 1 }, P.any); }, { extra: { now: () => (calls++ < 2 ? 1795326412346 : Number.NaN) } });
+    for (const line of [...r.out, ...r.receipt]) expect(line).toMatch(/"t":\d+,/);
+  });
+});

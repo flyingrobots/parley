@@ -299,11 +299,16 @@ function scan(file: string): Scan {
       continue;
     }
     const parsed = exact.ok ? exact.value : exact.partial;
-    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    const isObject = parsed !== null && typeof parsed === "object" && !Array.isArray(parsed);
+    // A line the exact parser could not walk at all (one nested deeper than it can follow) has
+    // no partial value to look at. It is still an object by its text, and it is still a line this
+    // reader could not read: it is held back like any other, never filed as "not an object".
+    const unwalked = !exact.ok && !isObject && line.raw.trimStart().startsWith("{");
+    if (!isObject && !unwalked) {
       quarantined.push(defect("line.quarantined", "§1.4", file, line.n, "JSON, but not an object; quarantined, never a record", { raw: line.raw }));
       continue;
     }
-    const obj = parsed as Record<string, unknown>;
+    const obj = (isObject ? parsed : {}) as Record<string, unknown>;
     const run = typeof obj.run === "string" && obj.run.length > 0 ? obj.run : null;
     const seq = Number.isInteger(obj.seq) && (obj.seq as number) >= 0 ? (obj.seq as number) : null;
     // The reader's own limit, not the writer's defect: the line is JSON and it is kept verbatim,
@@ -732,6 +737,10 @@ export function loadReceipts(opts: LoadOptions = {}): Load {
       push(sourcesByRun, run, [{ where, receipt: file }]);
       push(quarantinedByRun, run, attributed.filter((q) => q.run === run));
     }
+    // A kept line names its run even when this file holds no placed line of that run (a history
+    // segment whose only line of the run is one the reader could not read). The run's bundle,
+    // built from its other sources, is told of it all the same.
+    for (const q of attributed) if (q.run !== null && !runs.includes(q.run)) push(quarantinedByRun, q.run, [q]);
   };
 
   for (const location of locations) {

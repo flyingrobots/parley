@@ -255,18 +255,21 @@ fraction, a 64-character hex digest and an array of four numbers.
 
 Method: the receipt is written once to a fresh temporary directory; `loadReceipts` is called seven
 times in one process and each call timed with `performance.now()`; the median of the seven is one
-figure. Three rounds, alternating the reader before the change (origin/main's sources) and after
-it, on Bun 1.4.5 on one machine that was running other work at the time.
+figure. Three rounds, alternating the reader before the change (origin/main's sources, which are
+0.2.0's) and after it, on Bun 1.4.5 on one machine that was running other work at the time.
+Measured on 2026-11-26 at commit `b7c6f82`, after the parser became the writer's.
 
 | Workload | Median before (ms), three rounds | Median after (ms), three rounds |
 | --- | --- | --- |
-| mixed | 292, 225, 295 | 323, 253, 319 |
-| ordinary | 232, 216, 245 | 239, 309, 309 |
+| mixed | 164, 174, 165 | 225, 230, 232 |
+| ordinary | 174, 170, 173 | 211, 233, 224 |
 
-The after figure was higher in every pair, by 24 to 31 ms on the mixed receipt and by 7 to 93 ms
-on the ordinary one. The spread between rounds of one configuration is as large as the difference
-being measured, so these figures bound the cost on this machine at between about 0.04 and 0.5 µs a line
-and do not establish it more closely than that.
+The after figure was higher in every pair: by 56 to 67 ms on the mixed receipt and by 37 to 63 ms
+on the ordinary one, which is 0.2 to 0.35 µs a line and about a third more time for a load of this
+shape. An earlier measurement, on a busier machine and with the reader's former copy of the
+parser, put the difference between 7 and 93 ms with a spread as large as the difference; these
+rounds agree with one another to within 20 ms. They measure loading only. A read also serialises
+records to compare and to size them, and that cost was not measured.
 
 ## Quarantine
 

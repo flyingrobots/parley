@@ -1089,4 +1089,14 @@ describe("PE-38 a payload is read once, and what is checked is what is written (
     expect(codes(of(r.err, "warning"))).toEqual(["history.transform_unredacted"]);
     expect(of(r.stream, "result")).toEqual([]);
   });
+
+  test("a secret that is JSON text is not recognised in its parsed parts: ruled outside the contract, and pinned (review case 2026-11-25, F-8)", async () => {
+    // Spec 5.3 replaces a declared value where it occurs. The parts of a parsed credential are
+    // other values; a tool that emits them declares them. The owner ruled this on 2026-11-26.
+    const blob = `{"token":"zq7kx9inner"}`;
+    const whole = await go((run) => { run.result({ event: "result", value: { creds: JSON.parse(blob) as unknown, raw: blob } }, P.any); }, { argv: ["count", "--token", blob] });
+    expect(of(whole.out, "result").map(valueText)).toEqual([`{"creds":{"token":"zq7kx9inner"},"raw":"[redacted]"}`]);
+    const declared = await go((run) => { run.result({ event: "result", value: { creds: JSON.parse(blob) as unknown } }, P.any); }, { argv: ["count", "--token", "zq7kx9inner"] });
+    expect(of(declared.out, "result").map(valueText)).toEqual([`{"creds":{"token":"[redacted]"}}`]);
+  });
 });

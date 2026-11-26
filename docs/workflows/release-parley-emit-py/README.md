@@ -70,3 +70,10 @@ These are limits, not guarantees:
 **Re-run failed jobs** keeps the `gate` job's artifact. If the GitHub release already exists,
 `release` compares the file with the one the release carries, byte for byte, and fails on a
 difference rather than replacing it.
+
+## After the release: users of older versions
+
+If this version fixes a privacy defect that a released version has, publish the security advisory
+once this version's GitHub release is public, then link the advisory from the release's notes
+([telling users of a published version](../release-review/README.md#telling-users-of-a-published-version)).
+

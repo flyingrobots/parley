@@ -91,6 +91,12 @@ What `npm stage download` and `npm stage view` print was not exercised when this
 they need a staged package and a login. If `npm stage view <stage-id>` shows a `shasum` or an
 `integrity`, those are the report's `artifact.sha1` and `artifact.integrity`.
 
+## After the approval: users of older versions
+
+If this version fixes a privacy defect that a published version has, publish the security
+advisory and deprecate the affected versions once this one is on npm
+([telling users of a published version](../release-review/README.md#telling-users-of-a-published-version)).
+
 ## What the workflow cannot verify
 
 These protections are real only if the settings behind them are what this page says. The workflow

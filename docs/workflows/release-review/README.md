@@ -58,3 +58,42 @@ When the follow-up is fixed and released, delete the row. Git history keeps it.
 | Artifact | Falls short of | Reproduction and impact | Containment | Accepted | Follow-up | Resolved by |
 | --- | --- | --- | --- | --- | --- | --- |
 | `@flyingrobots/parley-read` 0.2.0 | The `parley.lens` 1.1.0 description of a fold: runs fold only when their result records are equal. And the reader's own purpose: a returned record is the record the receipt holds. | Run against 0.2.0 installed from npm into a clean directory: two receipts in `.parley/receipts`, each a `receipt.head` with the same `inv`, one `result` record and an `end` of status 0, the results written as literal text `"value":9007199254740992` and `"value":9007199254740993`; then `queryReceipts` with `view: "everything"` over a window holding both. It returned one folded section and the value `9007199254740992` for the run whose receipt says `9007199254740993`. With `fold: false` in the query it returned two sections, both saying `9007199254740992`. The cause is that the reader parses numbers as doubles. Two integers outside −(2^53)+1 to (2^53)−1 collide only when they parse to the same double. How many tools emit such integers was not measured. | Stated as a known exception in the 0.2.1 changelog entry, the reader's changelog and its README. | Shipped on 2026-11-24 by an agent under the owner's delegation, which ruled the finding a follow-up without asking. The owner recorded it as a disclosed exception the same day (flyingrobots/parley#148). The rule above exists because of this row. | flyingrobots/parley#159 | The next release of `@flyingrobots/parley-read`, which it blocks. |
+
+## Ruled outside the contract
+
+A finding the owner rules is not a violation needs no exception and no deadline. It is recorded
+here so the question is not reopened without new facts, and the limit is stated where a user
+reads it.
+
+| Finding | Ruling | Where it is stated |
+| --- | --- | --- |
+| A declared secret that is JSON text (a credential blob) is written when the tool emits its parsed form: no single value in the record equals the secret (review case 2026-11-25) | The owner, 2026-11-26: outside spec §5.3, which replaces a declared value where it occurs. The parts are different values, and the tool declares them as secrets if they are. A search of the written line for the secret's text would catch only a serialisation that happens to match byte for byte | `packages/parley-emit/README.md`, "What a receipt can contain"; pinned by the test `a secret that is JSON text is not recognised in its parsed parts` |
+
+## Telling users of a published version
+
+When a release fixes a privacy defect that a **published** version has (a declared secret, or
+anything redaction should have replaced, could leave the process), the people running that
+version are told, in two places. The owner ruled this on 2026-11-26.
+
+1. **A GitHub security advisory for the repository.** It is drafted, private, when the defect is
+   confirmed, and it is kept current: every further privacy defect fixed in the same version is
+   added to the same advisory, and a limit that is later removed is taken out. It names the
+   package, the affected range and the fixed version, says what could be disclosed and under what
+   conditions, and gives a workaround for a user who cannot upgrade. It is published only once
+   the fixed version is where a user gets it, since it tells people to install that version: on
+   npm for the two npm packages, and for `parley_emit.py` once the GitHub release of the fixed
+   version is public.
+2. **A deprecation notice on the affected versions**, for a package on npm, run after the fixed
+   version is on the registry. It is one sentence naming the fixed version and the advisory. For
+   example: `npm deprecate '@flyingrobots/parley-emit@<0.5.0' 'Privacy fixes in 0.5.0: a declared
+   secret could be written unredacted. See GHSA-xxxx-xxxx-xxxx.'`
+
+Who does what: an agent drafts and updates the advisory and prepares the deprecation command.
+Publishing the advisory and running `npm deprecate` are the owner's, as approving a staged
+version is. `parley_emit.py` is not on npm, so for it the advisory is the notice. The order is: the GitHub
+release of the fixed version becomes public, the owner publishes the advisory, and the release's
+notes are then edited to link to it.
+
+The release's changelog entry marks such a fix `PRIVACY` and names the affected versions; the
+advisory is where a user who never reads a changelog finds it.
+

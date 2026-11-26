@@ -24,7 +24,7 @@ its `inv`. `test/fixtures/inv-pinned.jsonl` holds 25 identities printed from the
 and a test requires this source to reproduce 24 of them. The twenty-fifth is withdrawn: a number
 that is not finite, which is now refused.
 
-**What breaks.** Five things, each described under Changed or Fixed below:
+**What breaks.** Seven things, each described under Changed or Fixed below:
 
 1. **`NaN`, `Infinity` and `-Infinity` are refused** (flyingrobots/parley#177). A tool that emits
    one today gets a `TypeError` where it got a `null`.
@@ -38,7 +38,11 @@ that is not finite, which is now refused.
    safe range, including one the tool passed as a `number` (`2 ** 53`, `1e21`). A transform that
    does number arithmetic on such a field throws, and its line is withheld from the stream as
    `history.transform_failed`; the exit status does not change.
-5. **A record with a secret present is written as the same record without one.** 0.4.0 wrote a
+5. **A result whose event name carries a declared secret, and a page record that carries an
+   `event`, are refused** with a `TypeError`.
+6. **A `--human` renderer receives a copy**: one that relied on changing the record it was handed
+   to change the receipt no longer does.
+7. **A record with a secret present is written as the same record without one.** 0.4.0 wrote a
    `Date` or a boxed primitive as `{}` beside any secret, and dropped a member named `__proto__`.
 
 ### Added
@@ -49,6 +53,10 @@ that is not finite, which is now refused.
   the same digits. A `bigint` inside the safe range is the same JSON number a number is: `5n` is
   `5`. It is accepted anywhere a record carries a value: a result, a page, a step's `detail`, a
   diagnostic's `detail`, `receiptExtra`, and `resolved`.
+- **`exactText`**: the JSON text of plain data (what `parseExact` returned, or `plain` data built
+  by hand), written with no `toJSON` hook asked, so nothing a process has installed on
+  `Object.prototype` or `Array.prototype` changes it. `exactJson` takes a value as
+  `JSON.stringify` would, hooks applied, and writes that.
 - **`parseExact`, `exactJson`, `holdsExact`, `MAX_EXACT_DIGITS`, `UNREPRESENTABLE`** and the types
   `ExactParse` and `ExactValue` are exported. `exactJson(value)` is `JSON.stringify` with a
   `bigint` written as its digits. `parseExact(text)` reads JSON text with every number's value
@@ -176,6 +184,41 @@ that is not finite, which is now refused.
   This removes the limit recorded on 2026-11-25 as flyingrobots/parley#180, where a `bigint` a
   payload hook returned was written through that prototype hook after the scrub. A boxed
   `bigint` is asked only for a `toJSON` of its own.
+- **PRIVACY: three more ways a declared secret could be written, each present in 0.4.0 and
+  earlier** (fresh review pass, case 2026-11-25):
+  - *A secret that JSON escapes, in text the writer itself encodes.* Captured console output of
+    an object (`console.log({ key })`) and a transform's refusal quoted in a warning are encoded
+    as JSON text by the writer and then scrubbed as text, where a quote, a backslash or a newline
+    in the secret is escaped and the secret was not found. The escaped spelling of each declared
+    value is now a declared value too.
+  - *A result's event name.* The event name is envelope and is never scrubbed, so
+    `run.result({ event: secret })` wrote it. A tool's record whose event name carries a declared
+    value is now refused with a `TypeError` before a `seq` is taken, as a session id is refused.
+    `run.page` refuses a record that carries an `event` of its own; before, that `event`, of any
+    type, replaced `page` on a line stamped `parley.page`.
+  - *A history transform's name, and a thrown error's `stack` that is not text.* The name was
+    written unscrubbed on the stream's opening line; it is scrubbed like any other text of the
+    tool's. An error whose `stack` is an object was recorded under `detail.stack`, where
+    members named `name`, `code` or `id` are not scrubbed; a `stack` is now recorded only when
+    it is a string.
+- **`inv` is the identity of `resolved` as the head writes it when a secret is a piece of the
+  text `[redacted]`.** The head scrubbed `resolved` a second time, which rewrote the marker
+  itself (`x-[[redacted]acted]-y`), so the head stated a `resolved` that was not the preimage of
+  its `inv`. Present in 0.4.0. `resolved` is scrubbed once.
+- **A `--human` renderer is handed a copy of the record.** It was handed the object the receipt
+  and the stream were then written from, so a renderer that sorted an array in place, or
+  assigned to its argument, changed what they held after every check, and one that set `status`
+  on the `end` line changed the recorded status. Present in 0.4.0.
+- A diagnostic passed to `warning` or `error` is read once, so the `code` that is checked is the
+  `code` that is written; its getters were read twice.
+- A `bigint` is its digits whatever the process has put on `BigInt.prototype`: `toString` and
+  `valueOf` there are not asked either. (A `valueOf` installed before this package is loaded
+  still opens a boxed `bigint`; a primitive is unaffected.)
+- A clock that answers with something that is not a time (an injected `now` returning `NaN`) no
+  longer puts `"t":null` on a line: the system clock's reading is used.
+- Captured console output of a number that is not finite is its name (`NaN`, `Infinity`), as the
+  console prints it; it was `null`. Inside a logged object it is still `null`: that text is the
+  object's JSON form.
 - **A member named `__proto__` is no longer dropped when a secret is present.** The scrub's copy
   assigned it, which set the copy's prototype instead of a member; so a record relayed from
   parsed JSON lost it beside any secret, and two `resolved` values differing only there shared

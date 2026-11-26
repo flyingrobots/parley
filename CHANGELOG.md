@@ -9,6 +9,15 @@ the entry under it names each schema version it releases, and those are separate
 
 ### Added
 
+- Two additions to the release-review page
+  ([docs/workflows/release-review](docs/workflows/release-review/README.md)). A release that
+  fixes a privacy defect of a published version is announced in a GitHub security advisory,
+  drafted when the defect is confirmed and kept current, and by a deprecation notice on the
+  affected npm versions, both published by the owner once the fix is on the registry. And a
+  finding the owner rules outside the contract is recorded there, with the first: a declared
+  secret that is JSON text is not recognised in its parsed parts. No spec text, schema or package
+  changes.
+
 - A release-review rule, in [docs/workflows/release-review](docs/workflows/release-review/README.md):
   a confirmed finding that violates evidence fidelity, privacy, identity or a published contract
   blocks a release by default, whether the change under review introduced it or not, and a
@@ -46,7 +55,10 @@ the entry under it names each schema version it releases, and those are separate
   `@flyingrobots/parley-emit` 0.4.0 and earlier, fixed in 0.5.0. In the same version the writer
   reads a payload once, never asks a `toJSON` on `BigInt.prototype` (which removes the limit of
   flyingrobots/parley#180 before any release carried it), and no longer drops a member named
-  `__proto__` beside a secret. The package's changelog lists what breaks.
+  `__proto__` beside a secret. A fresh review pass then found three more routes for a secret, each
+  in 0.4.0 too and fixed in 0.5.0: a secret that JSON escapes in captured console output of an
+  object, a result's event name, and a history transform's name. The package's changelog lists
+  what breaks.
 - **PRIVACY: `@flyingrobots/parley-emit` published a declared secret that only a `toJSON` hook
   returns** (flyingrobots/parley#178), on stdout and in the receipt with status 0: a `URL` holding
   the secret, or any object whose hook returns it. Present in the published 0.4.0 (measured from

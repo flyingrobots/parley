@@ -1160,5 +1160,31 @@ describe("RD-126 the review of the 0.3.0 candidate (case 2026-11-25): what the r
       expect(folded).toBe(0);
     }
   });
+
+  test("decision check: a line too deep to walk names its run by its text, so in a segment holding several runs the right run is held back and nothing folds", async () => {
+    for (const depth of [60_000, 200_000]) {
+      const { dir, env } = scratch();
+      const deep = (token: string) => "[".repeat(depth) + token + "]".repeat(depth);
+      const seg = join(dir, "segment.jsonl");
+      const lines: string[] = [];
+      for (const [n, token] of [[1, "9007199254740992"], [2, "9007199254740993"]] as const) {
+        const run = runId(n), at = T0 - (10 - n) * DAY;
+        lines.push(headLine(run, at), resultLine(run, at + 2, deep(token)), endLine(run, at + 3, join(dir, `${run}.jsonl`)));
+      }
+      // And one such line of a third run, in a segment that holds no other line of it.
+      lines.push(resultLine(runId(3), T0 - DAY, deep("5e-400")));
+      writeFileSync(seg, lines.join("\n") + "\n");
+      const load = loadReceipts({ cwd: dir, env, history: [seg] });
+      const held = coded(load.quarantined, "line.number_unrepresentable");
+      expect(held.map((d) => d.run).sort()).toEqual([runId(1), runId(2), runId(3)]);
+      for (const b of load.bundles) {
+        expect(b.replay.unavailable).toBe(true);
+        expect(b.records.every((r) => r.runHeldBack === true)).toBe(true);
+      }
+      const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: WINDOW, budget: { records: 1000 } }, { cwd: dir, env, history: [seg] }));
+      expect(answer.digest.runs.filter((r) => r.folded !== undefined)).toEqual([]);
+      expect(answer.digest.runs.length).toBe(2);
+    }
+  });
 });
 

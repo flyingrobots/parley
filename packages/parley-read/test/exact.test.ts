@@ -9,7 +9,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
-  RUN_SECTION_BYTES, digestBytes, digestFor, digestLine, exactJson, foldRuns, loadReceipts, openRecords, planQuery, queryReceipts, rankRecords, readReceiptFile, recordBytes, runSection, validator,
+  RUN_SECTION_BYTES, digestBytes, digestFor, digestLine, exactJson, foldRuns, loadReceipts, openRecords, planQuery, queryReceipts, rankRecords, readHistorySegment, readReceiptFile, recordBytes, runSection, validator,
   type Bundle, type Defect, type LoadedRecord, type OpenAnswer, type QueryAnswer,
 } from "../src/index.ts";
 import { UNREPRESENTABLE, parseExact } from "@flyingrobots/parley-emit";
@@ -1184,6 +1184,16 @@ describe("RD-126 the review of the 0.3.0 candidate (case 2026-11-25): what the r
       const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: WINDOW, budget: { records: 1000 } }, { cwd: dir, env, history: [seg] }));
       expect(answer.digest.runs.filter((r) => r.folded !== undefined)).toEqual([]);
       expect(answer.digest.runs.length).toBe(2);
+      // Read as one segment, and with an unreadable line that names no run at all: every run of the file is held back.
+      const nameless = join(dir, "nameless.jsonl");
+      writeFileSync(nameless, [...lines.slice(0, 6), `{"event":"result","t":${T0},"seq":4,"value":${deep("9007199254740993")}}`].join("\n") + "\n");
+      for (const file of [seg, nameless]) {
+        const read = readHistorySegment(file);
+        expect(read.bundles.length).toBe(2);
+        for (const b of read.bundles) { expect(b.replay.unavailable).toBe(true); expect(b.records.every((r) => r.runHeldBack === true)).toBe(true); }
+      }
+      const loose = loadReceipts({ cwd: dir, env, history: [nameless] });
+      for (const b of loose.bundles) expect(b.records.every((r) => r.runHeldBack === true)).toBe(true);
     }
   });
 });

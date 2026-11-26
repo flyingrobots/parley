@@ -126,6 +126,25 @@ the version `package.json` names; the version is not tagged or published by this
   hook returned, so the fold's key and the lens text held a quoted or rounded integer and two
   runs differing beyond 2^53 folded again. `exactJson`, from `@flyingrobots/parley-emit` 0.5.0,
   never asks that hook (review case 2026-11-25).
+- **Two more ways a run with an unreadable line was still treated as whole** (fresh review pass,
+  case 2026-11-25, before any release):
+  - A held-back line in one source did not hold its run back when that source held no other
+    line of the run: a history segment whose only line of a run was one the reader could not
+    read. The run's bundle, built from its other sources, had no defect, was open to replay, and
+    its records carried no mark. A kept line now reaches the bundle of the run it names
+    wherever it was read.
+  - A line nested deeper than the exact parser can follow (tens of thousands of levels) that
+    also held a number off the fast path was filed as `line.quarantined`, "JSON, but not an
+    object", which was false, and its run folded and was open to replay. It is now held back as
+    `line.number_unrepresentable`, attributed to its file's run.
+- **A read's comparisons ask no `toJSON` hook.** The reader serialises the records it parsed with
+  `exactText`, from `@flyingrobots/parley-emit` 0.5.0, which asks nothing of `Array.prototype`,
+  `Object.prototype` or `BigInt.prototype`. With `exactJson`, a `toJSON` a process had put on
+  `Array.prototype` or `Object.prototype` was applied to parsed records, and one that mapped
+  different values to one text made different results fold. `exactText` is re-exported.
+- A record nested very deep no longer fails a read. The fold's key was built by a recursive walk
+  that overflowed the stack, and the read ended with status 2; 0.2.0 used `JSON.stringify`, which
+  does not. A run whose records are too deep to compare stands alone.
 - The `line.number_unrepresentable` defect quotes at most forty characters of each number and
   says how long it is. It quoted the whole token, so a line holding a two-million-digit number
   made a two-million-character message beside the line kept in `raw`.

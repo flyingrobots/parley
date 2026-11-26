@@ -31,7 +31,7 @@
 // compared with the stored bytes before the record is restored (§5), and this module reports the
 // loader's resolution rather than reading the file a second time.
 import { resolve } from "node:path";
-import { defineTool, exactJson, main, parseExact } from "@flyingrobots/parley-emit";
+import { defineTool, exactText, main, parseExact } from "@flyingrobots/parley-emit";
 import type { RecordRef } from "./digest.ts";
 import { NUMBER_UNREPRESENTABLE, loadReceipts, type Bundle, type Load, type LoadedRecord, type Replay, type SidecarResolution } from "./load.ts";
 import { repoReceiptDir, stateReceiptDir } from "./locate.ts";
@@ -209,10 +209,10 @@ export function planOpen(request: OpenRequest): OpenPlan {
 
 /**
  * UTF-8 bytes of a record's JSON as the drill-down returns it, envelope fields and all. The JSON
- * is `exactJson`'s, so an integer beyond the safe range counts by its digits (flyingrobots/parley#159).
+ * is `exactText`'s, so an integer beyond the safe range counts by its digits (flyingrobots/parley#159).
  */
 export function recordBytes(r: LoadedRecord | undefined): number {
-  return r === undefined ? 0 : Buffer.byteLength(exactJson(r), "utf8");
+  return r === undefined ? 0 : Buffer.byteLength(exactText(r), "utf8");
 }
 
 /**

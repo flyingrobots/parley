@@ -23,7 +23,7 @@
 // leaves undecided as it is. `if` takes the branch its condition's verdict selects, and with an
 // undecided condition concludes only what both branches agree on.
 import type { ValidateFunction } from "ajv/dist/2020.js";
-import { exactJson, holdsExact } from "@flyingrobots/parley-emit";
+import { exactText, holdsExact } from "@flyingrobots/parley-emit";
 
 export type Verdict = "valid" | "invalid" | "undecided";
 
@@ -75,7 +75,7 @@ function canonical(v: unknown): string {
   if (typeof v === "number" && Number.isInteger(v) && !Number.isSafeInteger(v)) return BigInt(v).toString();
   if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
   if (isObject(v)) return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonical(v[k])}`).join(",")}}`;
-  return exactJson(v);
+  return exactText(v);
 }
 
 const REFERENCES: ReadonlySet<string> = new Set(["$ref", "$dynamicRef", "$recursiveRef"]);

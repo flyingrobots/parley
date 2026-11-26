@@ -536,6 +536,7 @@ the ids are opened; a drill-down past it declines as a read does and opens nothi
 | `validator(schemas?)`, `schemaRef`, `envelopeGaps` | Exact-pair validation and the version-independent core (§4.5, §4.6) |
 | `SCHEMAS`, `SCHEMA_SOURCE` | The nineteen schemas this reader ships: each of the seventeen messages at its current released version, and the released 1.0.0 of `parley.query` and `parley.lens` beside their 1.1.0, with the commit and digest of each |
 | `QUARANTINE_CODES` | Which defect codes are a kept line rather than a judgement about a record |
+| `exactText(value)` | The writer's, re-exported: the JSON text of a record the reader returned, with no `toJSON` hook asked, which is what the reader itself compares and measures with |
 | `exactJson(value)`, `MAX_EXACT_DIGITS`, `ExactValue` | The writer's, re-exported. `JSON.stringify` for a record that may hold a `bigint`, which it writes as the JSON number it is; the most digits an integer may have and still be held exactly (4096); the type of a value a record can hold |
 | `heldBackRuns(load)`, `NUMBER_UNREPRESENTABLE`, `UNREPRESENTABLE_WARNING` | The runs a load held a line back from, which never fold; that line's defect code; and the code of the warning a read reports for them |
 

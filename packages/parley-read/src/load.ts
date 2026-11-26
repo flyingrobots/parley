@@ -26,7 +26,7 @@
 // say, with each claim labelled by how well it is established (§1.2a).
 import { readFileSync, readdirSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
-import { MAX_EXACT_DIGITS, exactJson, parseExact, sha256 } from "@flyingrobots/parley-emit";
+import { MAX_EXACT_DIGITS, exactText, parseExact, sha256 } from "@flyingrobots/parley-emit";
 import { readFileLines } from "./lines.ts";
 import { isFile, receiptLocations, type LocateOptions, type ReceiptLocation, type Where } from "./locate.ts";
 import { ENVELOPE, validator, type Validation, type Validator } from "./validate.ts";
@@ -151,7 +151,7 @@ export interface LoadedRecord {
    * The record, with each number as its text states it: a `bigint` for an integer-valued number
    * outside -9007199254740991..9007199254740991, a JavaScript number otherwise (`ExactValue`,
    * flyingrobots/parley#159). `JSON.stringify` throws on a `bigint`;
-   * `exactJson` serialises the record with the integer's digits.
+   * `exactText` serialises the record with the integer's digits.
    */
   readonly record: Record<string, unknown>;
   readonly validation: Validation;
@@ -406,7 +406,7 @@ function fold(held: Map<number, Held>, seq: number, obj: Record<string, unknown>
   seen.fromSidecar = seen.fromSidecar || fromSidecar;
   for (const [key, value] of Object.entries(obj)) {
     if (!(key in seen.base)) { seen.base[key] = value; continue; }
-    if (exactJson(seen.base[key]) !== exactJson(value)) {
+    if (exactText(seen.base[key]) !== exactText(value)) {
       defects.push(defect("copies.disagree", "§1.3", file, line, `seq ${seq}: copies of one event disagree on ${key}`, { run }));
     }
   }
@@ -425,7 +425,7 @@ function same(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
 
 /** JSON with every object's keys in order, so two values compare by what they hold. */
 function stable(v: unknown): string {
-  if (v === null || typeof v !== "object") return exactJson(v);
+  if (v === null || typeof v !== "object") return exactText(v);
   if (Array.isArray(v)) return `[${v.map(stable).join(",")}]`;
   const entries = Object.entries(v as Record<string, unknown>).sort(([x], [y]) => cmp(x, y));
   return `{${entries.map(([k, x]) => `${JSON.stringify(k)}:${stable(x)}`).join(",")}}`;

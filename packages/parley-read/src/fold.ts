@@ -68,7 +68,7 @@
 // **A fold names what it stands for** (flyingrobots/parley#133): `stands_for` lists the other
 // runs' ids, most recent first, so a reader can open their records by `(run, seq)` instead of
 // taking the count on trust.
-import { exactJson } from "@flyingrobots/parley-emit";
+import { exactText } from "@flyingrobots/parley-emit";
 import type { LoadedRecord } from "./load.ts";
 import type { View } from "./query.ts";
 import { PROTOCOL_EVENTS, onViewSurface, toolOwned, type Outcome } from "./rank.ts";
@@ -185,8 +185,8 @@ function foldKey(own: readonly LoadedRecord[], outcome: Outcome | undefined, vie
   const decisions = view === undefined
     ? []
     : inSeq.filter((r) => (DECISIONS as readonly string[]).includes(r.event ?? "") && onViewSurface(view, r)).map(payload);
-  // `exactJson`, so an integer beyond the safe range is compared by its digits (flyingrobots/parley#159).
-  return exactJson([inv, outcome, reason, ends.map((r) => r.record.status ?? null), codes, canonical(head?.record.resolved), results, decisions]);
+  // `exactText`, so an integer beyond the safe range is compared by its digits (flyingrobots/parley#159).
+  return exactText([inv, outcome, reason, ends.map((r) => r.record.status ?? null), codes, canonical(head?.record.resolved), results, decisions]);
 }
 
 /** A JSON value with every object's keys sorted, so two equal values serialise alike. */
@@ -225,7 +225,10 @@ export function foldRuns(ranked: readonly LoadedRecord[], outcomes?: Readonly<Re
   const groups = new Map<string, string[]>();
   for (const [run, own] of byRun) {
     if (heldBack?.has(run) === true || own.some((r) => r.runHeldBack === true)) continue;
-    const key = foldKey(own, outcomes[run], view);
+    // A run whose records are nested too deep to be compared is not known to be the same as any
+    // other: it stands alone, and the read goes on.
+    let key: string | null;
+    try { key = foldKey(own, outcomes[run], view); } catch (e) { if (!(e instanceof RangeError)) throw e; key = null; }
     if (key === null) continue;
     const group = groups.get(key);
     if (group === undefined) groups.set(key, [run]);

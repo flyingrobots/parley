@@ -71,7 +71,7 @@
 // flyingrobots/parley#171). The loader holds an integer beyond the safe range as a `bigint`, and
 // the writer writes one as its exact digits, so a `resolved` that holds one is carried like any
 // other: whole, exact, and dropped only when the section is too large. Every size here is taken
-// from `exactJson`, which is the serialiser the writer uses, so the bound and the byte budget are
+// from `exactText`, which is the serialiser the writer uses, so the bound and the byte budget are
 // right for a line that holds such an integer.
 //
 // **Runs of one invocation with one result are named once** (flyingrobots/parley#79, `fold.ts`).
@@ -86,7 +86,7 @@
 // so the count still accounts for every record not named, and `excluded − folded` is what the
 // budget cut. A read that states `fold: false` skips all of it: the lens echoes `fold`, and
 // `loss.folded` is 0.
-import { exactJson } from "@flyingrobots/parley-emit";
+import { exactText } from "@flyingrobots/parley-emit";
 import { foldRuns, type RunFold } from "./fold.ts";
 import type { LoadedRecord } from "./load.ts";
 import type { AcceptedQuery, Asker, Budget, QueryWindow, View } from "./query.ts";
@@ -258,7 +258,7 @@ export function lensEntry(record: LoadedRecord): LensEntry {
  */
 const sectionBytes = (section: RunSection) => {
   const bounded = section.folded === undefined ? section : { ...section, folded: { others: section.folded.others, records: section.folded.records } };
-  return Buffer.byteLength(exactJson(bounded), "utf8");
+  return Buffer.byteLength(exactText(bounded), "utf8");
 };
 
 /**
@@ -317,13 +317,13 @@ export function runSection(run: string, window: readonly LoadedRecord[], outcome
  * The line the writer will write for this digest, byte for byte.
  *
  * The writer builds a record as `{event, t, seq, run, ...payload, _schema}` and writes
- * `exactJson(record) + "\n"` (spec §1.1, §1.3; `JSON.stringify`'s text when the record holds no `bigint`), and a read declares no secrets, so nothing
+ * `exactText(record) + "\n"` (spec §1.1, §1.3; `JSON.stringify`'s text when the record holds no `bigint`), and a read declares no secrets, so nothing
  * is scrubbed and the payload's own key order survives. Reconstructing it here is what lets a
  * byte budget be applied **before** the line is written rather than discovered after it.
  */
 export function digestLine(digest: Digest, envelope: LineEnvelope): string {
   const { event, ...rest } = digest;
-  return exactJson({
+  return exactText({
     event,
     t: envelope.t,
     seq: envelope.seq,

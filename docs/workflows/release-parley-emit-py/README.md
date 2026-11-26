@@ -74,6 +74,6 @@ difference rather than replacing it.
 ## After the release: users of older versions
 
 If this version fixes a privacy defect that a released version has, publish the security advisory
-and link it from the GitHub release
+once this version's GitHub release is public, then link the advisory from the release's notes
 ([telling users of a published version](../release-review/README.md#telling-users-of-a-published-version)).
 

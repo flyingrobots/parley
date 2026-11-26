@@ -80,7 +80,9 @@ version are told, in two places. The owner ruled this on 2026-11-26.
    added to the same advisory, and a limit that is later removed is taken out. It names the
    package, the affected range and the fixed version, says what could be disclosed and under what
    conditions, and gives a workaround for a user who cannot upgrade. It is published only once
-   the fixed version is on the registry, since it tells people to install that version.
+   the fixed version is where a user gets it, since it tells people to install that version: on
+   npm for the two npm packages, and for `parley_emit.py` once the GitHub release of the fixed
+   version is public.
 2. **A deprecation notice on the affected versions**, for a package on npm, run after the fixed
    version is on the registry. It is one sentence naming the fixed version and the advisory. For
    example: `npm deprecate '@flyingrobots/parley-emit@<0.5.0' 'Privacy fixes in 0.5.0: a declared
@@ -88,8 +90,9 @@ version are told, in two places. The owner ruled this on 2026-11-26.
 
 Who does what: an agent drafts and updates the advisory and prepares the deprecation command.
 Publishing the advisory and running `npm deprecate` are the owner's, as approving a staged
-version is. `parley_emit.py` is not on npm, so for it the advisory is the notice, and the GitHub
-release of the fixed version links to it.
+version is. `parley_emit.py` is not on npm, so for it the advisory is the notice. The order is: the GitHub
+release of the fixed version becomes public, the owner publishes the advisory, and the release's
+notes are then edited to link to it.
 
 The release's changelog entry marks such a fix `PRIVACY` and names the affected versions; the
 advisory is where a user who never reads a changelog finds it.

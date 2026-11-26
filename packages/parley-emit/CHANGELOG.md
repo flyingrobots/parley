@@ -215,7 +215,8 @@ that is not finite, which is now refused.
   `valueOf` there are not asked either. (A `valueOf` installed before this package is loaded
   still opens a boxed `bigint`; a primitive is unaffected.)
 - A clock that answers with something that is not a time (an injected `now` returning `NaN`) no
-  longer puts `"t":null` on a line: the system clock's reading is used.
+  longer puts `"t":null` on a line or `undefined` in a run id: the system clock's reading is
+  used, at startup and after (flyingrobots/parley#189).
 - Captured console output of a number that is not finite is its name (`NaN`, `Infinity`), as the
   console prints it; it was `null`. Inside a logged object it is still `null`: that text is the
   object's JSON form.

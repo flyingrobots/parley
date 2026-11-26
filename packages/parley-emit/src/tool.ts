@@ -110,7 +110,10 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
   const env = opts.env ?? process.env;
   const cwd = resolve(opts.cwd ?? process.cwd());
   const stdout = opts.stdout ?? fdSink(1), stderr = opts.stderr ?? fdSink(2);
-  const now = opts.now ?? Date.now;
+  // A clock that answers with something that is not a time (a non-negative safe integer of
+  // milliseconds) is not believed: the system's reading is used, for the run id and for every `t`.
+  const clock = opts.now ?? Date.now;
+  const now = (): number => { const t = clock(); return Number.isSafeInteger(t) && t >= 0 ? t : Date.now(); };
   const rawArgs = argv.slice(1);
   // `--` ends the writer's flags (flyingrobots/parley#103): the writer's own flags are recognised
   // anywhere before the first `--`, that `--` is removed, and every argument after it is the

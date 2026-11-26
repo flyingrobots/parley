@@ -1,7 +1,7 @@
 export { defineTool, main, type CommandSpec, type Effects, type EmittedType, type Handler, type InputDecl, type MainOptions, type ToolSpec } from "./tool.ts";
 export { DIGEST_KEYS, Run, ParleyClosed, ParleyRedactionConflict, ParleyRedactionUnchecked, REDACTION_CONFLICT_CODE, REDACTION_UNCHECKED_CODE, SCHEMA_IDS, SIDECAR_THRESHOLD, type Diagnostic, type SchemaRef, type Sink } from "./run.ts";
 export { checkRecord, schemaSubsetGap, type CheckResult } from "./check.ts";
-export { exactJson, holdsExact, MAX_EXACT_DIGITS, parseExact, UNREPRESENTABLE, type ExactParse, type ExactValue } from "./exact.ts";
+export { exactJson, exactText, holdsExact, MAX_EXACT_DIGITS, parseExact, UNREPRESENTABLE, type ExactParse, type ExactValue } from "./exact.ts";
 export { REDACTED } from "./redact.ts";
 export { SCHEMAS, SCHEMA_SOURCE } from "./schemas.ts";
 export { ulid } from "./ulid.ts";

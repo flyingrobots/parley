@@ -472,7 +472,12 @@ What is replaced is a declared value where it occurs inside one string, where it
 decimal form of a number, a boolean or a `bigint`, or where it occurs inside an object key. No
 other form of the value is recognised: the value split across two fields, parsed into parts (a
 JSON credential emitted as an object), re-encoded (base64, URL-encoded, escaped inside another
-string), hashed or truncated. Keeping those out of a record is the tool's.
+string), hashed or truncated. Keeping those out of a record is the tool's. One re-encoding is recognised:
+the spelling a secret takes inside JSON text (a quote as `\"`, a newline as `\n`), because the
+writer itself encodes captured console output of an object that way.
+
+The event name is envelope and is never redacted. A result whose event name carries a declared
+value is refused with a `TypeError`, and so is a page record that carries an `event` of its own.
 
 ## The shared history stream
 

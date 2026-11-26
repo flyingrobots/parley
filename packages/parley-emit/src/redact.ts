@@ -33,6 +33,11 @@ export function collectSecretValues(argv: readonly string[], names: SecretNames,
   }
   for (const name of names.env) { const v = env[name]; if (v !== undefined) values.add(v); }
   values.delete("");
+  // A secret holding a character JSON escapes (a quote, a backslash, a newline) has a second
+  // spelling: the one it takes inside JSON text. The writer itself encodes some values as text
+  // before they are scrubbed as text (captured console output of an object, a refusal quoted in
+  // a warning), so that spelling is a declared value too.
+  for (const v of [...values]) { const escaped = JSON.stringify(v).slice(1, -1); if (escaped !== v) values.add(escaped); }
   return values;
 }
 

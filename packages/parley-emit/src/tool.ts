@@ -230,7 +230,7 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
   // changes nothing when it is not configured.
   const schemas = declaredSchemas(spec);
   const projection: HistoryProjection | undefined = history !== undefined && historyConfig.transform !== undefined
-    ? historyProjection({ transform: historyConfig.transform, name: historyConfig.name }, schemas)
+    ? scrubbedName(historyProjection({ transform: historyConfig.transform, name: historyConfig.name }, schemas), secretValues)
     : undefined;
 
   const run = new Run({
@@ -253,7 +253,7 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
   const reportUncaught = (e: unknown, where: string, whose: string): void => {
     progress.reporting = true;
     const err = e instanceof Error ? e : new Error(String(e));
-    run.writerError({ code: "uncaught.exception", problem: `uncaught ${err.name}${where}: ${err.message || "(no message)"}`, remedy: `${whose}; report it with the receipt at ${run.receiptPath}` }, { detail: { stack: err.stack } });
+    run.writerError({ code: "uncaught.exception", problem: `uncaught ${err.name}${where}: ${err.message || "(no message)"}`, remedy: `${whose}; report it with the receipt at ${run.receiptPath}` }, { detail: { stack: stackOf(err) } });
     progress.reporting = false;
   };
 
@@ -363,6 +363,9 @@ function discover(run: Run, spec: ToolSpec, discovery: "schema" | "help", comman
     run.end(0);
   }
 }
+
+/** A projection whose name is scrubbed, as any other text of the tool's is: it is written on the stream's opening line and in every warning that names the transform. */
+function scrubbedName(p: HistoryProjection, values: ReadonlySet<string>): HistoryProjection { return { ...p, name: scrubText(p.name, values) }; }
 
 function scrubText(s: string, values: ReadonlySet<string>): string { return scrub(s, values) as string; }
 
@@ -525,7 +528,8 @@ function captureConsole(): { attach: (run: Run) => void; release: () => void } {
 
 /** A console argument as text: its JSON where it has one, a `bigint` inside it as exact digits, and never a throw. */
 function safeJson(x: unknown): string {
-  if (x === undefined || typeof x === "function" || typeof x === "symbol") return String(x);
+  // A number or a bigint is its own text, as the console prints it: `NaN`, not `null`.
+  if (x === undefined || typeof x === "function" || typeof x === "symbol" || typeof x === "number" || typeof x === "bigint") return String(x);
   try { return exactJson(x); } catch { return String(x); }
 }
 

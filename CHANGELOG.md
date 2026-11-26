@@ -9,6 +9,15 @@ the entry under it names each schema version it releases, and those are separate
 
 ### Added
 
+- Two additions to the release-review page
+  ([docs/workflows/release-review](docs/workflows/release-review/README.md)). A release that
+  fixes a privacy defect of a published version is announced in a GitHub security advisory,
+  drafted when the defect is confirmed and kept current, and by a deprecation notice on the
+  affected npm versions, both published by the owner once the fix is on the registry. And a
+  finding the owner rules outside the contract is recorded there, with the first: a declared
+  secret that is JSON text is not recognised in its parsed parts. No spec text, schema or package
+  changes.
+
 - A release-review rule, in [docs/workflows/release-review](docs/workflows/release-review/README.md):
   a confirmed finding that violates evidence fidelity, privacy, identity or a published contract
   blocks a release by default, whether the change under review introduced it or not, and a

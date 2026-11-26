@@ -1193,7 +1193,8 @@ describe("RD-126 the review of the 0.3.0 candidate (case 2026-11-25): what the r
         for (const b of read.bundles) { expect(b.replay.unavailable).toBe(true); expect(b.records.every((r) => r.runHeldBack === true)).toBe(true); }
       }
       const loose = loadReceipts({ cwd: dir, env, history: [nameless] });
-      for (const b of loose.bundles) expect(b.records.every((r) => r.runHeldBack === true)).toBe(true);
+      // The read above left its own receipt in this directory; it is another run, in another file, and is whole.
+      for (const b of loose.bundles.filter((x) => x.run === runId(1) || x.run === runId(2))) expect(b.records.every((r) => r.runHeldBack === true)).toBe(true);
     }
   });
 });

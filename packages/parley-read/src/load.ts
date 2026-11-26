@@ -309,7 +309,10 @@ function scan(file: string): Scan {
       continue;
     }
     const obj = (isObject ? parsed : {}) as Record<string, unknown>;
-    const run = typeof obj.run === "string" && obj.run.length > 0 ? obj.run : null;
+    // An unwalked line has no value to read its run from, so the run is read from its text: the
+    // last top-level member named `run`, as a parser would take it.
+    const named = unwalked ? topLevelString(line.raw, "run") : obj.run;
+    const run = typeof named === "string" && named.length > 0 ? named : null;
     const seq = Number.isInteger(obj.seq) && (obj.seq as number) >= 0 ? (obj.seq as number) : null;
     // The reader's own limit, not the writer's defect: the line is JSON and it is kept verbatim,
     // but it is not returned as a record with a number changed or placed at a `seq` it does not
@@ -360,6 +363,50 @@ function markProjections(raw: readonly Raw[], file: string, where: Where): reado
     const projection = found.get(r.run);
     return projection === undefined ? r : { ...r, projection };
   });
+}
+
+/**
+ * The string value of the last top-level member `key` of a line of JSON text, or null. One pass
+ * over the text with a depth counter and no recursion, so it reads a line however deeply its
+ * values are nested, and builds none of them. Only a member of the outermost object counts.
+ */
+function topLevelString(text: string, key: string): string | null {
+  const QUOTE = 34, BACKSLASH = 92, COLON = 58;
+  const space = (c: number) => c === 32 || c === 9 || c === 10 || c === 13;
+  const stringEnd = (from: number): number => {
+    let i = from + 1;
+    while (i < text.length) { const c = text.charCodeAt(i); if (c === BACKSLASH) i += 2; else if (c === QUOTE) return i; else i += 1; }
+    return -1;
+  };
+  let depth = 0, found: string | null = null;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    if (c === 123 || c === 91) { depth += 1; continue; }
+    if (c === 125 || c === 93) { depth -= 1; continue; }
+    if (c !== QUOTE) continue;
+    const end = stringEnd(i);
+    if (end === -1) return found;
+    let j = end + 1;
+    while (j < text.length && space(text.charCodeAt(j))) j += 1;
+    if (depth === 1 && text.charCodeAt(j) === COLON) {
+      let name: unknown;
+      try { name = JSON.parse(text.slice(i, end + 1)); } catch { name = undefined; }
+      j += 1;
+      while (j < text.length && space(text.charCodeAt(j))) j += 1;
+      if (name === key) {
+        found = null;
+        if (text.charCodeAt(j) === QUOTE) {
+          const close = stringEnd(j);
+          if (close === -1) return null;
+          try { const v: unknown = JSON.parse(text.slice(j, close + 1)); if (typeof v === "string") found = v; } catch { /* not a string this reader can state */ }
+        }
+      }
+      i = j - 1;
+      continue;
+    }
+    i = end;
+  }
+  return found;
 }
 
 /** The run a receipt's file name names (§5: `<run>.jsonl`). A stream segment's name names a date, not a run. */
@@ -683,7 +730,8 @@ export function readReceiptFile(file: string, opts: ReadOptions = {}): FileRead 
       run,
       raw.filter((r) => r.run === run),
       [{ where, receipt: path }],
-      quarantined.filter((q) => q.run === run),
+      // A line the reader could not read that names no run could be any run's in this file.
+      quarantined.filter((q) => q.run === run || (q.run === null && q.code === NUMBER_UNREPRESENTABLE)),
       settled,
     ),
   );
@@ -741,6 +789,9 @@ export function loadReceipts(opts: LoadOptions = {}): Load {
     // segment whose only line of the run is one the reader could not read). The run's bundle,
     // built from its other sources, is told of it all the same.
     for (const q of attributed) if (q.run !== null && !runs.includes(q.run)) push(quarantinedByRun, q.run, [q]);
+    // A line the reader could not read that still names no run could belong to any run of the
+    // file. None of them is known to be whole, so every one is told of it.
+    for (const q of attributed) if (q.run === null && q.code === NUMBER_UNREPRESENTABLE) for (const run of runs) push(quarantinedByRun, run, [q]);
   };
 
   for (const location of locations) {

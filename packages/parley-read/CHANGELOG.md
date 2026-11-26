@@ -136,7 +136,10 @@ the version `package.json` names; the version is not tagged or published by this
   - A line nested deeper than the exact parser can follow (tens of thousands of levels) that
     also held a number off the fast path was filed as `line.quarantined`, "JSON, but not an
     object", which was false, and its run folded and was open to replay. It is now held back as
-    `line.number_unrepresentable`, attributed to its file's run.
+    `line.number_unrepresentable`. Its run is read from the line's text, the top-level `run`
+    member, by a scan that builds no value, so it is named correctly in a history segment that
+    holds several runs. A line the reader could not read that names no run at all holds back
+    every run of its file, since it could belong to any of them (flyingrobots/parley#187).
 - **A read's comparisons ask no `toJSON` hook.** The reader serialises the records it parsed with
   `exactText`, from `@flyingrobots/parley-emit` 0.5.0, which asks nothing of `Array.prototype`,
   `Object.prototype` or `BigInt.prototype`. With `exactJson`, a `toJSON` a process had put on

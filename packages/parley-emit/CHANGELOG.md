@@ -212,8 +212,10 @@ that is not finite, which is now refused.
 - A diagnostic passed to `warning` or `error` is read once, so the `code` that is checked is the
   `code` that is written; its getters were read twice.
 - A `bigint` is its digits whatever the process has put on `BigInt.prototype`: `toString` and
-  `valueOf` there are not asked either. (A `valueOf` installed before this package is loaded
-  still opens a boxed `bigint`; a primitive is unaffected.)
+  `valueOf` there are not asked either. One limit: the writer takes `valueOf` when it is loaded,
+  so if a process replaced it before that, a boxed `bigint` (`Object(5n)`) cannot be read and is
+  refused with a `TypeError`, never written as what the replacement returns
+  (flyingrobots/parley#190). A primitive `bigint` is unaffected.
 - A clock that answers with something that is not a time (an injected `now` returning `NaN`) no
   longer puts `"t":null` on a line: the system clock's reading is used.
 - Captured console output of a number that is not finite is its name (`NaN`, `Infinity`), as the

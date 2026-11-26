@@ -88,7 +88,7 @@ it. This page is the reference for what the package does on `main`; the package
    what the hook returns, applied once, and a boxed primitive as its primitive
    (flyingrobots/parley#178). The payload is read once for this, the refusal and every sink:
    one snapshot, taken before a `seq`. A `toJSON` on `BigInt.prototype` is never asked, so a
-   `bigint` is its digits whatever the process has installed. What is recognised is the value
+   `bigint` is its digits whatever the process has installed (a boxed one is refused if `BigInt.prototype.valueOf` was replaced before the package loaded). What is recognised is the value
    inside one string, as a scalar's decimal form, or inside a key: not the value split, parsed
    into parts, re-encoded, hashed or truncated, which is the tool's to keep out. The default
    descriptor sinks retry a full pipe and continue a partial write; a sidecar that cannot be

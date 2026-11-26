@@ -339,7 +339,14 @@ function snapshot(value: unknown, key: string, hooked: boolean, inside: object[]
     if (typeof json === "function") return snapshot((json as (key: string) => unknown).call(value, key), key, true, inside);
   }
   if (typeof value === "function") return undefined;
-  if (boxedBig) return bigValueOf.call(value);
+  if (boxedBig) {
+    // The method this module took when it loaded is the real one unless the process replaced it
+    // first. The real one answers with a bigint; anything else means the box cannot be read,
+    // and it is refused, never written as what a replacement returned.
+    const held: unknown = bigValueOf.call(value);
+    if (typeof held !== "bigint") throw new TypeError("a boxed bigint could not be read: BigInt.prototype.valueOf was replaced before this package was loaded");
+    return held;
+  }
   if (types.isNumberObject(value)) return Number(value);
   if (types.isStringObject(value)) return String(value);
   if (types.isBooleanObject(value)) return Boolean.prototype.valueOf.call(value);

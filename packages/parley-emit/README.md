@@ -359,7 +359,9 @@ Before 0.5.0 the call threw `TypeError: JSON.stringify cannot serialize BigInt.`
 with `uncaught.exception` and status 2, unless the process had installed a `toJSON` on
 `BigInt.prototype`, in which case the `bigint` was written as what that hook returned (a quoted
 string, with the common polyfill). From 0.5.0 that hook is never asked: a `bigint` is written as
-its digits whatever the process has installed.
+its digits whatever the process has installed on `BigInt.prototype`. One limit: a boxed `bigint`
+(`Object(5n)`) is refused with a `TypeError` if the process replaced `BigInt.prototype.valueOf`
+before this package was loaded, because the box can then not be read.
 
 | Where | What happens to a `bigint` |
 | --- | --- |

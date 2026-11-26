@@ -1252,4 +1252,27 @@ describe("PE-39 nothing a tool is handed, or hands over in parts, changes what w
       expect(plainGot).toBe(`{"list":[1,2]}`);
     }
   });
+
+  test("a transform's line is withheld as unredacted only for a declared value the transform added, never for one the line already held (flyingrobots/parley#186, flyingrobots/parley#164)", async () => {
+    // The writer's own lines hold scalars and field names of their own: `"network":false`, `decision`.
+    // A declared secret equal to one of them is not something an identity transform restored.
+    for (const secret of ["false", "decision", "network"]) {
+      const same = await go((run) => { run.step("chose", "because", { n: 1 }); run.result({ event: "result", value: 1 }, P.any); }, { argv: ["count", "--token", secret], transform: (rec) => rec });
+      expect(codes(of(same.err, "warning")).filter((c) => c === "history.transform_unredacted")).toEqual([]);
+      expect(of(same.stream, "receipt.head").length).toBe(1);
+      expect(of(same.stream, "result").length).toBe(1);
+      // The same secret, added by the transform in a new place, as a value, inside a string and as a key: withheld.
+      for (const add of [(rec: Record<string, unknown>) => ({ ...rec, note: secret }), (rec: Record<string, unknown>) => ({ ...rec, note: `x ${secret} y` }), (rec: Record<string, unknown>) => ({ ...rec, [`k-${secret}`]: 1 })]) {
+        const added = await go((run) => { run.result({ event: "result", value: 1 }, P.any); }, { argv: ["count", "--token", secret], transform: (rec) => (rec.event === "result" ? add(rec) : rec) });
+        const warnings = of(added.err, "warning").filter((l) => l.includes("history.transform_unredacted"));
+        expect(warnings.length).toBe(1);
+        expect(warnings[0]).toContain("that the line did not hold");
+        expect(warnings[0]).not.toContain("already replaced");
+        expect(of(added.stream, "result")).toEqual([]);
+      }
+    }
+    // Moved, not added: the writer's scalar is dropped and the same value put elsewhere. That is a new place, so it is withheld.
+    const moved = await go((run) => { run.result({ event: "result", value: false }, P.any); }, { argv: ["count", "--token", "false"], transform: (rec) => (rec.event === "result" ? { event: rec.event, other: false } : rec) });
+    expect(of(moved.stream, "result")).toEqual([]);
+  });
 });

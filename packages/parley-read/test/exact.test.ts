@@ -1097,5 +1097,68 @@ describe("RD-126 the review of the 0.3.0 candidate (case 2026-11-25): what the r
     expect(d[0]!.raw!.length).toBeGreaterThan(2_000_000);
     expect(d[0]!.raw).toContain(token);
   });
+
+  test("fresh pass: a held-back line in another source holds its run back too", () => {
+    const { dir, receipts, env } = scratch();
+    receipt(receipts, 1, "1");
+    receipt(receipts, 2, "1");
+    // A history segment that holds one line of run 1, which the reader cannot hold, and no other line of it.
+    const seg = join(dir, "segment.jsonl");
+    writeFileSync(seg, resultLine(runId(1), T0 - 9 * DAY + 5, "0.10000000000000001", 9) + "\n");
+    const load = loadReceipts({ cwd: dir, env, history: [seg] });
+    const one = load.bundles.find((b) => b.run === runId(1))!, two = load.bundles.find((b) => b.run === runId(2))!;
+    expect(coded(one.defects, "line.number_unrepresentable").length).toBe(1);
+    expect(one.replay).toEqual({ unavailable: true, reasons: ["line.number_unrepresentable"] });
+    expect(one.records.every((r) => r.runHeldBack === true)).toBe(true);
+    expect(two.replay.unavailable).toBe(false);
+    const plan = planQuery({ asker: { tool: "t" }, view: "everything", window: WINDOW, budget: { records: 100 } });
+    if (plan.refused) throw new Error("refused");
+    const ranking = rankRecords(plan.query, load.bundles.flatMap((b) => b.records));
+    expect(foldRuns(ranking.records, ranking.outcomes, "everything").folded).toBe(0);
+  });
+
+  test("fresh pass: a line nested too deep to read exactly is held back and said to be, never called not an object, and its run does not fold", () => {
+    for (const depth of [60_000, 200_000]) {
+      const { dir, receipts, env } = scratch();
+      const deep = (token: string) => "[".repeat(depth) + token + "]".repeat(depth);
+      receipt(receipts, 1, deep("9007199254740992"));
+      receipt(receipts, 2, deep("9007199254740993"));
+      const load = loadReceipts({ cwd: dir, env });
+      expect(coded(load.quarantined, "line.quarantined")).toEqual([]);
+      expect(coded(load.quarantined, "line.number_unrepresentable").length).toBe(2);
+      for (const b of load.bundles) expect(b.replay).toEqual({ unavailable: true, reasons: ["line.number_unrepresentable"] });
+      const plan = planQuery({ asker: { tool: "t" }, view: "everything", window: WINDOW, budget: { records: 100 } });
+      if (plan.refused) throw new Error("refused");
+      const ranking = rankRecords(plan.query, load.bundles.flatMap((b) => b.records));
+      expect(foldRuns(ranking.records, ranking.outcomes, "everything").folded).toBe(0);
+    }
+  });
+
+  test("fresh pass: a record nested very deep, with ordinary numbers, does not make a read fail", async () => {
+    const { dir, receipts, env } = scratch();
+    const deep = (token: string) => "[".repeat(20_000) + token + "]".repeat(20_000);
+    receipt(receipts, 1, deep("7"));
+    receipt(receipts, 2, deep("8"));
+    receipt(receipts, 3, deep("8"));
+    const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: WINDOW, budget: { records: 1000 } }, { cwd: dir, env }));
+    const sections = answer.digest.runs.map((r) => [r.run, r.folded?.stands_for ?? null] as const).sort((a, b) => a[0].localeCompare(b[0]));
+    expect(sections).toEqual([[runId(1), null], [runId(3), [runId(2)]]]);
+  });
+
+  test("fresh pass: a toJSON on Array.prototype or Object.prototype in the reading process does not make different results the same", async () => {
+    for (const proto of [Array.prototype, Object.prototype] as unknown as { toJSON?: unknown }[]) {
+      const { dir, receipts, env } = scratch();
+      receipt(receipts, 1, "[9007199254740992,1]");
+      receipt(receipts, 2, "[9007199254740993,2]");
+      const load = loadReceipts({ cwd: dir, env });
+      const plan = planQuery({ asker: { tool: "t" }, view: "everything", window: WINDOW, budget: { records: 100 } });
+      if (plan.refused) throw new Error("refused");
+      const ranking = rankRecords(plan.query, load.bundles.flatMap((b) => b.records));
+      Object.defineProperty(proto, "toJSON", { configurable: true, enumerable: false, value() { return "COLLAPSED"; } });
+      let folded: number;
+      try { folded = foldRuns(ranking.records, ranking.outcomes, "everything").folded; } finally { delete proto.toJSON; }
+      expect(folded).toBe(0);
+    }
+  });
 });
 

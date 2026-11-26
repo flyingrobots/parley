@@ -1100,3 +1100,57 @@ describe("PE-38 a payload is read once, and what is checked is what is written (
     expect(of(declared.out, "result").map(valueText)).toEqual([`{"creds":{"token":"[redacted]"}}`]);
   });
 });
+
+describe("PE-39 nothing a tool is handed, or hands over in parts, changes what was checked (fresh review pass, case 2026-11-25)", () => {
+  test("a --human renderer that changes the record it is handed changes nothing the receipt or the stream holds, and cannot change the end status", async () => {
+    const human = (line: Record<string, unknown>): string | null => {
+      if (line.event === "result") { line.avg = Number.NaN; (line.rows as number[]).sort(); line.big = 10n ** 5000n; line.note = "added by the renderer"; }
+      if (line.event === "end") line.status = 0;
+      return null;
+    };
+    const body = (run: Run) => { run.result({ event: "result", value: { rows: [3, 1, 2] }, rows: [3, 1, 2] }, P.any); run.error({ code: "probe.failed", problem: "failed on purpose" }); };
+    const shown = await go(body, { argv: ["count", "--human"], over: { human }, stream: true });
+    const plainRun = await go(body, { stream: true });
+    expect(shown.status).toBe(2);
+    for (const lines of [shown.receipt, shown.stream]) {
+      const result = of(lines, "result")[0]!;
+      expect(result).toContain(`"value":{"rows":[3,1,2]},"rows":[3,1,2],"_schema"`);
+      expect(result).not.toContain("avg");
+      expect(result).not.toContain("added by the renderer");
+    }
+    expect(of(shown.receipt, "result").map(valueText)).toEqual(of(plainRun.receipt, "result").map(valueText));
+    expect(of(shown.receipt, "end")[0]).toContain(`"status":2`);
+  });
+
+  test("a diagnostic is read once: each getter is called once, and the code that is checked is the code that is written", async () => {
+    const reads = { code: 0, problem: 0, detail: 0, measured: 0 };
+    let flips = 0;
+    const r = await go((run) => {
+      run.warning({
+        get code() { reads.code++; return "probe.counted"; }, get problem() { reads.problem++; return "counted"; },
+        get detail() { reads.detail++; return { n: reads.detail }; }, get measured() { reads.measured++; return reads.measured; },
+      });
+      expect(() => run.warning({ get code() { return flips++ === 0 ? "NOT A CODE" : "probe.ok"; }, problem: "p" })).toThrow(TypeError);
+      flips = 0;
+      run.warning({ get code() { return flips++ === 0 ? "probe.ok" : "NOT A CODE"; }, problem: "p" });
+    });
+    expect(reads).toEqual({ code: 1, problem: 1, detail: 1, measured: 1 });
+    expect(codes(of(r.err, "warning"))).toEqual(["probe.counted", "probe.ok"]);
+    expect(of(r.err, "warning")[0]).toContain(`"measured":1,"detail":{"n":1}`);
+    expect(r.status).toBe(0);
+  });
+
+  test("a result whose event name carries a declared secret is refused before a seq is taken, and the secret is on no sink", async () => {
+    const secret = "hunter2secret-zq7";
+    const r = await go((run) => {
+      expect(() => run.result({ event: secret, note: 1 }, P.any)).toThrow(TypeError);
+      expect(() => run.result({ event: `result.${secret}.x`, note: 1 }, P.any)).toThrow(TypeError);
+      run.result({ event: "result", value: 1 }, P.any);
+    }, { argv: ["count", "--token", secret], stream: true });
+    expect(r.status).toBe(0);
+    for (const lines of [r.out, r.err, r.receipt, r.stream]) expect(lines.join("\n")).not.toContain(secret);
+    const seqs = r.receipt.map((l) => Number(/"seq":(\d+)/.exec(l)![1]));
+    expect(seqs).toEqual(seqs.map((_, i) => seqs[0]! + i));
+  });
+});
+

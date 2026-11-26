@@ -159,6 +159,14 @@ export interface RunInit {
 }
 
 type SinkName = "stdout" | "stderr" | "receipt";
+/** How many times `needle` occurs in `text`, counted without overlap. */
+function occurrences(text: string, needle: string): number {
+  if (needle === "") return 0;
+  let n = 0;
+  for (let at = text.indexOf(needle); at !== -1; at = text.indexOf(needle, at + needle.length)) n += 1;
+  return n;
+}
+
 interface Emit {
   to: { stdout?: boolean; stderr?: boolean; receipt?: boolean }; writer?: boolean; noSidecar?: boolean; deferFailures?: boolean; verbatim?: string | readonly string[];
   /** Pointers into this record where the caller replaced a secret before handing it over; each gets its `redaction` event as though the record's own scrub had found it. */
@@ -348,6 +356,15 @@ export class Run {
     // transform that mutates the record it was handed and returns it would otherwise hand back its
     // own envelope, and the receipt line's is the only one that may stand (§1.3).
     const envelope = { event: rec.event, t: rec.t, seq: rec.seq, run: rec.run, _schema: { id: stamp?.id, version: stamp?.version } };
+    // What the line already holds that reads as a declared value, taken before the transform
+    // can change the record: the places the scrub would name, and how often each value occurs in
+    // the text. The writer's own lines hold scalars and field names of their own (`false`,
+    // `decision`), and a secret equal to one of them is not something a transform restored.
+    const secrets = this.init.secretValues;
+    const { event: _e0, t: _t0, seq: _s0, run: _r0, _schema: _c0, ...original } = rec;
+    const held: string[] = [];
+    if (secrets.size > 0) scrubPlain(original, secrets, "", held);
+    const heldText = secrets.size > 0 ? exactText(original) : "";
     let returned: unknown;
     try { returned = p.fn(rec); } catch (e) {
       const msg = e instanceof Error ? e.message || e.name : String(e);
@@ -374,12 +391,19 @@ export class Run {
     const { event: _event, t: _t, seq: _seq, run: _run, _schema: _stamp, ...body } = taken as Record_;
     // A declared secret is looked for in the body's values and keys, as the scrub looks, and in
     // its text as well. The text alone is not enough: there a quote, a backslash or a newline in
-    // the secret is escaped, and the secret is never found (review case 2026-11-25).
-    const restored: string[] = [];
-    if (this.init.secretValues.size > 0) scrubPlain(body, this.init.secretValues, "", restored);
-    if (this.init.secretValues.size > 0 && (restored.length > 0 || carriesSecret(exactText(body), this.init.secretValues))) {
-      this.withhold({ code: "history.transform_unredacted", problem: `the history transform ${p.name} returned a body for seq ${seq} carrying a declared secret value the writer had already replaced; that line is not on the shared stream`, remedy: "a transform narrows a record; it never restores a value §5.3 replaced" });
-      return null;
+    // the secret is escaped, and the secret is never found (review case 2026-11-25). The line is
+    // withheld for a declared value in a place the receipt line did not have one, or for one
+    // that occurs more often in the body's text than it did in the line's
+    // (flyingrobots/parley#186): a value the line already held is the line's, not the transform's.
+    if (secrets.size > 0) {
+      const found: string[] = [];
+      scrubPlain(body, secrets, "", found);
+      const bodyText = exactText(body);
+      const added = found.some((at) => !held.includes(at)) || [...secrets].some((v) => occurrences(bodyText, v) > occurrences(heldText, v));
+      if (added) {
+        this.withhold({ code: "history.transform_unredacted", problem: `the history transform ${p.name} returned a body for seq ${seq} that carries a declared secret value that the line did not hold; that line is not on the shared stream`, remedy: "a transform narrows a record; it never adds a declared secret value, or restores one §5.3 replaced" });
+        return null;
+      }
     }
     const doc = p.schemas.get(pair);
     if (doc === undefined) {

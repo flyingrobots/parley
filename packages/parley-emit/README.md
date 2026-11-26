@@ -629,7 +629,7 @@ or a changed envelope on the shared timeline:
 | The envelope is not the transform's | `event`, `t`, `seq`, `run` and `_schema` are taken off whatever it returns and the receipt line's are put back, so the two copies of one event agree on all five (§1.3). It may read them; it cannot change them |
 | The body is re-validated | Against the schema for its **exact** advertised pair (§4.5): the schemas this package ships, plus the schema the tool declared on the emitted or error type (§4.2) |
 | An unverifiable line is withheld | A pair this writer holds no schema document for, or one whose schema uses a construct the checker does not implement, is `history.transform_uncheckable`. An unchecked projection is never passed off as a checked one |
-| Everything that goes wrong is a warning | A throw is `history.transform_failed`; a body that no longer validates is `history.transform_invalid`; a body that carries a declared secret value the writer had already replaced is `history.transform_unredacted`. Each names the withheld `seq`, goes to stderr and the receipt, and leaves the exit status exactly where it was (§6.1) |
+| Everything that goes wrong is a warning | A throw is `history.transform_failed`; a body that no longer validates is `history.transform_invalid`; a body that carries a declared secret value the receipt line did not hold is `history.transform_unredacted`. Each names the withheld `seq`, goes to stderr and the receipt, and leaves the exit status exactly where it was (§6.1) |
 
 **The stream copy says it is a projection.** Its first line for the run is a
 `parley.history.transform` naming the transform and the SHA-256 of its source text as the runtime

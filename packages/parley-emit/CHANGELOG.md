@@ -219,6 +219,14 @@ that is not finite, which is now refused.
 - Captured console output of a number that is not finite is its name (`NaN`, `Infinity`), as the
   console prints it; it was `null`. Inside a logged object it is still `null`: that text is the
   object's JSON form.
+- **A history transform's line is withheld as unredacted only for a declared value the transform
+  added** (flyingrobots/parley#186, flyingrobots/parley#164). The guard withheld any line whose
+  body matched a declared value, including one the writer's own line holds: with a secret equal
+  to `false`, or to a field name such as `network`, an identity transform lost the head from the
+  stream, and the warning said the writer "had already replaced" a value it had not. The guard
+  now compares the body with the receipt line: it withholds for a declared value in a place the
+  line did not have one, or one that occurs more often in the body's text than in the line's.
+  The warning says the body carries a declared value that the line did not hold.
 - **A member named `__proto__` is no longer dropped when a secret is present.** The scrub's copy
   assigned it, which set the copy's prototype instead of a member; so a record relayed from
   parsed JSON lost it beside any secret, and two `resolved` values differing only there shared

@@ -1042,7 +1042,7 @@ describe("RD-126 the review of the 0.3.0 candidate (case 2026-11-25): what the r
         const { dir, receipts, env } = scratch();
         receipt(receipts, 1, "1", `{"command":"count","limit":18446744073709551615}`);
         const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: WINDOW, budget: { records: 1000 } }, { cwd: dir, env }));
-        const text = answer.lines.join("\n");
+        const text = readFileSync(answer.receipt, "utf8").split("\n").find((l) => l.includes(`"event":"lens"`))!;
         expect(text).toContain(`"limit":18446744073709551615`);
         expect(text).not.toContain(`"limit":"18446744073709551615"`);
         expect(text).not.toContain("18446744073709552000");

@@ -1252,4 +1252,11 @@ describe("PE-39 nothing a tool is handed, or hands over in parts, changes what w
       expect(plainGot).toBe(`{"list":[1,2]}`);
     }
   });
+
+  test("when BigInt.prototype.valueOf was replaced before the package loaded, a boxed bigint is refused, never written as what the replacement returns; a primitive is still its digits", async () => {
+    const proc = Bun.spawn(["bun", join(import.meta.dir, "fixtures/valueof-before-load.ts")], { stdout: "pipe", stderr: "pipe" });
+    const out = await new Response(proc.stdout).text();
+    expect(await proc.exited).toBe(0);
+    expect(out.trim()).toBe(`{"boxed":"threw TypeError","primitive":"{\\"n\\":9007199254740993}"}`);
+  });
 });

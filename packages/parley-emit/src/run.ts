@@ -468,7 +468,9 @@ export class Run {
 
   private prose(obj: Record_): string {
     let custom: string | null = null;
-    try { custom = this.init.human?.(obj) ?? null; } catch (e) {
+    // The renderer is handed a copy. The record itself goes on to the receipt and the stream,
+    // and nothing a renderer does to its argument may change what they hold.
+    try { custom = this.init.human?.(plain(obj) as Record_) ?? null; } catch (e) {
       custom = null;
       if (!this.rendererFailed && !this.closed) {
         this.rendererFailed = true;
@@ -518,6 +520,9 @@ export class Run {
     const payload = this.take(given, "a record") as Record_;
     const receiptExtra = givenExtra === undefined ? undefined : this.take(givenExtra, "receiptExtra") as Record_;
     if (how.named === true && (typeof payload.event !== "string" || !payload.event)) throw new TypeError("a result needs an event name");
+    // The event name is envelope and is never scrubbed (§5.3), so a tool's record whose event
+    // name carries a declared secret value is refused, as a session id that carries one is.
+    if (how.writer !== true && typeof payload.event === "string" && carriesSecret(payload.event, this.init.secretValues)) throw new TypeError("an event name must not carry a declared secret value: the event name is never redacted (spec §5.3)");
     this.refuseEnvelopeKeys(payload, "a record"); this.refuseEnvelopeKeys(receiptExtra, "receiptExtra");
     const found: string[] = [];
     const scrubbed = this.scrubPayload(payload, found, how.writer === true, how.writer === true ? how.verbatim : undefined);
@@ -797,8 +802,11 @@ export class Run {
     return seq;
   }
 
-  private diagnostic(d: Diagnostic): Record_ {
-    if (!CODE.test(d.code)) throw new TypeError(`code ${JSON.stringify(d.code)} is not two or more dot-separated lowercase segments (spec §6)`);
+  private diagnostic(given: Diagnostic): Record_ {
+    // Read once, here: the code that is checked is the code that is written.
+    const d = plain(given) as Diagnostic;
+    if (d === null || typeof d !== "object" || Array.isArray(d)) throw new TypeError("a diagnostic must be an object once written as JSON");
+    if (typeof d.code !== "string" || !CODE.test(d.code)) throw new TypeError(`code ${JSON.stringify(d.code)} is not two or more dot-separated lowercase segments (spec §6)`);
     if (!d.problem) throw new TypeError("problem is never empty (spec §6)");
     const out: Record_ = { code: d.code, problem: d.problem };
     for (const k of ["remedy", "remedy_target", "measured", "limit", "retryable", "detail"] as const) if (d[k] !== undefined) out[k] = d[k];

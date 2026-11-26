@@ -1252,4 +1252,14 @@ describe("PE-39 nothing a tool is handed, or hands over in parts, changes what w
       expect(plainGot).toBe(`{"list":[1,2]}`);
     }
   });
+
+  test("a clock that is never a time gives a real run id and a real t, at startup too", async () => {
+    const started = await go((run) => { run.result({ event: "result", value: 1 }, P.any); }, { extra: { now: () => Number.NaN } });
+    expect(started.status).toBe(0);
+    for (const line of [...started.out, ...started.receipt]) { expect(line).toMatch(/"t":\d+,/); expect(line).toMatch(/"run":"[0-9A-HJKMNP-TV-Z]{26}"/); }
+    const failed = await go(() => {}, { extra: { now: () => Number.NaN, resolved: () => { throw new Error("arguments refused on purpose"); } } });
+    expect(failed.status).toBe(3);
+    expect(failed.err[0]).toMatch(/"t":\d+,/);
+    expect(failed.err[0]).toMatch(/"run":"[0-9A-HJKMNP-TV-Z]{26}"/);
+  });
 });

@@ -160,11 +160,13 @@ export interface RunInit {
 
 type SinkName = "stdout" | "stderr" | "receipt";
 interface Emit {
-  to: { stdout?: boolean; stderr?: boolean; receipt?: boolean }; writer?: boolean; noSidecar?: boolean; deferFailures?: boolean; verbatim?: string;
+  to: { stdout?: boolean; stderr?: boolean; receipt?: boolean }; writer?: boolean; noSidecar?: boolean; deferFailures?: boolean; verbatim?: string | readonly string[];
   /** Pointers into this record where the caller replaced a secret before handing it over; each gets its `redaction` event as though the record's own scrub had found it. */
   replaced?: readonly string[];
   /** The tool names the event: the record as read must carry a non-empty string `event`. */
   named?: boolean;
+  /** The writer names the event beside the tool's fields: the record as read must still carry exactly this `event`. */
+  event?: string;
 }
 
 export class Run {
@@ -213,7 +215,10 @@ export class Run {
 
   // ---- emission -------------------------------------------------------------------------
 
-  private next(t?: number): { seq: number; t: number } { this.seq += 1; return { seq: this.seq, t: t ?? this.init.now() }; }
+  private next(t?: number): { seq: number; t: number } { this.seq += 1; return { seq: this.seq, t: t ?? this.time() }; }
+
+  /** The clock's reading when it is a time (a non-negative safe integer of milliseconds), and the system's otherwise: `t` is never written as `null`. */
+  private time(): number { const t = this.init.now(); return Number.isSafeInteger(t) && t >= 0 ? t : Date.now(); }
 
   private envelope(payload: Record_, schema: SchemaRef, at: { seq: number; t: number }): Record_ {
     const { event, ...rest } = payload;
@@ -497,13 +502,14 @@ export class Run {
    * flyingrobots/parley#111), or the head's `redacted`, which holds indexes, JSON Pointers and
    * names the caller has already scrubbed. A writer-built record's field names are never renamed.
    */
-  private scrubPayload(payload: Record_, found: string[], writer: boolean, verbatim?: string): Record_ {
+  private scrubPayload(payload: Record_, found: string[], writer: boolean, verbatim?: string | readonly string[]): Record_ {
     const { event, ...all } = payload;
     const rest: Record_ = { ...all };
-    if (verbatim !== undefined) delete rest[verbatim];
+    const kept = verbatim === undefined ? [] : typeof verbatim === "string" ? [verbatim] : verbatim;
+    for (const k of kept) delete rest[k];
     let scrubbed = scrubPlain(rest, this.init.secretValues, "", found, writer ? { skipKeys: DIGEST_KEYS, scalars: false, keys: false } : {}) as Record_;
     // Put back in its own place, so the record's key order is the one it was built with.
-    if (verbatim !== undefined && verbatim in all) scrubbed = Object.fromEntries(Object.keys(all).map((k) => [k, k === verbatim ? all[k] : scrubbed[k]]));
+    if (kept.some((k) => Object.hasOwn(all, k))) scrubbed = Object.fromEntries(Object.keys(all).map((k) => [k, kept.includes(k) ? all[k] : scrubbed[k]]));
     return event === undefined ? scrubbed : { event, ...scrubbed };
   }
 
@@ -520,6 +526,7 @@ export class Run {
     const payload = this.take(given, "a record") as Record_;
     const receiptExtra = givenExtra === undefined ? undefined : this.take(givenExtra, "receiptExtra") as Record_;
     if (how.named === true && (typeof payload.event !== "string" || !payload.event)) throw new TypeError("a result needs an event name");
+    if (how.event !== undefined && payload.event !== how.event) throw new TypeError(`a ${how.event} record must not carry an event of its own; the writer names it (spec §1.3)`);
     // The event name is envelope and is never scrubbed (§5.3), so a tool's record whose event
     // name carries a declared secret value is refused, as a session id that carries one is.
     if (how.writer !== true && typeof payload.event === "string" && carriesSecret(payload.event, this.init.secretValues)) throw new TypeError("an event name must not carry a declared secret value: the event name is never redacted (spec §5.3)");
@@ -546,7 +553,7 @@ export class Run {
     // DIGEST_KEYS. The error this raises is itself writer-built, so it cannot raise another.
     let t: number | undefined;
     if (how.writer !== true && (found.length > 0 || extraFound.length > 0)) {
-      t = this.init.now();
+      t = this.time();
       this.refuseRedactionConflict(how, payload, receiptExtra, scrubbed, extra, schema, { seq: this.seq + 1, t }, [...found, ...extraFound]);
     }
     const at = this.next(t);
@@ -730,12 +737,14 @@ export class Run {
   }
 
   /**
-   * Internal: the receipt head, receipt only, never a sidecar (§5). `redacted` is written as the
+   * Internal: the receipt head, receipt only, never a sidecar (§5). `resolved` is written as the
+   * caller scrubbed it and is not scrubbed again: it is the preimage of `inv`, and a second pass
+   * rewrites the marker itself when a secret is a piece of the text `[redacted]`. `redacted` is written as the
    * caller built it: its JSON Pointers are locations in the already-scrubbed `resolved`, and a
    * second scrub of a pointer as a string could only damage it (a secret equal to `/token` would
    * turn the pointer `/token` into something that is not a pointer).
    */
-  head(fields: Record_): void { this.emit({ to: { receipt: true }, writer: true, noSidecar: true, verbatim: "redacted" }, { event: "receipt.head", ...fields }, SCHEMA_IDS.head); }
+  head(fields: Record_): void { this.emit({ to: { receipt: true }, writer: true, noSidecar: true, verbatim: ["redacted", "resolved"] }, { event: "receipt.head", ...fields }, SCHEMA_IDS.head); }
 
   /** Internal: a discovery line (§4.1), a writer-built record describing public identity. */
   describe(record: Record_, schema: SchemaRef, verbatim?: string): number { return this.emit({ to: { stdout: true, receipt: true }, writer: true, ...(verbatim !== undefined ? { verbatim } : {}) }, record, schema); }
@@ -749,7 +758,7 @@ export class Run {
   /** One page of unbounded output (§7.2); rows belong in `receiptExtra` or in the stream copy as the tool documents. */
   page(cursor: string | null, hasMore: boolean, record: Record_ = {}, receiptExtra?: Record_): number {
     if (hasMore && !cursor) throw new TypeError("a page with has_more needs a cursor (spec §7.2)");
-    return this.emit({ to: { stdout: true, receipt: true } }, { event: "page", ...record, ...(cursor ? { cursor } : {}), has_more: hasMore }, SCHEMA_IDS.page, receiptExtra);
+    return this.emit({ to: { stdout: true, receipt: true }, event: "page" }, { event: "page", ...record, ...(cursor ? { cursor } : {}), has_more: hasMore }, SCHEMA_IDS.page, receiptExtra);
   }
 
   /** One decision and why, receipt only (§5). */

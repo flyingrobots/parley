@@ -55,7 +55,10 @@ the entry under it names each schema version it releases, and those are separate
   `@flyingrobots/parley-emit` 0.4.0 and earlier, fixed in 0.5.0. In the same version the writer
   reads a payload once, never asks a `toJSON` on `BigInt.prototype` (which removes the limit of
   flyingrobots/parley#180 before any release carried it), and no longer drops a member named
-  `__proto__` beside a secret. The package's changelog lists what breaks.
+  `__proto__` beside a secret. A fresh review pass then found three more routes for a secret, each
+  in 0.4.0 too and fixed in 0.5.0: a secret that JSON escapes in captured console output of an
+  object, a result's event name, and a history transform's name. The package's changelog lists
+  what breaks.
 - **PRIVACY: `@flyingrobots/parley-emit` published a declared secret that only a `toJSON` hook
   returns** (flyingrobots/parley#178), on stdout and in the receipt with status 0: a `URL` holding
   the secret, or any object whose hook returns it. Present in the published 0.4.0 (measured from

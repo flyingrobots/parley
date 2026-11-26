@@ -35,7 +35,7 @@ export function canonicalPlain(v: unknown): string {
     const o = v as Record<string, unknown>;
     return "{" + Object.keys(o).sort().filter((k) => o[k] !== undefined).map((k) => JSON.stringify(k) + ":" + canonicalPlain(o[k])).join(",") + "}";
   }
-  if (typeof v === "bigint") return v.toString();
+  if (typeof v === "bigint") return String(v); // `String` asks no method of `BigInt.prototype`
   // `JSON.stringify` writes `null` for these, which would give `NaN` the identity of a real
   // `null` (flyingrobots/parley#177).
   if (typeof v === "number" && !Number.isFinite(v)) throw new TypeError("a number that is not finite (NaN or an infinity) has no canonical form");

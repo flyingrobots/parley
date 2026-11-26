@@ -1166,14 +1166,16 @@ describe("PE-39 nothing a tool is handed, or hands over in parts, changes what w
   });
 
   test("inv is the identity of resolved as the head writes it even when a declared secret is a piece of the text [redacted]", async () => {
-    for (const secret of ["red", "act", "[", "e"]) {
+    // Pieces of the marker that no temporary path or run id can hold, so the run starts.
+    for (const secret of ["[red", "acted]", "["]) {
       const r = await go(() => {}, { argv: ["count", "--token", secret], extra: { resolved: () => ({ command: "count", note: `x-${secret}-y` }) } });
       expect(r.status).toBe(0);
-      const head = r.receipt[0]!;
-      const resolvedText = head.slice(head.indexOf('"resolved":') + '"resolved":'.length, head.indexOf(',"inputs"'));
-      expect(resolvedText).toContain(`"note":"x-[redacted]-y"`);
-      const inv = createHash("sha256").update(`{"command":"count","inputs":[],"resolved":${emit.canonical(emit.parseExact(resolvedText).ok ? (emit.parseExact(resolvedText) as { value: unknown }).value : null)},"tool":"t","v":"0.0.1"}`).digest("hex");
-      expect(head).toContain(`"inv":"${inv}"`);
+      // Scrubbed once: the marker is not scrubbed again into `[[redacted]acted]`.
+      const resolvedText = `{"command":"count","note":"x-[redacted]-y"}`;
+      expect(r.receipt[0]).toContain(`"resolved":${resolvedText},`);
+      const inv = createHash("sha256").update(`{"command":"count","inputs":[],"resolved":${resolvedText},"tool":"t","v":"0.0.1"}`).digest("hex");
+      expect(r.receipt[0]).toContain(`"inv":"${inv}"`);
+      expect(r.out[0]).toContain(`"inv":"${inv}"`);
     }
   });
 
@@ -1235,5 +1237,19 @@ describe("PE-39 nothing a tool is handed, or hands over in parts, changes what w
     let calls = 0;
     const r = await go((run) => { run.result({ event: "result", value: 1 }, P.any); }, { extra: { now: () => (calls++ < 2 ? 1795326412346 : Number.NaN) } });
     for (const line of [...r.out, ...r.receipt]) expect(line).toMatch(/"t":\d+,/);
+  });
+
+  test("exactText writes plain data with no hook asked: a toJSON on Array.prototype or Object.prototype changes nothing", () => {
+    const value = { id: BIG, list: [1, { n: 2 }], s: "x" };
+    const text = `{"id":${BIG_TEXT},"list":[1,{"n":2}],"s":"x"}`;
+    expect(emit.exactText(value)).toBe(text);
+    expect(emit.exactText({ list: [1, 2] })).toBe(`{"list":[1,2]}`);
+    for (const proto of [Array.prototype, Object.prototype] as unknown as { toJSON?: unknown }[]) {
+      Object.defineProperty(proto, "toJSON", { configurable: true, enumerable: false, value() { return "COLLAPSED"; } });
+      let got: string, plainGot: string;
+      try { got = emit.exactText(value); plainGot = emit.exactText({ list: [1, 2] }); } finally { delete proto.toJSON; }
+      expect(got).toBe(text);
+      expect(plainGot).toBe(`{"list":[1,2]}`);
+    }
   });
 });

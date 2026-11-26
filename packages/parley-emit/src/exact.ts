@@ -35,6 +35,11 @@
 
 import { types } from "node:util";
 
+// Taken when this module loads, so a `valueOf` the process later puts on `BigInt.prototype` is
+// not what opens a boxed bigint. A primitive's digits are taken with `String`, which asks no
+// method of the prototype at all.
+const bigValueOf = BigInt.prototype.valueOf;
+
 /**
  * Whether a value is a boxed `bigint`, from any realm. `types.isBigIntObject` answers it, except
  * that Bun 1.2.0 says no for a box made in another realm (a `vm` context), which the serialiser
@@ -47,7 +52,7 @@ export function isBoxedBigInt(value: unknown): boolean {
   if (value === null || typeof value !== "object" || Array.isArray(value) || types.isProxy(value)) return false;
   const proto: unknown = Object.getPrototypeOf(value);
   if (proto === Object.prototype || proto === null) return false; // an ordinary object of this realm: the common case, decided without a throw
-  try { BigInt.prototype.valueOf.call(value); return true; } catch { return false; }
+  try { bigValueOf.call(value); return true; } catch { return false; }
 }
 
 /** The most decimal digits an integer may have and still be held exactly; `1e400` has 401. */
@@ -334,7 +339,7 @@ function snapshot(value: unknown, key: string, hooked: boolean, inside: object[]
     if (typeof json === "function") return snapshot((json as (key: string) => unknown).call(value, key), key, true, inside);
   }
   if (typeof value === "function") return undefined;
-  if (boxedBig) return BigInt.prototype.valueOf.call(value);
+  if (boxedBig) return bigValueOf.call(value);
   if (types.isNumberObject(value)) return Number(value);
   if (types.isStringObject(value)) return String(value);
   if (types.isBooleanObject(value)) return Boolean.prototype.valueOf.call(value);
@@ -371,7 +376,7 @@ export function unwritableClause(why: "integer" | "number"): string {
 
 /** Plain data as JSON text, with no hook asked: `write` for a value `plain` has already taken. */
 function write(value: unknown): string | undefined {
-  if (typeof value === "bigint") return value.toString();
+  if (typeof value === "bigint") return String(value);
   if (value === null || typeof value !== "object") return typeof value === "function" || typeof value === "symbol" ? undefined : JSON.stringify(value);
   if (Array.isArray(value)) {
     const items: string[] = [];

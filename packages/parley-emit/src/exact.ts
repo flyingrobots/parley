@@ -36,17 +36,19 @@
 import { types } from "node:util";
 import { runInNewContext } from "node:vm";
 
-// Boxed bigints (flyingrobots/parley#190, and rounds 1 to 3 of the review of PR #196).
+// Boxed bigints (flyingrobots/parley#190, and rounds 1 to 4 of the review of PR #196).
 //
-// A box (`Object(5n)`) is read and recognised only with a **genuine** `BigInt.prototype.valueOf`:
+// A box (`Object(5n)`), whatever its prototype, is read and recognised only with a **genuine** `BigInt.prototype.valueOf`:
 // the one of a realm this module makes with `node:vm` for the purpose, which nothing in the
 // process can have replaced. What is written for a box is always what that method reads. The
 // process's own `valueOf` (the one on `BigInt.prototype` when this module loads) never decides
 // what is written and never decides what is a box. It is asked only to decide whether to refuse a
 // box: it is checked once at load, and when it passed it is asked once more for each box read,
 // and the box is refused when it disagrees with the genuine reading. So a replacement installed
-// before the writer loaded can make a box be refused, never be written as something else, and it
-// changes nothing for any other object. A primitive's digits are taken with `String`, which asks
+// before the writer loaded can make a box be refused, and what it answers is never written; it
+// changes nothing for any other object. What it does to a box while asked is the box's own: a
+// changed prototype is still read, and a `toJSON` it gives the box is honoured as any own hook
+// is. A primitive's digits are taken with `String`, which asks
 // no method of the prototype at all.
 
 /** The process's own `valueOf`, taken when this module loads; a later replacement is never asked. */
@@ -78,21 +80,52 @@ function behavesAsValueOf(method: unknown): method is (this: unknown) => bigint 
 const loadedPassed = behavesAsValueOf(loadedValueOf);
 
 /**
- * The genuine `valueOf`: a fresh realm's, unreachable by anything the process installed, and
- * checked as the loaded one is. It reads a box of any realm exactly and throws for anything else.
- * Made on first use, so a tool that writes no object but plain ones and arrays never makes a
- * realm; `null` when no realm can be made or its method fails the check, and then the writer fails
- * closed (`boxKind`, `readBox`).
+ * A realm this module makes for the purpose, with what it is used for: `read`, the genuine
+ * `valueOf`, unreachable by anything the process installed and checked as the loaded one is,
+ * which reads a box of any realm exactly and throws for anything else; and `changed`, boxes of
+ * that realm whose prototype was changed, for `recognisesChangedPrototypes`. Made on first use,
+ * the first time the writer meets an object that is not an array; `null` when no realm can be
+ * made or its method fails the check, and then the writer fails closed (`boxKind`, `readBox`).
  */
-let genuineMade: ((this: unknown) => bigint) | null | undefined;
-function genuine(): ((this: unknown) => bigint) | null {
-  if (genuineMade === undefined) {
+interface Realm { readonly read: (this: unknown) => bigint; readonly changed: readonly unknown[] }
+let realmMade: Realm | null | undefined;
+function realm(): Realm | null {
+  if (realmMade === undefined) {
     try {
-      const fresh: unknown = runInNewContext("BigInt.prototype.valueOf");
-      genuineMade = behavesAsValueOf(fresh) ? fresh : null;
-    } catch { genuineMade = null; }
+      const made = runInNewContext("[BigInt.prototype.valueOf, Object.setPrototypeOf(Object(1n), null), Object.setPrototypeOf(Object(1n), Object.prototype), Object(1n)]") as readonly unknown[];
+      const read = made[0];
+      // A box of that realm moved onto this realm's `Object.prototype`.
+      const moved = Object.setPrototypeOf(made[3] as object, Object.prototype) as unknown;
+      realmMade = behavesAsValueOf(read) ? { read, changed: [made[1], made[2], moved] } : null;
+    } catch { realmMade = null; }
   }
-  return genuineMade;
+  return realmMade;
+}
+
+/** The genuine `valueOf` (`realm`), or `null` when no realm can be made. */
+function genuine(): ((this: unknown) => bigint) | null {
+  return realm()?.read ?? null;
+}
+
+/**
+ * Whether this runtime's `types.isBigIntObject` recognises a box whose prototype was changed: to
+ * `null`, to `Object.prototype`, or to another object, of this realm or (when a realm can be made)
+ * of another. Bun 1.2.0's does not (review round 3, F-13): there such a box looks like an
+ * ordinary object, so no object but an array is taken as ordinary without asking the genuine
+ * `valueOf`. Decided once, on first use.
+ */
+let recognisesMade: boolean | undefined;
+function recognisesChangedPrototypes(): boolean {
+  if (recognisesMade === undefined) {
+    const shapes: unknown[] = [];
+    try {
+      shapes.push(Object.setPrototypeOf(Object(1n), null), Object.setPrototypeOf(Object(1n), Object.prototype), Object.setPrototypeOf(Object(1n), {}));
+    } catch { shapes.push(undefined); } // a shape that cannot be made: nothing is taken on trust
+    const made = realm();
+    if (made !== null) shapes.push(...made.changed);
+    recognisesMade = shapes.every((shape) => types.isBigIntObject(shape));
+  }
+  return recognisesMade;
 }
 
 /** Whether an object's prototype chain reaches this realm's `Object.prototype`. No trap is run. */
@@ -105,20 +138,29 @@ function ofThisRealm(value: object): boolean {
 }
 
 /**
- * Whether a value is a boxed `bigint`, from any realm: `"unknown"` only when no genuine `valueOf`
- * can be made and the value is an object from another realm. `types.isBigIntObject` answers for a
- * box of this realm, and for one of another except on Bun 1.2.0, which the serialiser still
- * unboxes. So an object that is not plainly an ordinary one is asked directly with the genuine
- * `valueOf`, which reads the held value and throws for anything that holds none. Nothing of the
- * value's own is read to decide, no tag and no property, since the serialiser reads none either.
+ * Whether a value is a boxed `bigint`, from any realm and whatever its prototype: `"unknown"` only
+ * when no genuine `valueOf` can be made and the value cannot be told from a box. On some runtimes
+ * `types.isBigIntObject` answers for every box. On Bun 1.2.0 it says no for a box from another
+ * realm and for a box whose prototype was changed, which the serialiser still unboxes. So an
+ * object that is not plainly an ordinary one, and on such a runtime every object but an array, is
+ * asked directly with the genuine `valueOf`, which reads the held value and throws for anything
+ * that holds none. Nothing of the value's own is read to decide, no tag and no property, since the
+ * serialiser reads none either.
+ *
+ * With no realm, an object is taken as not a box only where that is certain without one: where
+ * `types.isBigIntObject` recognises a box with a changed prototype, an object whose prototype is
+ * `Object.prototype` or `null`, or whose chain reaches this realm's `Object.prototype`. Anything
+ * else is `"unknown"` and refused. On Bun 1.2.0 that is every object but an array.
  */
 function boxKind(value: unknown): "box" | "other" | "unknown" {
   if (types.isBigIntObject(value)) return "box";
   if (value === null || typeof value !== "object" || Array.isArray(value) || types.isProxy(value)) return "other";
   const proto: unknown = Object.getPrototypeOf(value);
-  if (proto === Object.prototype || proto === null) return "other"; // an ordinary object of this realm: the common case, decided without a realm or a throw
+  const recognised = recognisesChangedPrototypes();
+  // An ordinary object: the common case, decided without a throw where the runtime can be trusted to.
+  if (recognised && (proto === Object.prototype || proto === null)) return "other";
   const read = genuine();
-  if (read === null) return ofThisRealm(value) ? "other" : "unknown";
+  if (read === null) return recognised && ofThisRealm(value) ? "other" : "unknown";
   try { read.call(value); return "box"; } catch { return "other"; }
 }
 
@@ -129,7 +171,7 @@ export function isBoxedBigInt(value: unknown): boolean {
 
 const UNREADABLE_BOX = "a boxed bigint could not be read: BigInt.prototype.valueOf was replaced before this package was loaded, and the replacement does not behave as the original";
 const DISAGREEING_BOX = "a boxed bigint could not be read: BigInt.prototype.valueOf was replaced before this package was loaded, and the replacement does not agree with the original for this value";
-const NO_REALM = "a boxed bigint, or an object from another realm, could not be written: no genuine BigInt.prototype.valueOf could be made in a new node:vm realm to recognise or read a box";
+const NO_REALM = "a boxed bigint, or an object that cannot be told from one, could not be written: no genuine BigInt.prototype.valueOf could be made in a new node:vm realm to recognise or read a box";
 
 /**
  * A box's value as the genuine `valueOf` reads it, or the reason it is refused. Refused when the

@@ -4,7 +4,7 @@
 // process, and the head records where. The envelope and the writer's own identifiers are never
 // scrubbed: the writer refuses, at startup, to choose a run id or receipt path that carries a
 // secret (location.ts, tool.ts), so there is nothing in them to replace.
-import { plain } from "./exact.ts";
+import { exactText, plain } from "./exact.ts";
 
 export const REDACTED = "[redacted]";
 
@@ -160,4 +160,66 @@ export function scrubPlain(value: unknown, values: ReadonlySet<string>, pointer 
     return out;
   }
   return value;
+}
+
+const own = (o: object, k: string): boolean => Object.prototype.hasOwnProperty.call(o, k);
+const isLeaf = (v: unknown): boolean => v === null || typeof v !== "object";
+
+/** The base search, over material that is wholly the transform's: every value and key as the scrub looks, and the JSON text as written, structure included. */
+function addedCarries(value: unknown, text: string, values: ReadonlySet<string>): boolean {
+  const found: string[] = [];
+  scrubPlain(value, values, "", found);
+  return found.length > 0 || carriesSecret(text, values);
+}
+
+/**
+ * Whether a history transform's `body` carries a declared value in what it changed or added,
+ * against `line`, the receipt line's body it was handed, read before the transform ran (spec
+ * §5.3, §8; flyingrobots/parley#186, flyingrobots/parley#164, and the Baker Street review of
+ * flyingrobots/parley#199). Both are plain data with no envelope.
+ *
+ * The two are walked together by real path: object members by name, array elements by index.
+ *
+ * - A leaf (a string, number, boolean or null) is **unchanged** when the line has a leaf at the
+ *   same path with the same JSON text. Unchanged material is the line's own, which the stream
+ *   gets verbatim when no transform is configured, so it is never searched: a field name or a
+ *   writer scalar equal to a secret, a `[redacted]`, or digits that happen to hold one.
+ * - Anything else is changed. A changed leaf is searched as itself and as its JSON text (quotes
+ *   and escapes included). A member whose name the line's object at that path does not have, an
+ *   array element past the line's length, and a value whose kind differs from the line's (an
+ *   object where the line had a leaf) is added, and is searched whole: its name, every value and
+ *   key under it, and its JSON text, structure included.
+ *
+ * So a place that held a declared value may hold only that value afterwards, and no occurrence
+ * elsewhere in the line can cover a new one. The search is the writer's own: every declared
+ * value, each in every spelling `collectSecretValues` recognises (JSON-escaped included), as a
+ * substring of a string or key, and a number or other scalar by its text. A declared value that
+ * spans JSON structure is matched only within changed or added material: one that runs across a
+ * changed leaf and the unchanged text beside it is not found.
+ */
+export function changedCarriesSecret(body: unknown, line: unknown, values: ReadonlySet<string>): boolean {
+  if (values.size === 0) return false;
+  return changed(body, line, values);
+}
+
+function changed(value: unknown, was: unknown, values: ReadonlySet<string>): boolean {
+  if (isLeaf(value)) {
+    const text = exactText(value);
+    if (isLeaf(was) && text === exactText(was)) return false;
+    return (typeof value === "string" && carriesSecret(value, values)) || carriesSecret(text, values);
+  }
+  if (isLeaf(was) || Array.isArray(value) !== Array.isArray(was)) return addedCarries(value, exactText(value), values);
+  if (Array.isArray(value)) {
+    const prior = was as unknown[];
+    for (let i = 0; i < value.length; i++) {
+      if (i >= prior.length ? addedCarries(value[i], exactText(value[i]), values) : changed(value[i], prior[i], values)) return true;
+    }
+    return false;
+  }
+  const prior = was as Record<string, unknown>;
+  for (const k of Object.keys(value as object)) {
+    const v = (value as Record<string, unknown>)[k];
+    if (own(prior, k) ? changed(v, prior[k], values) : carriesSecret(k, values) || addedCarries(v, `${exactText(k)}:${exactText(v)}`, values)) return true;
+  }
+  return false;
 }

@@ -230,9 +230,9 @@ that is not finite, which is now refused.
   replaced" a value it had not. The guard now compares each member of the body with the receipt
   line's member at the same place: object members by name, array elements by index. A leaf with
   the same JSON text as the line's leaf at that place, and a member name the line's object there
-  also has, is unchanged: the line's own. The line's whole JSON text as it would be written, envelope included, is still searched, as
-  before, for every declared value in every spelling the writer recognises (JSON-escaped
-  included), structure included; an occurrence is excused only when it lies wholly inside the
+  also has, is unchanged: the line's own. The whole JSON text of the line as it would be written is searched for every declared value in every spelling the writer recognises (JSON-escaped
+  included), structure included, and now the envelope too: before, only the body's text was searched, so
+  a value running from the body into the envelope beside it (`x","_schema`) was missed. An occurrence is excused only when it lies wholly inside the
   text of one unchanged leaf or member name. So a place that held a declared value may hold only
   that value afterwards, and no occurrence elsewhere in the line covers a new one. Any other
   occurrence withholds the line: in a changed or added leaf, member or element; across several of
@@ -241,7 +241,8 @@ that is not finite, which is now refused.
   Changed strings, added member names and added subtrees are also searched as the scrub looks, by
   their raw values and keys. A declared value holding JSON punctuation (`","`) that spans
   structure in the receipt line itself is not inside one leaf or name, so that line is withheld
-  even by an identity transform, as it was before. A value moved to another place is withheld. An array element that
+  even by an identity transform: as before for a span within the body, and now also for one
+  that runs from the body into the envelope. A value moved to another place is withheld. An array element that
   an earlier element's removal shifted to another index counts as changed, so it is withheld when
   it carries a declared value, the line's own included (flyingrobots/parley#205). The warning says
   the body carries a declared value outside the leaves and member names the transform left as the

@@ -34,25 +34,117 @@
 // of two million digits is counted, not converted.
 
 import { types } from "node:util";
+import { runInNewContext } from "node:vm";
 
-// Taken when this module loads, so a `valueOf` the process later puts on `BigInt.prototype` is
-// not what opens a boxed bigint. A primitive's digits are taken with `String`, which asks no
-// method of the prototype at all.
-const bigValueOf = BigInt.prototype.valueOf;
+// Boxed bigints (flyingrobots/parley#190, and rounds 1 to 3 of the review of PR #196).
+//
+// A box (`Object(5n)`) is read and recognised only with a **genuine** `BigInt.prototype.valueOf`:
+// the one of a realm this module makes with `node:vm` for the purpose, which nothing in the
+// process can have replaced. What is written for a box is always what that method reads. The
+// process's own `valueOf` (the one on `BigInt.prototype` when this module loads) never decides
+// what is written and never decides what is a box. It is asked only to decide whether to refuse a
+// box: it is checked once at load, and when it passed it is asked once more for each box read,
+// and the box is refused when it disagrees with the genuine reading. So a replacement installed
+// before the writer loaded can make a box be refused, never be written as something else, and it
+// changes nothing for any other object. A primitive's digits are taken with `String`, which asks
+// no method of the prototype at all.
+
+/** The process's own `valueOf`, taken when this module loads; a later replacement is never asked. */
+const loadedValueOf: unknown = BigInt.prototype.valueOf;
 
 /**
- * Whether a value is a boxed `bigint`, from any realm. `types.isBigIntObject` answers it, except
- * that Bun 1.2.0 says no for a box made in another realm (a `vm` context), which the serialiser
- * still unboxes. So an object that is not plainly an ordinary one is asked directly: `valueOf`
- * reads the held value and throws for anything that holds none. Nothing of the value's own is
- * read to decide, no tag and no property, since the serialiser reads none either.
+ * Whether a method behaves as the real `BigInt.prototype.valueOf` on two values whose answers are
+ * known: a box holding `1n` answers `1n`, and a `Date`, which holds no bigint, throws. The method
+ * is called, and what it answers is compared, never used. The two values are made before the
+ * method is called and apart from it: when one cannot be made (a `Date` that throws when
+ * constructed), nothing is trusted, so a throw while making it is never taken for the method's own
+ * (review round 2, F-9).
  */
-export function isBoxedBigInt(value: unknown): boolean {
-  if (types.isBigIntObject(value)) return true;
-  if (value === null || typeof value !== "object" || Array.isArray(value) || types.isProxy(value)) return false;
+function behavesAsValueOf(method: unknown): method is (this: unknown) => bigint {
+  if (typeof method !== "function") return false;
+  let one: object, date: object;
+  try { one = Object(1n) as object; date = new Date(0); } catch { return false; }
+  try { if (method.call(one) !== 1n) return false; } catch { return false; }
+  try { method.call(date); } catch { return true; }
+  return false;
+}
+
+/**
+ * Whether the process's own `valueOf` passed the load check. It fails only when the process
+ * replaced `valueOf` before this module loaded with one that does not behave as the original. A
+ * wrapper that calls the original passes. When it fails, that method is never asked again and
+ * every box is refused; when it passes, it is asked once for each box read, to cross-check it.
+ */
+const loadedPassed = behavesAsValueOf(loadedValueOf);
+
+/**
+ * The genuine `valueOf`: a fresh realm's, unreachable by anything the process installed, and
+ * checked as the loaded one is. It reads a box of any realm exactly and throws for anything else.
+ * Made on first use, so a tool that writes no object but plain ones and arrays never makes a
+ * realm; `null` when no realm can be made or its method fails the check, and then the writer fails
+ * closed (`boxKind`, `readBox`).
+ */
+let genuineMade: ((this: unknown) => bigint) | null | undefined;
+function genuine(): ((this: unknown) => bigint) | null {
+  if (genuineMade === undefined) {
+    try {
+      const fresh: unknown = runInNewContext("BigInt.prototype.valueOf");
+      genuineMade = behavesAsValueOf(fresh) ? fresh : null;
+    } catch { genuineMade = null; }
+  }
+  return genuineMade;
+}
+
+/** Whether an object's prototype chain reaches this realm's `Object.prototype`. No trap is run. */
+function ofThisRealm(value: object): boolean {
+  for (let proto: unknown = Object.getPrototypeOf(value); proto !== null; proto = Object.getPrototypeOf(proto)) {
+    if (proto === Object.prototype) return true;
+    if (types.isProxy(proto)) return false;
+  }
+  return false;
+}
+
+/**
+ * Whether a value is a boxed `bigint`, from any realm: `"unknown"` only when no genuine `valueOf`
+ * can be made and the value is an object from another realm. `types.isBigIntObject` answers for a
+ * box of this realm, and for one of another except on Bun 1.2.0, which the serialiser still
+ * unboxes. So an object that is not plainly an ordinary one is asked directly with the genuine
+ * `valueOf`, which reads the held value and throws for anything that holds none. Nothing of the
+ * value's own is read to decide, no tag and no property, since the serialiser reads none either.
+ */
+function boxKind(value: unknown): "box" | "other" | "unknown" {
+  if (types.isBigIntObject(value)) return "box";
+  if (value === null || typeof value !== "object" || Array.isArray(value) || types.isProxy(value)) return "other";
   const proto: unknown = Object.getPrototypeOf(value);
-  if (proto === Object.prototype || proto === null) return false; // an ordinary object of this realm: the common case, decided without a throw
-  try { bigValueOf.call(value); return true; } catch { return false; }
+  if (proto === Object.prototype || proto === null) return "other"; // an ordinary object of this realm: the common case, decided without a realm or a throw
+  const read = genuine();
+  if (read === null) return ofThisRealm(value) ? "other" : "unknown";
+  try { read.call(value); return "box"; } catch { return "other"; }
+}
+
+/** Whether a value is a boxed `bigint`, from any realm (`boxKind`). */
+export function isBoxedBigInt(value: unknown): boolean {
+  return boxKind(value) === "box";
+}
+
+const UNREADABLE_BOX = "a boxed bigint could not be read: BigInt.prototype.valueOf was replaced before this package was loaded, and the replacement does not behave as the original";
+const DISAGREEING_BOX = "a boxed bigint could not be read: BigInt.prototype.valueOf was replaced before this package was loaded, and the replacement does not agree with the original for this value";
+const NO_REALM = "a boxed bigint, or an object from another realm, could not be written: no genuine BigInt.prototype.valueOf could be made in a new node:vm realm to recognise or read a box";
+
+/**
+ * A box's value as the genuine `valueOf` reads it, or the reason it is refused. Refused when the
+ * process's `valueOf` failed the load check (it is not asked), when no genuine `valueOf` can be
+ * made, or when the process's `valueOf` throws for this box or answers anything but what the
+ * genuine one read, a value of another type included.
+ */
+function readBox(box: object): bigint | string {
+  if (!loadedPassed) return UNREADABLE_BOX;
+  const read = genuine();
+  if (read === null) return NO_REALM;
+  const held = read.call(box); // the genuine method reads every box `boxKind` found
+  let loaded: unknown;
+  try { loaded = (loadedValueOf as (this: unknown) => unknown).call(box); } catch { return DISAGREEING_BOX; }
+  return loaded === held ? held : DISAGREEING_BOX;
 }
 
 /** The most decimal digits an integer may have and still be held exactly; `1e400` has 401. */
@@ -324,22 +416,45 @@ export function unwritablePlain(value: unknown): "integer" | "number" | undefine
  * new, with ordinary prototypes, and a member named `__proto__` is data.
  */
 export function plain(value: unknown, key = ""): unknown {
-  return snapshot(value, key, false, []);
+  return snapshot(value, key, false, [], false);
 }
 
-function snapshot(value: unknown, key: string, hooked: boolean, inside: object[]): unknown {
+/**
+ * `exactJson`, for text that only describes a value (captured console output): a box or an object
+ * `plain` refuses is written as a string naming why, `"[unwritable: a boxed bigint could not be
+ * read]"`, where `plain` would throw, so the rest of the value is still its JSON.
+ */
+export function describingJson(value: unknown): string {
+  return exactText(snapshot(value, "", false, [], true));
+}
+
+/** What stands for a refused value in `describingJson`: the reason's head, before its colon. */
+function refuse(reason: string, mark: boolean): string {
+  if (mark) return `[unwritable: ${reason.slice(0, reason.indexOf(":"))}]`;
+  throw new TypeError(reason);
+}
+
+function snapshot(value: unknown, key: string, hooked: boolean, inside: object[], mark: boolean): unknown {
   if (typeof value === "bigint") return value;
   const isObject = value !== null && typeof value === "object";
   if (!isObject && typeof value !== "function") return typeof value === "symbol" ? undefined : value;
-  const boxedBig = isObject && isBoxedBigInt(value);
+  const kind = isObject ? boxKind(value) : "other";
+  // An object from another realm when no genuine `valueOf` can be made: it may be a box, which has
+  // its own rules, so nothing of it is read (review round 2, F-12).
+  if (kind === "unknown") return refuse(NO_REALM, mark);
+  const boxedBig = kind === "box";
   if (!hooked) {
     // On a boxed bigint only a hook of its own counts: the one it would inherit is
     // `BigInt.prototype`'s, which is never asked.
     const json = !boxedBig || Object.prototype.hasOwnProperty.call(value, "toJSON") ? (value as { toJSON?: unknown }).toJSON : undefined;
-    if (typeof json === "function") return snapshot((json as (key: string) => unknown).call(value, key), key, true, inside);
+    if (typeof json === "function") return snapshot((json as (key: string) => unknown).call(value, key), key, true, inside, mark);
   }
   if (typeof value === "function") return undefined;
-  if (boxedBig) return bigValueOf.call(value);
+  if (boxedBig) {
+    // Written only as the genuine `valueOf` reads it, or refused before anything is written.
+    const held = readBox(value as object);
+    return typeof held === "bigint" ? held : refuse(held, mark);
+  }
   if (types.isNumberObject(value)) return Number(value);
   if (types.isStringObject(value)) return String(value);
   if (types.isBooleanObject(value)) return Boolean.prototype.valueOf.call(value);
@@ -351,12 +466,12 @@ function snapshot(value: unknown, key: string, hooked: boolean, inside: object[]
     // To the length it has now, as `JSON.stringify` reads it: an element that grows the array
     // while it is read adds nothing to what is written.
     const items: unknown[] = [], length = obj.length;
-    for (let i = 0; i < length; i++) items.push(snapshot(obj[i], String(i), false, inside));
+    for (let i = 0; i < length; i++) items.push(snapshot(obj[i], String(i), false, inside, mark));
     out = items;
   } else {
     const members: Record<string, unknown> = {};
     for (const k of Object.keys(obj)) {
-      const member = snapshot((obj as Record<string, unknown>)[k], k, false, inside);
+      const member = snapshot((obj as Record<string, unknown>)[k], k, false, inside, mark);
       if (member === undefined) continue;
       // Defined, never assigned: a member named `__proto__` is data here.
       Object.defineProperty(members, k, { value: member, enumerable: true, writable: true, configurable: true });

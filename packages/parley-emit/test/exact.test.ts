@@ -1439,3 +1439,131 @@ describe("PE-39 nothing a tool is handed, or hands over in parts, changes what w
     expect(of(narrowed.stream, "result")[0]).toContain(`"note":"[redacted]"`);
   });
 });
+
+// PE-39b: a `valueOf` on `BigInt.prototype` replaced before the writer loads (flyingrobots/parley#190,
+// the review of PR #196). The fixture runs as its own process, with `process.execPath`, so it runs on
+// the Bun the suite runs on, Bun 1.2.0 in the `oldest-bun` job. Its oracle is the contract, written
+// here: what a writer with no replacement writes for each value.
+describe("PE-39b a valueOf replaced before the writer loads is checked once, and is never what reads a box or classifies another object (flyingrobots/parley#190)", () => {
+  interface Sinks { status: number; stdout: string[]; stderr: string[]; receipt: string[]; stream: string[] }
+  interface Seen { mode: string; exact: Record<string, string>; threw: Record<string, string>; results: Sinks; resolvedDate: Sinks; resolvedBox: Sinks; logged: Sinks }
+  const ISO = `"1970-01-01T00:00:00.000Z"`;
+  const PAST_64 = "1180591620717411303427"; // 2n ** 70n + 3n
+  /** Each value as a writer with no replacement writes it: the fixture's `none` mode, stated independently. */
+  const CONTROL: Record<string, string> = {
+    box: "5", foreignBox: "5", bigBox: PAST_64, foreignBigBox: `-${PAST_64}`, primitive: BIG_TEXT, date: ISO, url: `"https://example.com/a?b=1"`, map: "{}", regexp: "{}", error: "{}",
+    instance: `{"x":1,"y":2}`, number: "42", string: `"s"`, foreignPlain: `{"a":1}`, foreignDate: ISO,
+  };
+  const BOXES = ["box", "foreignBox", "bigBox", "foreignBigBox"];
+  const REFUSAL = "TypeError: a boxed bigint could not be read: BigInt.prototype.valueOf was replaced before this package was loaded, and the replacement does not behave as the original";
+  const DISAGREES = "TypeError: a boxed bigint could not be read: BigInt.prototype.valueOf was replaced before this package was loaded, and the replacement does not agree with the original for this value";
+  const NO_REALM = "TypeError: a boxed bigint, or an object from another realm, could not be written: no genuine BigInt.prototype.valueOf could be made in a new node:vm realm to recognise or read a box";
+  /** What captured console text holds in place of a value the writer refused: the reason's head. */
+  const marked = (refusal: string) => JSON.stringify(`[unwritable: ${refusal.slice("TypeError: ".length, refusal.indexOf(":", "TypeError: ".length))}]`);
+  const refusedAll = (reason: string, names = BOXES) => Object.fromEntries(names.map((name) => [name, reason]));
+
+  async function seen(mode: string): Promise<Seen> {
+    const proc = Bun.spawn([process.execPath, join(import.meta.dir, "fixtures/valueof-before-load.ts"), mode], { stdout: "pipe", stderr: "pipe" });
+    const [out, err] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+    expect(err).toBe("");
+    expect(await proc.exited).toBe(0);
+    return JSON.parse(out) as Seen; // every value in it is a string: the sinks' lines are carried as text
+  }
+  /** The result lines of one sink, as `name` and the text of `value`, in the order written. */
+  const written = (lines: string[]) => of(lines, "result").map((l) => [(JSON.parse(l) as { name: string }).name, valueText(l)]);
+  const seqs = (lines: string[]) => lines.map((l) => Number(/"seq":(\d+),/.exec(l)![1]));
+
+  /** Every value is written as with no replacement, the same on every sink, with no `seq` skipped. */
+  function writesAsControl(s: Seen, refused: string[]) {
+    const expected = Object.entries(CONTROL).filter(([name]) => !refused.includes(name));
+    expect(s.results.status).toBe(0);
+    expect(s.results.stderr).toEqual([]);
+    for (const sink of [s.results.stdout, s.results.receipt, s.results.stream]) expect(written(sink)).toEqual(expected);
+    expect(of(s.results.stdout, "result")).toEqual(of(s.results.receipt, "result"));
+    // The receipt's seqs run on from the head with no gap: a refusal took none.
+    expect(seqs(s.results.receipt)).toEqual(s.results.receipt.map((_, i) => i + 1));
+    for (const [name, text] of expected) expect(s.exact[name]).toBe(`{"v":${text}}`);
+    // `resolved` holding a Date and a class instance is written as they are: in the receipt's head,
+    // in the stream's copy of it, and as the `inv` of stdout's run line.
+    expect(s.resolvedDate.status).toBe(0);
+    expect(s.resolvedDate.receipt[0]).toContain(`"resolved":{"command":"count","when":${ISO},"at":{"x":1,"y":2}}`);
+    expect(of(s.resolvedDate.stream, "receipt.head")).toEqual([s.resolvedDate.receipt[0]!]);
+    const inv = (line: string) => /"inv":"([0-9a-f]{64})"/.exec(line)![1];
+    expect(of(s.resolvedDate.stdout, "run").map(inv)).toEqual([inv(s.resolvedDate.receipt[0]!)]);
+  }
+
+  /**
+   * The values named in `refused` are refused, each with its reason, from `run.result` and from
+   * `exactJson`, and are on no sink; every other value is written as the control. A `resolved`
+   * holding a box is refused for the box's reason, or written as `5` when the box is read.
+   */
+  function refuses(s: Seen, refused: Record<string, string>) {
+    expect(s.threw).toEqual(refused);
+    for (const [name, reason] of Object.entries(refused)) expect(s.exact[name]).toBe(`threw ${reason}`);
+    writesAsControl(s, Object.keys(refused));
+    for (const sink of [s.results.stdout, s.results.receipt, s.results.stream]) {
+      for (const line of sink) for (const name of Object.keys(refused)) expect(line).not.toContain(`"name":"${name}"`);
+      expect(sink.join("\n")).not.toContain("call-");
+    }
+    const boxReason = refused["box"];
+    if (boxReason === undefined) {
+      expect(s.resolvedBox.status).toBe(0);
+      expect(s.resolvedBox.receipt[0]).toContain(`"resolved":{"command":"count","id":5}`);
+    } else {
+      // `resolved` holding a box is a startup failure that says why, with nothing on any sink.
+      expect(s.resolvedBox.status).toBe(3);
+      expect(s.resolvedBox.stdout).toEqual([]);
+      expect(s.resolvedBox.receipt).toEqual([]);
+      expect(s.resolvedBox.stream).toEqual([]);
+      expect(s.resolvedBox.stderr).toHaveLength(1);
+      expect(s.resolvedBox.stderr[0]).toContain(`"code":"startup.arguments_invalid"`);
+      expect(s.resolvedBox.stderr[0]).toContain(boxReason.slice("TypeError: ".length));
+    }
+    // Console output of an object holding boxes is kept as that object's JSON, with each box the
+    // writer refused marked where it was: never `[object Object]`, never an integer it did not read.
+    const text = (name: string, value: string) => refused[name] === undefined ? value : marked(refused[name]);
+    const logged = `row {"id":${text("box", "5")},"big":${text("bigBox", PAST_64)},"when":${ISO}}`;
+    expect(s.logged.status).toBe(0);
+    expect(of(s.logged.receipt, "receipt.step").filter((l) => l.includes("captured console output")).map((l) => (JSON.parse(l) as { detail: { text: string } }).detail.text)).toEqual([logged]);
+  }
+
+  test("control: with no replacement, and with one that calls the original, every value is written as it is, a box as its digits", async () => {
+    for (const mode of ["none", "delegate"]) {
+      const s = await seen(mode);
+      expect(s.mode).toBe(mode);
+      refuses(s, {});
+    }
+  });
+
+  test.each([
+    ["hooked", "answers with an object holding a toJSON hook (the issue's)"],
+    ["str", "answers with a string"],
+    ["constbig", "answers with 7n for anything"],
+    ["onebig", "answers with 1n for anything, right for a box holding 1n"],
+    ["throws", "throws a RangeError for anything"],
+    ["datethrows", "answers with 1n for anything while a Date cannot be made when the writer loads (review round 2, F-9)"],
+  ])("valueOf replaced by %s, one that %s: a boxed bigint, of this realm or another, is refused with a TypeError naming the reason before a seq is taken and is on no sink; every other object is written as with no replacement, never refused, never an integer", async (mode) => {
+    refuses(await seen(mode), refusedAll(REFUSAL));
+  });
+
+  // Review round 2, F-6 and F-8: each of these answers `1n` for a box holding `1n` and throws for a
+  // `Date`, so it passes the load check, and is wrong elsewhere. What is written always comes from a
+  // genuine `valueOf`; the replacement is asked once per box only to decide whether to refuse it.
+  test.each([
+    ["square", "answers the held value's square", refusedAll(DISAGREES)],
+    ["asint64", "truncates the held value to 64 bits, right for a box that fits", refusedAll(DISAGREES, ["bigBox", "foreignBigBox"])],
+    ["dateaware", "throws for a Date and answers 1n for anything else", refusedAll(DISAGREES)],
+    ["liarstr", "reads a box rightly, throws for a Date and answers a string for any other object", {}],
+    ["later7", "is faithful while the writer loads and then answers 7n", refusedAll(DISAGREES)],
+    ["laterthrows", "is faithful while the writer loads and then throws a RangeError", refusedAll(DISAGREES)],
+    ["laterstr", "is faithful while the writer loads and then answers a box's digits as a string, not a bigint", refusedAll(DISAGREES)],
+  ])("valueOf replaced by %s, one that passes the load check and %s: a box is written only as a genuine valueOf reads it, and refused where the replacement disagrees; every other object is written as with no replacement", async (mode, _what, refused) => {
+    refuses(await seen(mode), refused);
+  });
+
+  // Review round 2, F-12: when no realm can be made, nothing is read or written that only a genuine
+  // `valueOf` could recognise or read. Objects of this realm are written as the control.
+  test("when node:vm cannot make a realm, a box of any realm and an object from another realm are refused with a TypeError naming the reason, never written as {}; every object of this realm is written as with no replacement", async () => {
+    refuses(await seen("novm"), refusedAll(NO_REALM, [...BOXES, "foreignPlain", "foreignDate"]));
+  });
+});

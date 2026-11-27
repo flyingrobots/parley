@@ -4,7 +4,7 @@ import { closeSync, openSync, readSync, readdirSync, rmSync, statSync, unlinkSyn
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { historyBookkeeping, historyDays, historyProjection, isHistoryFailure, isHistorySink, openHistory, resolveHistory, retainHistory, type HistoryConfig, type HistoryPlan, type HistoryProjection, type HistorySink } from "./history.ts";
-import { exactJson, plain, unwritableClause, unwritablePlain } from "./exact.ts";
+import { describingJson, plain, unwritableClause, unwritablePlain } from "./exact.ts";
 import { computeInvPlain, type InputDecl } from "./inv.ts";
 import { bookkeepingFor, chooseLocation, isLocationFailure, type Bookkeeping } from "./location.ts";
 import { carriesSecret, classifySecrets, collectSecretValues, redactArgv, scrub, scrubPlain } from "./redact.ts";
@@ -526,11 +526,14 @@ function captureConsole(): { attach: (run: Run) => void; release: () => void } {
   };
 }
 
-/** A console argument as text: its JSON where it has one, a `bigint` inside it as exact digits, and never a throw. */
+/**
+ * A console argument as text: its JSON where it has one, a `bigint` inside it as exact digits, a
+ * box the writer refuses marked with why where it was, and never a throw.
+ */
 function safeJson(x: unknown): string {
   // A number or a bigint is its own text, as the console prints it: `NaN`, not `null`.
   if (x === undefined || typeof x === "function" || typeof x === "symbol" || typeof x === "number" || typeof x === "bigint") return String(x);
-  try { return exactJson(x); } catch { return String(x); }
+  try { return describingJson(x); } catch { return String(x); }
 }
 
 export type { Bookkeeping };

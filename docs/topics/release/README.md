@@ -40,6 +40,6 @@ with a baseline and refuses a package that carries a draft:
 ## A package depends on a package here by range
 
 `@flyingrobots/parley-read` depends on `@flyingrobots/parley-emit` by a caret range that admits the
-version in the repository (`^0.4.0 || ^0.5.0`), so Bun links the workspace copy inside the repository and an
+version in the repository (`^0.5.0`), so Bun links the workspace copy inside the repository and an
 installer outside it resolves the published one. A `workspace:` range would be published verbatim
 by npm and resolve nowhere. The dependency is published first.

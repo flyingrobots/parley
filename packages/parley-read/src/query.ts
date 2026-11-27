@@ -47,9 +47,9 @@
 // a refusal: a refusal is pure and pre-load, about a question nobody could state; a decline is a
 // verdict about real history, and only a read that ran can give one.
 import { resolve } from "node:path";
-import { defineTool, main, type Run, type Sink } from "@flyingrobots/parley-emit";
+import { defineTool, main, parseExact, type Run, type Sink } from "@flyingrobots/parley-emit";
 import { LENS_SCHEMA, digestFor, sufficientBytes, type Digest } from "./digest.ts";
-import { loadReceipts, type Load, type LoadOptions, type LoadedRecord } from "./load.ts";
+import { NUMBER_UNREPRESENTABLE, heldBackRuns, loadReceipts, type Load, type LoadOptions, type LoadedRecord } from "./load.ts";
 import { repoReceiptDir, stateReceiptDir } from "./locate.ts";
 import { rankRecords, type Ranking } from "./rank.ts";
 import { SCHEMAS } from "./schemas.ts";
@@ -220,6 +220,12 @@ export interface QueryAnswer {
     readonly undated: number;
     /** The read's own records, which a read does not answer itself with. */
     readonly own: number;
+    /**
+     * Lines the load held back because they hold a number this reader cannot represent exactly
+     * (`line.number_unrepresentable`, flyingrobots/parley#159). They are in no other count: such a
+     * line is not a record, its bytes are in `load.quarantined`, and its run is never folded.
+     */
+    readonly unrepresentable: number;
   };
   /** The whole load behind the answer, so a caller sees the defects and quarantines too. */
   readonly load: Load;
@@ -231,6 +237,9 @@ export interface QueryAnswer {
 
 /** The phase a deadline check follows. `open` is the drill-down's, after the ids are resolved. */
 export type BudgetPhase = "load" | "rank" | "digest" | "open";
+
+/** The code of the warning a read reports when the load held lines back for a number it cannot represent (flyingrobots/parley#159). */
+export const UNREPRESENTABLE_WARNING = "read.number_unrepresentable" as const;
 
 /** The one code a read declines with. Its `measured` and `limit` are the bound that declined. */
 export const OVER_BUDGET = "query.over_budget" as const;
@@ -386,7 +395,7 @@ export interface QueryOptions extends LoadOptions {
 }
 
 /** The reading program's default identity; the drill-down (`open.ts`) records under the same one. */
-export const READER = { name: "parley-read", version: "0.2.0" } as const;
+export const READER = { name: "parley-read", version: "0.3.0" } as const;
 
 /** Collects the read's own lines and forwards them to a caller's sink when there is one. */
 export class Tee implements Sink {
@@ -649,6 +658,21 @@ export async function queryReceipts(request: QueryRequest, opts: QueryOptions = 
       return;
     }
 
+    // A line the reader could not hold is said, not passed over (flyingrobots/parley#159): the
+    // lens has no field for it, so the read warns on its own run, before the ranking step so the
+    // digest's seq below is still the one counted from that step.
+    const heldBack = heldBackRuns(load);
+    const unrepresentable = load.quarantined.filter((q) => q.code === NUMBER_UNREPRESENTABLE).length;
+    if (unrepresentable > 0) {
+      const named = [...heldBack].sort();
+      run.warning({
+        code: UNREPRESENTABLE_WARNING,
+        problem: `${unrepresentable} line(s) of ${named.length} run(s) hold a number this reader cannot represent exactly; each is kept verbatim, is not among the records of this answer, and its run is never folded`,
+        remedy: `read the lines verbatim from the receipts: a load keeps each one's bytes, file and line number as a ${NUMBER_UNREPRESENTABLE} defect`,
+        detail: { lines: unrepresentable, runs: named.slice(0, 20), runs_total: named.length },
+      });
+    }
+
     const all = load.bundles.flatMap((b) => b.records);
     const own = all.filter((r) => r.run === run.id);
     const others = all.filter((r) => r.run !== run.id);
@@ -693,6 +717,7 @@ export async function queryReceipts(request: QueryRequest, opts: QueryOptions = 
       envelope,
       // Each entry's outcome is the whole window's verdict on its run, not the prefix's.
       ranking.outcomes,
+      heldBack,
     );
     const records = digested.records;
     const named = new Set(records);
@@ -760,6 +785,7 @@ export async function queryReceipts(request: QueryRequest, opts: QueryOptions = 
         folded: digested.folded,
         undated: undated.length,
         own: own.length,
+        unrepresentable,
       },
       load,
     };
@@ -786,7 +812,8 @@ export async function queryReceipts(request: QueryRequest, opts: QueryOptions = 
   });
 
   const lines = stdout.lines
-    .map((l) => { try { return JSON.parse(l) as Record<string, unknown>; } catch { return null; } })
+    // Parsed as the loader parses a receipt line, so a `bigint` the read wrote comes back as one.
+    .map((l) => { try { const parsed = parseExact(l); return parsed.ok ? parsed.value as Record<string, unknown> : null; } catch { return null; } })
     .filter((l): l is Record<string, unknown> => l !== null);
 
   if (!answer) {

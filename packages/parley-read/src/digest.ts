@@ -67,6 +67,13 @@
 // argument reads as a different argument. The run's id, outcome, reason and head statement are
 // never dropped: without them the section does not say which run it is or what became of it.
 //
+// **A section is measured by the text that is written** (flyingrobots/parley#159,
+// flyingrobots/parley#171). The loader holds an integer beyond the safe range as a `bigint`, and
+// the writer writes one as its exact digits, so a `resolved` that holds one is carried like any
+// other: whole, exact, and dropped only when the section is too large. Every size here is taken
+// from `exactText`, which is the serialiser the writer uses, so the bound and the byte budget are
+// right for a line that holds such an integer.
+//
 // **Runs of one invocation with one result are named once** (flyingrobots/parley#79, `fold.ts`).
 // Before the bound is applied, runs are folded into their most recent run when their `inv` is
 // equal, what a section states about their result is equal (outcome, reason, `end` statuses,
@@ -79,6 +86,7 @@
 // so the count still accounts for every record not named, and `excluded − folded` is what the
 // budget cut. A read that states `fold: false` skips all of it: the lens echoes `fold`, and
 // `loss.folded` is 0.
+import { exactText } from "@flyingrobots/parley-emit";
 import { foldRuns, type RunFold } from "./fold.ts";
 import type { LoadedRecord } from "./load.ts";
 import type { AcceptedQuery, Asker, Budget, QueryWindow, View } from "./query.ts";
@@ -250,7 +258,7 @@ export function lensEntry(record: LoadedRecord): LensEntry {
  */
 const sectionBytes = (section: RunSection) => {
   const bounded = section.folded === undefined ? section : { ...section, folded: { others: section.folded.others, records: section.folded.records } };
-  return Buffer.byteLength(JSON.stringify(bounded), "utf8");
+  return Buffer.byteLength(exactText(bounded), "utf8");
 };
 
 /**
@@ -309,13 +317,13 @@ export function runSection(run: string, window: readonly LoadedRecord[], outcome
  * The line the writer will write for this digest, byte for byte.
  *
  * The writer builds a record as `{event, t, seq, run, ...payload, _schema}` and writes
- * `JSON.stringify(record) + "\n"` (spec §1.1, §1.3), and a read declares no secrets, so nothing
+ * `exactText(record) + "\n"` (spec §1.1, §1.3; `JSON.stringify`'s text when the record holds no `bigint`), and a read declares no secrets, so nothing
  * is scrubbed and the payload's own key order survives. Reconstructing it here is what lets a
  * byte budget be applied **before** the line is written rather than discovered after it.
  */
 export function digestLine(digest: Digest, envelope: LineEnvelope): string {
   const { event, ...rest } = digest;
-  return JSON.stringify({
+  return exactText({
     event,
     t: envelope.t,
     seq: envelope.seq,
@@ -390,7 +398,8 @@ export function sufficientBytes(query: AcceptedQuery, answers: RecordRef, total:
  * same order, and `excluded` is the rest of the window counted, the folded records included.
  * `outcomes` is the ranking's verdict per run over that whole window, and each run section carries
  * its run's; without it, no section carries an outcome or a reason. Each section is read off the
- * whole window too, so a head the bound cut from the entries still identifies its run.
+ * whole window too, so a head the bound cut from the entries still identifies its run. `heldBack`
+ * names the runs the loader held a line back from (`heldBackRuns`), which never fold.
  *
  * The byte search is a binary search over the prefix length, which is sound because the line only
  * grows as the prefix does: one more record adds its entry, at least its `(run, seq)` pair, and
@@ -403,10 +412,11 @@ export function digestFor(
   ranked: readonly LoadedRecord[],
   envelope: LineEnvelope,
   outcomes?: Readonly<Record<string, Outcome>>,
+  heldBack?: ReadonlySet<string>,
 ): Digested {
   // The fold depends on the window, its outcomes and the view, never on the budget. A read that
   // states `fold: false` is given every run (flyingrobots/parley#133).
-  const folding = query.fold === false ? foldRuns(ranked) : foldRuns(ranked, outcomes, query.view);
+  const folding = query.fold === false ? foldRuns(ranked) : foldRuns(ranked, outcomes, query.view, heldBack);
   const named = folding.records;
   // Built once, so every candidate prefix the byte search measures is cut from the same entries.
   const entries = named.map((record) => lensEntry(record));

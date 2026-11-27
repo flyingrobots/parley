@@ -5,13 +5,170 @@ on its own; the spec and each message schema move separately (spec §4.4).
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-11-24
+
+A breaking change to what a load returns: an integer beyond JavaScript's safe-integer range is a
+`bigint` (flyingrobots/parley#159). It emits and reads the same schema versions as 0.2.0. The
+date is the day the change was written, as the repository's checks require a dated heading for
+the version `package.json` names; the version is not tagged or published by this change.
+
 ### Changed
 
-- The dependency on `@flyingrobots/parley-emit` is `^0.4.0 || ^0.5.0`, widened from `^0.4.0`, so
-  the range admits the writer's version in the repository, 0.5.0, and Bun keeps linking the
-  workspace copy (flyingrobots/parley#171). No reader code changes, and the reader's suite passes
-  against the 0.5.0 writer. The reader does not yet use the writer's exact parser; that is
-  flyingrobots/parley#159.
+- **BREAKING: a value in a returned record can be a `bigint`** (flyingrobots/parley#159). A
+  caller receives one exactly when a receipt line, or a sidecar's contents, holds an
+  integer-valued JSON number outside JavaScript's safe-integer range, −9007199254740991 to
+  9007199254740991, at any depth and however it is spelt: `9007199254740992`,
+  `9007199254740993.0`, `9.007199254740993e15`, `1e400`. That is always a `bigint`, even where a
+  double could hold it, so neighbouring large ids never alternate types. An integer-valued number
+  inside the range (`9007199254740991`, `5.0`, `1e3`) and every non-integral number the reader
+  can hold are `number`s, and a string of digits stays a string. `ExactValue` is the type.
+
+  **A non-integral number the reader cannot hold is no longer returned at all**, which is
+  breaking too: its line is held back, its run does not fold and cannot be replayed from the
+  bundle (under Fixed below). `0.10000000000000001`, as C's `%.17g` prints 0.1, is one.
+
+  **`JSON.stringify` throws on a record that holds one.** Migrating a caller that serialises
+  records (illustrative):
+
+  ```ts
+  // 0.2.0
+  const text = JSON.stringify(loaded.record);
+  // 0.3.0
+  import { exactJson } from "@flyingrobots/parley-read";
+  const text = exactJson(loaded.record); // {"value":9007199254740993}: exact, unquoted digits
+  ```
+
+  `exactJson` is `JSON.stringify` byte for byte for a value that holds no `bigint`. A consumer
+  downstream that parses its text with an ordinary `JSON.parse` loses the precision again.
+  Arithmetic and comparison on such a value are `bigint` arithmetic: `typeof value === "bigint"`
+  is the test. `LoadedRecord.t` and `Bundle.status` stay `number | null` and are null for a value
+  beyond the range; the record itself holds it exactly.
+- **BREAKING: a record of a shipped schema that holds such an integer is validated with its
+  exact value**, never as the nearest double, which is what 0.2.0 validated. The parts of the
+  record that hold no `bigint` go to the schema validator unchanged; the path to the integer is
+  evaluated by the reader. One conclusive failure is `invalid`: an `end.status` of
+  `9007199254740993` is over the schema's `maximum`, and an unrelated `bigint` hides no ordinary
+  failure beside it. Every applicable constraint decided is `validated`. A constraint that could
+  not be decided (a `$ref`, a numeric `format`, a keyword the reader does not implement, a schema
+  constant itself beyond the safe range) leaves the record `partial` with
+  `why: "number_undecided"` and a `record.number_undecided` defect. The living reference lists
+  both sides exactly (RD-121, flyingrobots/parley#172).
+- **BREAKING: a line whose `seq` is beyond 9007199254740991 is rejected**, held back as below. In
+  0.2.0 it was placed at the nearest double's `seq`. A `t` beyond the range leaves the record
+  undated; an `end.status` beyond it is a status other than zero.
+- The dependency on `@flyingrobots/parley-emit` is `^0.5.0`. It was widened to
+  `^0.4.0 || ^0.5.0` on the way (flyingrobots/parley#171); the reader now takes its exact parser
+  and serialiser from the writer and writes a `bigint` through it, so it requires the writer that
+  has them.
+- A run section whose head's `resolved` holds such an integer **carries it**, whole and exact, on
+  the `parley.lens` line that is written. The section's size, the line and the byte budget are
+  measured on the text written (`exactJson`). `dropped` is unchanged in meaning: a `resolved` too
+  large for the section is left out and named, and nothing else is. In 0.2.0 the section stated
+  the nearest double. No schema's shape or version moves (RD-123).
+- `answer.lines` on a read and a drill-down are parsed exactly, so a `bigint` the read wrote
+  comes back as one.
+- A read whose load held a line back writes one more line, the `warning` below, before its
+  ranking step. A read over receipts that hold no such number writes exactly the lines it did.
+- `recordBytes` measures a record by `exactJson`'s text.
+- A load makes one more pass over each line's text. Two receipts of 200,002 lines were measured,
+  on one machine, and the figures are not a claim about receipts in general: the median of seven
+  loads was 24 to 31 ms higher on one whose results hold an exponent-form number and 7 to 93 ms
+  higher on one of integers and short decimals only, against medians of 216 to 295 ms before. The
+  workloads, the method and every figure are in the living reference.
+
+- **Erratum to the 0.2.0 entry below.** Under "Two runs whose results differ no longer fold" it
+  said results that differ only in an integer beyond 2^53 "still compare equal" and that such an
+  integer "is not returned exactly". That was broader than the behaviour: they compared equal
+  only when both parsed to one double, and an integer a double holds was returned exactly. The
+  sentence now says "can still compare equal" and "may not be returned exactly", and names the
+  range. A correction to the documentation of 0.2.0, not a change to what 0.2.0 does.
+
+### Fixed
+
+- **A returned record holds the integers its receipt holds** (flyingrobots/parley#159). Receipt
+  lines and sidecar contents were parsed by `JSON.parse`, which holds every number as a double, so
+  in 0.2.0 an integer outside −(2^53)+1 to (2^53)−1 might not be returned exactly
+  (`9007199254740993` came back as `9007199254740992`, `1e400` as `Infinity`), and two runs whose
+  results differed only in such integers could compare equal and fold, which they did whenever
+  both parsed to one double. The number was altered before validation, copy comparison, ranking
+  and folding saw it. Copies of one `(run, seq)`, the least-projected-copy rule and the fold now
+  compare by the exact value, so two different integers never compare equal and an integer equals
+  itself written another way (RD-120). This fixes integer precision; a non-integral number is
+  still a double.
+- **A number the reader cannot hold is never returned rounded.** A non-integral number is a
+  `number` only when its decimal value is the decimal value of that number's own JSON
+  serialisation, so `0.1`, `0.10` and `1e-1` are one value (flyingrobots/parley#173). A line
+  holding a non-integral decimal a double does not give back (`0.10000000000000001`,
+  `0.1000000000000000055`, `1e-400`), or an integer of more
+  than 4096 digits (`1e1000000000`, which is classified and never built; the cap is an
+  implementation limit), or a `seq` beyond the
+  range, is held back whole: kept verbatim as a `line.number_unrepresentable` quarantine naming
+  its run, its `seq` and its line, and not a record. Its run never folds, the answer counts such
+  lines, and the read reports one `read.number_unrepresentable` warning. A sidecar whose contents
+  hold such a number is `number_unrepresentable`, is not restored, and makes the bundle
+  unavailable for replay (RD-122). In 0.2.0 such a number was returned as the nearest double.
+  The cost: a writer that prints doubles with seventeen significant digits, as C's `%.17g` does,
+  has the spellings that fail the rule held back (`0.1` written `0.10000000000000001`), not every
+  line it writes (`0.5` and `0.30000000000000004` load).
+
+- **A run with a held-back line could still fold, and could still be offered for replay**
+  (review case 2026-11-25, before any release):
+  - `digestFor` and `foldRuns` refused to fold such a run only when the caller passed the new
+    last argument. Called with 0.2.0's arguments, two runs whose held-back results stated
+    different numbers folded into one. The loader now marks the run's records and the fold
+    reads the mark.
+  - `Bundle.replay` now says `unavailable: true` with the reason `line.number_unrepresentable`
+    for such a run, as it already did for a sidecar holding such a number. In 0.2.0 the bundle
+    was open to replay, with the number rounded. A writer that prints seventeen significant
+    digits therefore costs its bundles replay as well as folding.
+- **A `toJSON` on `BigInt.prototype` in the reading process changes nothing a read states.**
+  With the common polyfill installed, the candidate's serialiser wrote a `bigint` as what that
+  hook returned, so the fold's key and the lens text held a quoted or rounded integer and two
+  runs differing beyond 2^53 folded again. `exactJson`, from `@flyingrobots/parley-emit` 0.5.0,
+  never asks that hook (review case 2026-11-25).
+- **Two more ways a run with an unreadable line was still treated as whole** (fresh review pass,
+  case 2026-11-25, before any release):
+  - A held-back line in one source did not hold its run back when that source held no other
+    line of the run: a history segment whose only line of a run was one the reader could not
+    read. The run's bundle, built from its other sources, had no defect, was open to replay, and
+    its records carried no mark. A kept line now reaches the bundle of the run it names
+    wherever it was read.
+  - A line nested deeper than the exact parser can follow (tens of thousands of levels) that
+    also held a number off the fast path was filed as `line.quarantined`, "JSON, but not an
+    object", which was false, and its run folded and was open to replay. It is now held back as
+    `line.number_unrepresentable`. Its run is read from the line's text, the top-level `run`
+    member, by a scan that builds no value, so it is named correctly in a history segment that
+    holds several runs. A line the reader could not read that names no run at all holds back
+    every run of its file, since it could belong to any of them (flyingrobots/parley#187).
+- **A read's comparisons ask no `toJSON` hook.** The reader serialises the records it parsed with
+  `exactText`, from `@flyingrobots/parley-emit` 0.5.0, which asks nothing of `Array.prototype`,
+  `Object.prototype` or `BigInt.prototype`. With `exactJson`, a `toJSON` a process had put on
+  `Array.prototype` or `Object.prototype` was applied to parsed records, and one that mapped
+  different values to one text made different results fold. `exactText` is re-exported.
+- A record nested very deep no longer fails a read. The fold's key was built by a recursive walk
+  that overflowed the stack, and the read ended with status 2; 0.2.0 used `JSON.stringify`, which
+  does not. A run whose records are too deep to compare stands alone.
+- The `line.number_unrepresentable` defect quotes at most forty characters of each number and
+  says how long it is. It quoted the whole token, so a line holding a two-million-digit number
+  made a two-million-character message beside the line kept in `raw`.
+
+### Added
+
+- `exactJson(value)`, `ExactValue` and `MAX_EXACT_DIGITS`, re-exported from
+  `@flyingrobots/parley-emit`, whose exact parser and serialiser the reader uses and holds no copy
+  of; `heldBackRuns(load)`, `NUMBER_UNREPRESENTABLE` and `UNREPRESENTABLE_WARNING` (RD-123).
+- The reader runs every case of the shared numeric corpus, `conformance/numbers` (RD-124), and a
+  real tool's integers through real processes to its own emitted lines (RD-125).
+- `DefectCode` gains `line.number_unrepresentable` (a quarantine code), `record.number_undecided`
+  and `sidecar.number_unrepresentable`; `SidecarState` gains `number_unrepresentable`; `Defect`
+  gains an optional `seq`; a `partial` validation gains an optional `why`; `QueryAnswer.counts`
+  gains `unrepresentable`; `digestFor` and `foldRuns` take an optional last argument naming runs
+  that never fold.
+- `LoadedRecord` gains an optional `runHeldBack`, present and true on every record of a run the
+  loader held a line back from. `foldRuns` and `digestFor` fold no run whose records carry it,
+  so a caller composing them with 0.2.0's arguments needs to change nothing to be safe. The
+  optional last argument remains, for a run none of whose records were handed over. A
+  `LoadedRecord` built by hand has no mark.
 
 ## [0.2.0] — 2026-11-24
 
@@ -26,9 +183,9 @@ commit of that release, and carry the wording the pre-freeze review settled
 ### Fixed
 
 - **Two runs whose results differ no longer fold**, with one known exception: results that differ
-  only in an integer beyond 2^53 still compare equal, because a record is parsed into doubles, and
-  such an integer is not returned exactly (flyingrobots/parley#159; stated under "What it does not
-  do" in the README). The fold compared `inv`, the outcome, the
+  only in integers outside −(2^53)+1 to (2^53)−1 can still compare equal, because a record is
+  parsed into doubles, and such an integer may not be returned exactly (flyingrobots/parley#159;
+  fixed in 0.3.0 above). The fold compared `inv`, the outcome, the
   `end` statuses, the diagnostic codes and `resolved`, and no result, so two successful runs of
   one invocation that answered 1 and 2 came back as one run with `folded: {others: 1}` under every
   view and every budget. Runs now fold only when every result record is equal too: the tool's own

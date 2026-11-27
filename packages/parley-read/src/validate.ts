@@ -12,6 +12,8 @@
 // nothing is fetched.
 import Ajv2020, { type ErrorObject, type ValidateFunction } from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
+import { decider } from "./decide.ts";
+import { holdsExact } from "@flyingrobots/parley-emit";
 import { SCHEMAS } from "./schemas.ts";
 
 export interface SchemaRef { readonly id: string; readonly version: string }
@@ -26,8 +28,15 @@ export type Validation =
   | { readonly state: "validated"; readonly schema: SchemaRef }
   /** The exact pair's schema rejected the line. */
   | { readonly state: "invalid"; readonly schema: SchemaRef; readonly errors: readonly string[] }
-  /** A `parley.*` pair this reader ships no schema for: the core was checked, the contract was not (§4.5). */
-  | { readonly state: "partial"; readonly schema: SchemaRef; readonly missing: readonly string[] }
+  /**
+   * The core was checked and the contract was not (§4.5). Without `why`: a `parley.*` pair this
+   * reader ships no schema for. With `why: "number_undecided"`: the schema is shipped, the record
+   * holds an integer beyond the safe range (a `bigint`), no constraint was found to fail, and at
+   * least one that applies to such an integer could not be decided exactly (`decide.ts`). It is
+   * not a finding that the record violates its schema, and it is never reported as validated
+   * (flyingrobots/parley#159, flyingrobots/parley#172).
+   */
+  | { readonly state: "partial"; readonly schema: SchemaRef; readonly missing: readonly string[]; readonly why?: "number_undecided" }
   /** Not validated at all: a tool's own type, or a line that advertises no pair. */
   | { readonly state: "unvalidated"; readonly schema: SchemaRef | null; readonly why: "tool_owned" | "no_schema_ref" };
 
@@ -45,8 +54,10 @@ function describe(errors: ErrorObject[] | null | undefined): string[] {
 export function envelopeGaps(record: Record<string, unknown>): string[] {
   const missing: string[] = [];
   for (const key of ENVELOPE) if (!(key in record)) missing.push(key);
-  if ("t" in record && !(Number.isInteger(record.t) && (record.t as number) >= 0)) missing.push("t");
-  if ("seq" in record && !(Number.isInteger(record.seq) && (record.seq as number) >= 0)) missing.push("seq");
+  // An integer beyond the safe range (a `bigint`, flyingrobots/parley#159) is still a non-negative integer.
+  const count = (v: unknown) => (typeof v === "bigint" ? v >= 0n : Number.isInteger(v) && (v as number) >= 0);
+  if ("t" in record && !count(record.t)) missing.push("t");
+  if ("seq" in record && !count(record.seq)) missing.push("seq");
   if ("run" in record && !(typeof record.run === "string" && record.run.length > 0)) missing.push("run");
   if ("event" in record && typeof record.event !== "string") missing.push("event");
   const stamp = record._schema as Record<string, unknown> | undefined;
@@ -78,7 +89,13 @@ export function validator(schemas: ReadonlyArray<{ id: string; version: string; 
     if (!fn) { fn = ajv.compile(byPair.get(pair)!); compiled.set(pair, fn); }
     return fn;
   };
-
+  // Subschemas, for the parts of a record that hold no `bigint`. Compiled once each, by identity.
+  const parts = new WeakMap<object, ValidateFunction>();
+  const decideExact = decider((sub) => {
+    let fn = parts.get(sub);
+    if (!fn) { fn = ajv.compile(sub); parts.set(sub, fn); }
+    return fn;
+  });
   return {
     has: (id, version) => byPair.has(`${id}@${version}`),
     validate(record) {
@@ -87,6 +104,15 @@ export function validator(schemas: ReadonlyArray<{ id: string; version: string; 
       if (!schema.id.startsWith(PROTOCOL_PREFIX)) return { state: "unvalidated", schema, why: "tool_owned" };
       const pair = `${schema.id}@${schema.version}`;
       if (!byPair.has(pair)) return { state: "partial", schema, missing: envelopeGaps(record) };
+      // A record holding an integer beyond the safe range is decided by `decide.ts`: its ordinary
+      // parts by this same validator, the integer exactly, and what cannot be decided not at all.
+      // Never on a rounded stand-in (flyingrobots/parley#159, flyingrobots/parley#172).
+      if (holdsExact(record)) {
+        const { verdict, errors } = decideExact(byPair.get(pair), record);
+        if (verdict === "invalid") return { state: "invalid", schema, errors };
+        if (verdict === "valid") return { state: "validated", schema };
+        return { state: "partial", schema, missing: envelopeGaps(record), why: "number_undecided" };
+      }
       const fn = compile(pair);
       return fn(record) ? { state: "validated", schema } : { state: "invalid", schema, errors: describe(fn.errors) };
     },

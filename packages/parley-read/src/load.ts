@@ -14,6 +14,10 @@
 //   §5    a sidecar stands in a record's place; its path is relative to the receipt's directory and
 //         must not leave it; `bytes` and `sha256` describe the stored bytes; a sidecar found missing
 //         or mismatched makes the bundle unavailable for replay.
+//   §1.1  a line is JSON, and a JSON number is a decimal of any size. A number is loaded with the
+//         value its text states (the writer's `parseExact`, flyingrobots/parley#159): a `bigint` where it is an
+//         integer outside the safe-integer range, a number otherwise, and where the reader cannot
+//         hold it at all the line is held back whole rather than returned rounded.
 //   §8    a copy of a run on the shared history stream may be a projection of the receipt copy, and
 //         a reader that finds the same record in more than one copy prefers the least-projected one,
 //         because the receipt copy is the record and a projection is a view of it.
@@ -22,7 +26,7 @@
 // say, with each claim labelled by how well it is established (§1.2a).
 import { readFileSync, readdirSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
-import { sha256 } from "@flyingrobots/parley-emit";
+import { MAX_EXACT_DIGITS, exactText, parseExact, sha256 } from "@flyingrobots/parley-emit";
 import { readFileLines } from "./lines.ts";
 import { isFile, receiptLocations, type LocateOptions, type ReceiptLocation, type Where } from "./locate.ts";
 import { ENVELOPE, validator, type Validation, type Validator } from "./validate.ts";
@@ -31,14 +35,26 @@ import { ENVELOPE, validator, type Validation, type Validator } from "./validate
 
 export type DefectCode =
   | "line.quarantined" | "line.blank" | "line.no_envelope" | "line.unterminated"
-  | "record.invalid" | "record.unknown_pair" | "copies.disagree" | "copies.projected_disagree"
+  | "line.number_unrepresentable"
+  | "record.invalid" | "record.unknown_pair" | "record.number_undecided"
+  | "copies.disagree" | "copies.projected_disagree"
   | "sidecar.missing" | "sidecar.unreadable" | "sidecar.digest_mismatch"
   | "sidecar.bytes_mismatch" | "sidecar.escapes_bundle" | "sidecar.unparseable"
+  | "sidecar.number_unrepresentable"
   | "receipt.unreadable" | "history.unreadable";
+
+/**
+ * The line a JSON object was on, held back whole because it holds a number this reader cannot
+ * represent exactly, or a `seq` beyond what it holds a `seq` in (flyingrobots/parley#159). It is
+ * a quarantine in that the bytes are kept and the line is not a record. Unlike the others it is
+ * evidence of one thing more: its run has a record the reader could not return, so a read never
+ * folds that run into another or another into it (`heldBackRuns`).
+ */
+export const NUMBER_UNREPRESENTABLE = "line.number_unrepresentable" as const;
 
 /** The quarantine codes: a kept line that is not a record (§1.4, §5.4). */
 export const QUARANTINE_CODES: ReadonlySet<DefectCode> = new Set<DefectCode>([
-  "line.quarantined", "line.blank", "line.no_envelope", "line.unterminated",
+  "line.quarantined", "line.blank", "line.no_envelope", "line.unterminated", NUMBER_UNREPRESENTABLE,
 ]);
 
 export interface Defect {
@@ -55,11 +71,15 @@ export interface Defect {
   readonly raw?: string;
   /** The `seq` of the record a sidecar holds, for a sidecar code. */
   readonly source?: number;
+  /** The `seq` a held-back line carries, for `line.number_unrepresentable`, when the line states a usable one. */
+  readonly seq?: number;
 }
 
 export type SidecarState =
   | "intact" | "missing" | "unreadable" | "digest_mismatch" | "bytes_mismatch"
   | "escapes_bundle" | "unparseable"
+  /** The stored bytes are the declared ones and hold a number this reader cannot represent exactly, so no record is restored. */
+  | "number_unrepresentable"
   /** Resolution was switched off, so nothing about the stored bytes was established either way. */
   | "unchecked";
 
@@ -110,6 +130,7 @@ export interface LoadedRecord {
   readonly run: string;
   readonly seq: number;
   readonly event: string | null;
+  /** The record's `t` when it is a non-negative integer in the safe range; a `t` beyond it stays exact in `record` and is null here. */
   readonly t: number | null;
   /** The file the first copy of this event was read from. */
   readonly file: string;
@@ -126,8 +147,22 @@ export interface LoadedRecord {
   readonly projected: boolean;
   /** The transforms whose copies this body came from, named; empty when the body is an unprojected copy's. */
   readonly projectedBy: readonly string[];
+  /**
+   * The record, with each number as its text states it: a `bigint` for an integer-valued number
+   * outside -9007199254740991..9007199254740991, a JavaScript number otherwise (`ExactValue`,
+   * flyingrobots/parley#159). `JSON.stringify` throws on a `bigint`;
+   * `exactText` serialises the record with the integer's digits.
+   */
   readonly record: Record<string, unknown>;
   readonly validation: Validation;
+  /**
+   * Present, and true, on every record of a run the loader held a line back from
+   * (`line.number_unrepresentable`): the run has a record this reader could not return, so
+   * nothing establishes that it is the same as another run. The fold reads this and folds no
+   * such run, whatever arguments it is called with. It is the loader's mark: it is on no line a
+   * read writes, and a `LoadedRecord` built by hand has none.
+   */
+  readonly runHeldBack?: true;
 }
 
 export interface BundleSource {
@@ -162,7 +197,7 @@ export interface Bundle {
   readonly duplicates: number;
   /** A newline-terminated `end` was read: the run reported termination (§5.4). */
   readonly terminated: boolean;
-  /** `end.status`, when there is one. */
+  /** `end.status`, when there is one in the safe range. A status beyond it is null here, exact in the `end` record, and counts as non-zero. */
   readonly status: number | null;
   /** The receipt is partial: the head carries `redacted`, a `redaction` event was emitted, or `end.redacted` is true (§3.3, §5.3). */
   readonly redacted: boolean;
@@ -258,18 +293,41 @@ function scan(file: string): Scan {
       quarantined.push(defect("line.blank", "§1.4", file, line.n, "a blank line is not a JSON object; quarantined, never a record", { raw: line.raw }));
       continue;
     }
-    let parsed: unknown;
-    try { parsed = JSON.parse(line.raw); } catch {
+    let exact: ReturnType<typeof parseExact>;
+    try { exact = parseExact(line.raw); } catch {
       quarantined.push(defect("line.quarantined", "§1.4", file, line.n, "not JSON; quarantined and kept, and evidence of nothing but the fact that something wrote it", { raw: line.raw }));
       continue;
     }
-    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    const parsed = exact.ok ? exact.value : exact.partial;
+    const isObject = parsed !== null && typeof parsed === "object" && !Array.isArray(parsed);
+    // A line the exact parser could not walk at all (one nested deeper than it can follow) has
+    // no partial value to look at. It is still an object by its text, and it is still a line this
+    // reader could not read: it is held back like any other, never filed as "not an object".
+    const unwalked = !exact.ok && !isObject && line.raw.trimStart().startsWith("{");
+    if (!isObject && !unwalked) {
       quarantined.push(defect("line.quarantined", "§1.4", file, line.n, "JSON, but not an object; quarantined, never a record", { raw: line.raw }));
       continue;
     }
-    const obj = parsed as Record<string, unknown>;
-    const run = typeof obj.run === "string" && obj.run.length > 0 ? obj.run : null;
+    const obj = (isObject ? parsed : {}) as Record<string, unknown>;
+    // An unwalked line has no value to read its run from, so the run is read from its text: the
+    // last top-level member named `run`, as a parser would take it.
+    const named = unwalked ? topLevelString(line.raw, "run") : obj.run;
+    const run = typeof named === "string" && named.length > 0 ? named : null;
     const seq = Number.isInteger(obj.seq) && (obj.seq as number) >= 0 ? (obj.seq as number) : null;
+    // The reader's own limit, not the writer's defect: the line is JSON and it is kept verbatim,
+    // but it is not returned as a record with a number changed or placed at a `seq` it does not
+    // state. It names its own run when it can, which is what keeps that run from folding.
+    if (!exact.ok) {
+      // A token is quoted in part: the line is kept whole in `raw`, and the message stays small
+      // however long a number the line holds.
+      const shown = exact.tokens.slice(0, 3).map((t) => (t.length > 40 ? `${t.slice(0, 40)}… (${t.length} characters)` : t)).join(", ") + (exact.tokens.length > 3 ? `, and ${exact.tokens.length - 3} more` : "");
+      quarantined.push(defect(NUMBER_UNREPRESENTABLE, "§1.1", file, line.n, `the line holds a number this reader cannot represent exactly (${shown}): a non-integral decimal a double does not give back, or an integer of more than ${MAX_EXACT_DIGITS} digits; the line is kept verbatim and is not returned as a record with the number rounded`, { raw: line.raw, run, ...(seq === null ? {} : { seq }) }));
+      continue;
+    }
+    if (typeof obj.seq === "bigint" && obj.seq >= 0n) {
+      quarantined.push(defect(NUMBER_UNREPRESENTABLE, "§1.3", file, line.n, `the line's seq is ${obj.seq.toString()}, beyond the largest seq this reader places (9007199254740991), so the line cannot be placed without changing it; kept verbatim, never a record at another seq`, { raw: line.raw, run }));
+      continue;
+    }
     if (run === null || seq === null) {
       quarantined.push(defect("line.no_envelope", "§1.3", file, line.n, "no usable run and seq, so the line cannot be placed in a run or deduplicated; quarantined", { raw: line.raw }));
       continue;
@@ -307,6 +365,50 @@ function markProjections(raw: readonly Raw[], file: string, where: Where): reado
   });
 }
 
+/**
+ * The string value of the last top-level member `key` of a line of JSON text, or null. One pass
+ * over the text with a depth counter and no recursion, so it reads a line however deeply its
+ * values are nested, and builds none of them. Only a member of the outermost object counts.
+ */
+function topLevelString(text: string, key: string): string | null {
+  const QUOTE = 34, BACKSLASH = 92, COLON = 58;
+  const space = (c: number) => c === 32 || c === 9 || c === 10 || c === 13;
+  const stringEnd = (from: number): number => {
+    let i = from + 1;
+    while (i < text.length) { const c = text.charCodeAt(i); if (c === BACKSLASH) i += 2; else if (c === QUOTE) return i; else i += 1; }
+    return -1;
+  };
+  let depth = 0, found: string | null = null;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    if (c === 123 || c === 91) { depth += 1; continue; }
+    if (c === 125 || c === 93) { depth -= 1; continue; }
+    if (c !== QUOTE) continue;
+    const end = stringEnd(i);
+    if (end === -1) return found;
+    let j = end + 1;
+    while (j < text.length && space(text.charCodeAt(j))) j += 1;
+    if (depth === 1 && text.charCodeAt(j) === COLON) {
+      let name: unknown;
+      try { name = JSON.parse(text.slice(i, end + 1)); } catch { name = undefined; }
+      j += 1;
+      while (j < text.length && space(text.charCodeAt(j))) j += 1;
+      if (name === key) {
+        found = null;
+        if (text.charCodeAt(j) === QUOTE) {
+          const close = stringEnd(j);
+          if (close === -1) return null;
+          try { const v: unknown = JSON.parse(text.slice(j, close + 1)); if (typeof v === "string") found = v; } catch { /* not a string this reader can state */ }
+        }
+      }
+      i = j - 1;
+      continue;
+    }
+    i = end;
+  }
+  return found;
+}
+
 /** The run a receipt's file name names (§5: `<run>.jsonl`). A stream segment's name names a date, not a run. */
 function runOfFileName(file: string): string | null {
   const name = basename(file);
@@ -316,11 +418,12 @@ function runOfFileName(file: string): string | null {
 /**
  * §1.4 asks that a quarantined line be "attributed to the run". A receipt file is one run's by
  * name, so that is the attribution; a file holding more than one run, with a name that names
- * neither, leaves the line unattributed rather than guessed at.
+ * neither, leaves the line unattributed rather than guessed at. A held-back line that states its
+ * own run is that run's, whatever the file is called.
  */
 function attribute(quarantined: Defect[], runs: readonly string[], fileRun: string | null): Defect[] {
   const target = fileRun !== null && runs.includes(fileRun) ? fileRun : runs.length === 1 ? runs[0]! : null;
-  return target === null ? quarantined : quarantined.map((q) => ({ ...q, run: target }));
+  return target === null ? quarantined : quarantined.map((q) => (q.run === null ? { ...q, run: target } : q));
 }
 
 // ---- assembling one run -------------------------------------------------------------------
@@ -350,7 +453,7 @@ function fold(held: Map<number, Held>, seq: number, obj: Record<string, unknown>
   seen.fromSidecar = seen.fromSidecar || fromSidecar;
   for (const [key, value] of Object.entries(obj)) {
     if (!(key in seen.base)) { seen.base[key] = value; continue; }
-    if (JSON.stringify(seen.base[key]) !== JSON.stringify(value)) {
+    if (exactText(seen.base[key]) !== exactText(value)) {
       defects.push(defect("copies.disagree", "§1.3", file, line, `seq ${seq}: copies of one event disagree on ${key}`, { run }));
     }
   }
@@ -369,7 +472,7 @@ function same(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
 
 /** JSON with every object's keys in order, so two values compare by what they hold. */
 function stable(v: unknown): string {
-  if (v === null || typeof v !== "object") return JSON.stringify(v) ?? "null";
+  if (v === null || typeof v !== "object") return exactText(v);
   if (Array.isArray(v)) return `[${v.map(stable).join(",")}]`;
   const entries = Object.entries(v as Record<string, unknown>).sort(([x], [y]) => cmp(x, y));
   return `{${entries.map(([k, x]) => `${JSON.stringify(k)}:${stable(x)}`).join(",")}}`;
@@ -412,10 +515,13 @@ function resolveSidecar(seq: number, held: Held, read: boolean): { resolution: S
   const actual = { bytes: bytes.length, sha256: sha256(bytes) };
   if (actual.sha256 !== declared.sha256) return at("digest_mismatch", { resolved: target, actual });
   if (actual.bytes !== declared.bytes) return at("bytes_mismatch", { resolved: target, actual });
-  let parsed: unknown;
-  try { parsed = JSON.parse(bytes.toString("utf8")); } catch {
+  let exact: ReturnType<typeof parseExact>;
+  try { exact = parseExact(bytes.toString("utf8")); } catch {
     return at("unparseable", { resolved: target, actual });
   }
+  // The same rule as a receipt line: the contents are not restored with a number rounded.
+  if (!exact.ok) return at("number_unrepresentable", { resolved: target, actual });
+  const parsed = exact.value;
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     return at("unparseable", { resolved: target, actual });
   }
@@ -532,12 +638,17 @@ function buildBundle(run: string, raw: readonly Raw[], sources: readonly BundleS
     note.superseded.sort((a, b) => a - b);
   }
 
+  // A line of this run was held back: every record of the run carries that, so the fold knows it
+  // from the records alone, and replay is ruled out below.
+  const heldBack = quarantined.some((q) => q.code === NUMBER_UNREPRESENTABLE);
   const records: LoadedRecord[] = [...held.entries()]
     .sort((a, b) => a[0] - b[0])
     .map(([seq, entry]) => {
       const validation = opts.validate.validate(entry.base);
       if (validation.state === "invalid") {
         defects.push(defect("record.invalid", "§4.5", entry.file, entry.line, `${validation.schema.id}@${validation.schema.version}: ${validation.errors.join("; ")}`, { run }));
+      } else if (validation.state === "partial" && validation.why === "number_undecided") {
+        defects.push(defect("record.number_undecided", "§4.5", entry.file, entry.line, `${validation.schema.id}@${validation.schema.version}: the record holds an integer beyond the safe range and a constraint that applies to it could not be decided exactly; nothing was found to fail, and the record is neither validated nor found invalid`, { run }));
       } else if (validation.state === "partial") {
         defects.push(defect("record.unknown_pair", "§4.5", entry.file, entry.line, `no schema for ${validation.schema.id}@${validation.schema.version}; reported as partial, never as validated`, { run }));
       }
@@ -548,6 +659,7 @@ function buildBundle(run: string, raw: readonly Raw[], sources: readonly BundleS
         file: entry.file, line: entry.line, copies: entry.copies, fromSidecar: entry.fromSidecar,
         projected: entry.projectedBy.length > 0, projectedBy: [...entry.projectedBy],
         record: entry.base, validation,
+        ...(heldBack ? { runHeldBack: true as const } : {}),
       };
     });
 
@@ -555,6 +667,8 @@ function buildBundle(run: string, raw: readonly Raw[], sources: readonly BundleS
   const head = records.find((r) => r.event === "receipt.head");
   const terminated = end !== undefined;
   const status = end && Number.isInteger(end.record.status) ? (end.record.status as number) : null;
+  // A status beyond the safe range is still a status other than zero (§3.4), though `status` cannot state it.
+  const beyond = end !== undefined && typeof end.record.status === "bigint" && end.record.status !== 0n;
   const redacted =
     (end?.record.redacted === true) ||
     (head !== undefined && head.record.redacted !== undefined) ||
@@ -563,8 +677,11 @@ function buildBundle(run: string, raw: readonly Raw[], sources: readonly BundleS
   const reasons = new Set<string>();
   for (const s of sidecars) if (s.state !== "intact") reasons.add(`sidecar.${s.state}`);
   if (!terminated) reasons.add("receipt.no_end");
-  if (status !== null && status !== 0) reasons.add("end.status_nonzero");
+  if ((status !== null && status !== 0) || beyond) reasons.add("end.status_nonzero");
   if (redacted) reasons.add("receipt.redacted");
+  // The reader could not return one of this run's lines without changing a number in it, so the
+  // records replay would need are not all here: the same reasoning as a sidecar it could not restore.
+  if (heldBack) reasons.add(NUMBER_UNREPRESENTABLE);
 
   const duplicates = raw.length + sidecars.filter((s) => s.state === "intact" && opts.sidecars).length - records.length;
 
@@ -585,6 +702,7 @@ function sidecarProblem(s: SidecarResolution): string {
     case "bytes_mismatch": return `the sidecar at ${s.path} is ${String(s.actual?.bytes)} bytes, not the declared ${String(s.declared.bytes)}`;
     case "escapes_bundle": return `the sidecar path ${s.path} is absolute or leaves the receipt's directory and was not read`;
     case "unparseable": return `the sidecar at ${s.path} is not a JSON object, so it holds no record`;
+    case "number_unrepresentable": return `the sidecar at ${s.path} holds a number this reader cannot represent exactly, so the record it holds is not restored with the number rounded; the stored bytes are the declared ones`;
     case "unreadable": return `the sidecar event does not name a source, path, bytes and sha256, or its file could not be read`;
     case "unchecked": return `the sidecar at ${s.path} was not resolved, so nothing about its stored bytes is established`;
     case "intact": return "intact";
@@ -612,7 +730,8 @@ export function readReceiptFile(file: string, opts: ReadOptions = {}): FileRead 
       run,
       raw.filter((r) => r.run === run),
       [{ where, receipt: path }],
-      quarantined.filter((q) => q.run === run),
+      // A line the reader could not read that names no run could be any run's in this file.
+      quarantined.filter((q) => q.run === run || (q.run === null && q.code === NUMBER_UNREPRESENTABLE)),
       settled,
     ),
   );
@@ -666,6 +785,13 @@ export function loadReceipts(opts: LoadOptions = {}): Load {
       push(sourcesByRun, run, [{ where, receipt: file }]);
       push(quarantinedByRun, run, attributed.filter((q) => q.run === run));
     }
+    // A kept line names its run even when this file holds no placed line of that run (a history
+    // segment whose only line of the run is one the reader could not read). The run's bundle,
+    // built from its other sources, is told of it all the same.
+    for (const q of attributed) if (q.run !== null && !runs.includes(q.run)) push(quarantinedByRun, q.run, [q]);
+    // A line the reader could not read that still names no run could belong to any run of the
+    // file. None of them is known to be whole, so every one is told of it.
+    for (const q of attributed) if (q.run === null && q.code === NUMBER_UNREPRESENTABLE) for (const run of runs) push(quarantinedByRun, run, [q]);
   };
 
   for (const location of locations) {
@@ -703,6 +829,17 @@ export function loadReceipts(opts: LoadOptions = {}): Load {
       duplicates: bundles.reduce((n, b) => n + b.duplicates, 0),
     },
   };
+}
+
+/**
+ * The runs with a line held back as `line.number_unrepresentable`: runs a record of which the
+ * reader could not return, so nothing establishes that one of them is the same as another. A read
+ * hands these to the fold (`digestFor`, `foldRuns`), which then folds none of them.
+ */
+export function heldBackRuns(load: Pick<Load, "quarantined">): ReadonlySet<string> {
+  const runs = new Set<string>();
+  for (const q of load.quarantined) if (q.code === NUMBER_UNREPRESENTABLE && q.run !== null) runs.add(q.run);
+  return runs;
 }
 
 function push<T>(map: Map<string, T[]>, key: string, values: T[]): void {

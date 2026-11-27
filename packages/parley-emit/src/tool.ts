@@ -10,7 +10,7 @@ import { bookkeepingFor, chooseLocation, isLocationFailure, type Bookkeeping } f
 import { carriesSecret, classifySecrets, collectSecretValues, redactArgv, scrub, scrubPlain } from "./redact.ts";
 import { ParleyRedactionConflict, Run, SCHEMA_IDS, type Record_, type SchemaRef, type Sink } from "./run.ts";
 import { SCHEMAS } from "./schemas.ts";
-import { ulid } from "./ulid.ts";
+import { readClock, ulid } from "./ulid.ts";
 
 export interface Effects { reads: string[]; writes: string[]; network: boolean; idempotent: boolean }
 export interface EmittedType extends SchemaRef { readonly schema?: Record<string, unknown> }
@@ -60,6 +60,12 @@ export interface MainOptions {
   stdout?: Sink;
   stderr?: Sink;
   session?: string;
+  /**
+   * The clock, in milliseconds since the epoch; the default is `Date.now`. A reading is believed
+   * only when it is an integer from 0 to 2^48-1, the times a run id can hold. Any other reading,
+   * or a throw, is replaced by `Date.now()` for that reading alone, without notice. The readings
+   * decide the run id, every `t`, the history stream's day file and both retentions.
+   */
   now?: () => number;
   /** The declared inputs of this invocation, from the command's arguments. */
   inputs?: (args: string[], command: string) => InputDecl[] | Promise<InputDecl[]>;
@@ -110,10 +116,12 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
   const env = opts.env ?? process.env;
   const cwd = resolve(opts.cwd ?? process.cwd());
   const stdout = opts.stdout ?? fdSink(1), stderr = opts.stderr ?? fdSink(2);
-  // A clock that answers with something that is not a time (a non-negative safe integer of
-  // milliseconds) is not believed: the system's reading is used, for the run id and for every `t`.
+  // Every reading of the clock goes through `readClock` (ulid.ts): one that is not a time a run id
+  // can hold (an integer of milliseconds from 0 to 2^48-1), or a throw, is not believed and the
+  // system's reading is used, reading by reading. That decides the run id, every `t`, the history
+  // stream's day file and both retentions.
   const clock = opts.now ?? Date.now;
-  const now = (): number => { const t = clock(); return Number.isSafeInteger(t) && t >= 0 ? t : Date.now(); };
+  const now = (): number => readClock(clock);
   const rawArgs = argv.slice(1);
   // `--` ends the writer's flags (flyingrobots/parley#103): the writer's own flags are recognised
   // anywhere before the first `--`, that `--` is removed, and every argument after it is the

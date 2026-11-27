@@ -7,7 +7,7 @@
 // by its `event` or to read a string field such as a path.
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, readdirSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdtempSync, openSync, readFileSync, readdirSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import * as emit from "../src/index.ts";
@@ -1117,10 +1117,10 @@ interface ClockRun {
  * stream on. Before it, a run on the system clock leaves a receipt that is cut to its head and
  * aged two days, and the stream is given a segment from 2000, so both retentions have something
  * to decide by the clock. `fail` makes `resolved` throw: a startup failure after the receipt is
- * reserved and the stream resolved. Whether `main` rejected, and whether it left the console
- * captured, is recorded, and the console is put back either way.
+ * reserved and the stream resolved. `argv` follows the command. Whether `main` rejected, and
+ * whether it left the console captured, is recorded, and the console is put back either way.
  */
-async function clockRun(now: () => number, o: { stream?: boolean; fail?: boolean } = {}): Promise<ClockRun> {
+async function clockRun(now: () => number, o: { stream?: boolean; fail?: boolean; argv?: string[] } = {}): Promise<ClockRun> {
   const stream = o.stream ?? true;
   const cwd = mkdtempSync(join(tmpdir(), "parley-clock-"));
   const state = mkdtempSync(join(tmpdir(), "parley-clock-state-"));
@@ -1146,7 +1146,7 @@ async function clockRun(now: () => number, o: { stream?: boolean; fail?: boolean
   let status: number | undefined, rejected: unknown;
   const from = Date.now();
   try {
-    status = await main(spec, ["t", "count"], (run) => { run.result({ event: "result", value: 1 }, P.any); }, opts(now, out, err, o.fail === true));
+    status = await main(spec, ["t", "count", ...(o.argv ?? [])], (run) => { run.result({ event: "result", value: 1 }, P.any); }, opts(now, out, err, o.fail === true));
   } catch (e) { rejected = e; }
   const to = Date.now();
   const consoleRestored = [...real].every(([k, fn]) => con[k] === fn);
@@ -1400,6 +1400,77 @@ describe("PE-39 nothing a tool is handed, or hands over in parts, changes what w
     expect(r.status).toBe(0);
     expect(of(r.stream, "result").length).toBe(1);
     expect(of(r.stream, "result")[0]).toContain(`"run":"${r.run}"`);
+  });
+
+  test("a clock reading that is negative, fractional or not a number is not believed, and 0 is (case 2026-11-27-parley-pr195-r2 F-9)", async () => {
+    const first = await clockRun(() => 0, { stream: false });
+    expect(first.status).toBe(0);
+    expect(first.run.slice(0, 10)).toBe("0000000000");
+    for (const line of [...first.out, ...first.receipt]) expect(line).toContain(`"t":0,`);
+    const readings: unknown[] = [-1, 0.5, 1e12 + 0.5, Number.POSITIVE_INFINITY, "1000000000000", 10n ** 12n, new Number(1e12)];
+    for (const reading of readings) {
+      const started = await clockRun(() => reading as number);
+      expectSystemTime(started);
+      expect(started.status).toBe(0);
+      const failed = await clockRun(() => reading as number, { fail: true });
+      expectSystemTime(failed);
+      expect(failed.status).toBe(3);
+    }
+  });
+
+  test("the run id's second reading, taken when the first id carries a declared secret, is held to the same rule (case 2026-11-27-parley-pr195-r2 F-9)", async () => {
+    // The first reading is a real time whose ULID time part is declared as a secret, so `main`
+    // must read the clock again for the run id. The prefix is encoded here, not by the writer.
+    const first = 1795326412346;
+    let prefix = "", rest = first;
+    for (let i = 0; i < 10; i++) { prefix = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"[rest % 32] + prefix; rest = Math.floor(rest / 32); }
+    expect(ulidTime(`${prefix}0000000000000000`)).toBe(first);
+    const throws = (): number => { throw new Error("the clock failed on purpose"); };
+    for (const next of [() => Number.NaN, throws, () => 2 ** 48]) {
+      let calls = 0;
+      const r = await clockRun(() => (calls++ === 0 ? first : next()), { argv: ["--token", prefix] });
+      expect(calls).toBeGreaterThan(1);
+      expectSystemTime(r);
+      expect(r.status).toBe(0);
+      expect(r.run.startsWith(prefix)).toBe(false);
+      for (const f of r.receipts) expect(f.name).not.toContain("undefined");
+      for (const line of [...r.out, ...r.err, ...r.receipt, ...r.stream]) expect(line).not.toContain(prefix);
+    }
+  });
+
+  test("a Run built directly holds its clock to the same rule (case 2026-11-27-parley-pr195-r2 F-9)", () => {
+    const direct = (now: () => number): { lines: string[]; from: number; to: number } => {
+      const dir = mkdtempSync(join(tmpdir(), "parley-clock-run-"));
+      const receiptPath = join(dir, "01KAAAAAAAAAAAAAAAAAAAAAAA.jsonl");
+      const out: string[] = [];
+      const from = Date.now();
+      const run = new emit.Run({
+        tool: "t", v: "0.0.1", id: "01KAAAAAAAAAAAAAAAAAAAAAAA", dryRun: false,
+        stdout: { write: (l) => { out.push(l); } }, stderr: { write: (l) => { out.push(l); } },
+        receiptFd: openSync(receiptPath, "w"), receiptPath, receiptDir: dir,
+        secretValues: new Set(), now, cwd: dir, command: "count", resolved: {}, inputs: [], headRedacted: false,
+      });
+      run.bootstrap(undefined);
+      run.result({ event: "result", value: 1 }, P.any);
+      run.end(0);
+      const to = Date.now();
+      const lines = (out.join("") + readFileSync(receiptPath, "utf8")).trimEnd().split("\n");
+      return { lines, from, to };
+    };
+    const kept = direct(() => 1795326412346);
+    expect(kept.lines.length).toBeGreaterThan(2);
+    for (const line of kept.lines) expect(line).toContain(`"t":1795326412346,`);
+    const throws = (): number => { throw new Error("the clock failed on purpose"); };
+    for (const now of [() => Number.NaN, () => -1, () => 0.5, () => 2 ** 48, throws]) {
+      const r = direct(now);
+      expect(r.lines.length).toBeGreaterThan(2);
+      for (const line of r.lines) {
+        const t = /"t":(\d+),/.exec(line);
+        expect(t).not.toBeNull();
+        expect(Number(t![1])).toBeGreaterThanOrEqual(r.from);
+        expect(Number(t![1])).toBeLessThanOrEqual(r.to);
+      }
+    }
   });
 
   test("a transform's line is not withheld as unredacted for a declared value the line holds where the transform left it, and is for one the transform added (flyingrobots/parley#186, flyingrobots/parley#164)", async () => {

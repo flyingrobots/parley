@@ -379,15 +379,16 @@ export class Run {
       return null;
     }
     const { event: _event, t: _t, seq: _seq, run: _run, _schema: _stamp, ...body } = taken as Record_;
-    // Each member of the body is compared with the receipt line's member at the same place, and
-    // only what the transform changed or added is searched for a declared value: in its values
-    // and keys, as the scrub looks, and in its JSON text, where a quote, a backslash or a newline
-    // in the secret is escaped (review case 2026-11-25). A member left as the line had it is the
-    // line's own (flyingrobots/parley#186, flyingrobots/parley#164); a place that held a declared
-    // value may hold only that value, and no occurrence elsewhere in the line covers a new one
-    // (Baker Street review of flyingrobots/parley#199). See `changedCarriesSecret`.
+    // Each member of the body is compared with the receipt line's member at the same place. The
+    // body's whole JSON text is searched for every declared value, where a quote, a backslash or a
+    // newline in the secret is escaped (review case 2026-11-25), and changed or added material is
+    // searched as the scrub looks too. An occurrence wholly inside a leaf or member name left as
+    // the line had it is the line's own (flyingrobots/parley#186, flyingrobots/parley#164); any
+    // other withholds the line, so a place that held a declared value may hold only that value and
+    // no occurrence elsewhere covers a new one (Baker Street reviews of flyingrobots/parley#199).
+    // See `changedCarriesSecret`.
     if (changedCarriesSecret(body, original, secrets)) {
-      this.withhold({ code: "history.transform_unredacted", problem: `the history transform ${p.name} returned a body for seq ${seq} that carries a declared secret value in a member it changed or added, compared with the receipt line at the same place; that line is not on the shared stream`, remedy: "a transform narrows a record; it never adds a declared secret value, or restores one §5.3 replaced" });
+      this.withhold({ code: "history.transform_unredacted", problem: `the history transform ${p.name} returned a body for seq ${seq} that carries a declared secret value outside the leaves and member names it left as the receipt line had them at the same place; that line is not on the shared stream`, remedy: "a transform narrows a record; it never adds a declared secret value, or restores one §5.3 replaced" });
       return null;
     }
     const doc = p.schemas.get(pair);

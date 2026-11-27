@@ -24,9 +24,9 @@ suite and `bun run typecheck` checks it strictly, over `src`, `scripts` and `tes
 | `planQuery(request)` | The refusal rules and the budget default, as a pure function: it reads nothing, writes nothing and records nothing |
 | `queryRecord(query)` | The `parley.query` payload for an accepted read, without the envelope the writer owns |
 | `rankRecords(query, records)` | The ranking, as a pure function from an accepted query and records to the same records in one stated order |
-| `digestFor(query, answers, ranked, envelope, outcomes?)` | The bound, as a pure function from an accepted query and a ranking to the digest's `parley.lens` payload, the records it names, the count it excluded and how many of those it `folded`, the bytes its line will take and whether it `fits` a stated byte bound at all; `outcomes` is the ranking's per-run verdict, which each run section carries and without which nothing [folds](#runs-of-one-invocation-are-named-once); nothing folds either when the query states `fold: false` |
+| `digestFor(query, answers, ranked, envelope, outcomes?, heldBack?)` | The bound, as a pure function from an accepted query and a ranking to the digest's `parley.lens` payload, the records it names, the count it excluded and how many of those it `folded`, the bytes its line will take and whether it `fits` a stated byte bound at all; `outcomes` is the ranking's per-run verdict, which each run section carries and without which nothing [folds](#runs-of-one-invocation-are-named-once); nothing folds either when the query states `fold: false`, and a run named in `heldBack` never folds |
 | `sufficientBytes(query, answers, total, envelope, folded?)` | The smallest `budget.bytes` that holds a digest naming no records (and so no run sections) over a ranking of `total` of which the fold left `folded` out, which is what a byte decline names |
-| `foldRuns(ranked, outcomes?, view?)` | The fold, as a pure function: the ranked records with every folded-away run's removed, each representative's `{others, records, stands_for}`, and the count left out. `view` decides whether decision records are compared; without it only results are — see [runs of one invocation](#runs-of-one-invocation-are-named-once) |
+| `foldRuns(ranked, outcomes?, view?, heldBack?)` | The fold, as a pure function: the ranked records with every folded-away run's removed, each representative's `{others, records, stands_for}`, and the count left out. `view` decides whether decision records are compared; without it only results are; `heldBack` names runs that never fold — see [runs of one invocation](#runs-of-one-invocation-are-named-once) |
 | `Deadline`, `MONOTONIC`, `OVER_BUDGET`, `declineOnRun` | The deadline `budget.ms` is checked against, the default clock it is measured on, the one code a read declines with, and the step and error a decline reports on its run |
 | `lensEntry(record)` | The entry a digest names one record by: its `(run, seq)` and its summary |
 | `runSection(run, window, outcomes?, fold?)` | What a digest says once about one run it names, read off the window's records: see [what each run section says](#what-each-run-section-says) |
@@ -42,6 +42,8 @@ suite and `bun run typecheck` checks it strictly, over `src`, `scripts` and `tes
 | `validator(schemas?)`, `schemaRef`, `envelopeGaps`, `ENVELOPE`, `PROTOCOL_PREFIX` | Exact-pair validation, and the version-independent core a partial check uses |
 | `SCHEMAS`, `SCHEMA_SOURCE` | The nineteen schemas the package ships: each message at its current released version, and the released 1.0.0 of `parley.query` and `parley.lens` beside their 1.1.0, with the commit and digest of each |
 | `QUARANTINE_CODES` | Which defect codes are a kept line rather than a judgement about a record |
+| `exactJson(value)`, `MAX_EXACT_DIGITS`, `ExactValue` | Re-exported from `@flyingrobots/parley-emit`. `JSON.stringify` for a value that may hold a `bigint`, written as the JSON number it is; the most digits an integer may have and still be held (4096); and the type of a value a returned record can hold: see [numbers](#numbers) |
+| `heldBackRuns(load)`, `NUMBER_UNREPRESENTABLE`, `UNREPRESENTABLE_WARNING` | The runs a load held a line back from, which a read hands to the fold; the defect code of such a line (`line.number_unrepresentable`); and the code of the warning a read reports for them (`read.number_unrepresentable`) |
 | `isDirectory`, `isFile` | The two existence questions the loader asks, exported because callers ask them too |
 
 ## What a load returns
@@ -70,7 +72,7 @@ take one kind of evidence for another):
 | --- | --- |
 | `validated` | The line validated against the schema for its exact advertised `(id, version)` pair |
 | `invalid` | That schema rejected it; the validator's messages come with it |
-| `partial` | The `_schema.id` is `parley.*` but this reader ships no schema for that version. The §1.3 envelope was checked and the contract was not, and the §1.3 gaps are listed |
+| `partial` | The `_schema.id` is `parley.*` but this reader ships no schema for that version. The §1.3 envelope was checked and the contract was not, and the §1.3 gaps are listed. With `why: "number_undecided"` the schema is shipped, the record holds an integer beyond the safe range, nothing was found to fail, and a constraint that applies to that integer [could not be decided](#validating-a-record-that-holds-one) |
 | `unvalidated` | Not validated at all: `tool_owned` when the id belongs to a tool, `no_schema_ref` when the line advertises no pair |
 
 ## Locating receipts
@@ -109,9 +111,169 @@ Lines come out of a `LineBuffer`, which holds **bytes** and splits on `\n` alone
 `readFileLines` reads a receipt in 64 KiB chunks through that buffer, so the buffering in the
 tests is the buffering in use and not a pretence.
 
+## Numbers
+
+A JSON number is a decimal of any size, and JavaScript's parser holds every number as a double. A
+record is loaded with **the integer its text states**, in a receipt line and in a sidecar's
+contents alike ([flyingrobots/parley#159](https://github.com/flyingrobots/parley/issues/159)).
+This is a fix to **integer** precision. A `bigint` does nothing for a non-integral decimal: those
+are doubles, or they are not held.
+
+### The representation
+
+The rule is decided from the number as written, and there is one boundary: JavaScript's
+safe-integer range, −9007199254740991 to 9007199254740991, which is −(2^53)+1 to (2^53)−1 and the
+range in which every JSON implementation agrees on an integer.
+
+| The number, as written | Is loaded as | Examples |
+| --- | --- | --- |
+| Integer-valued, inside the range | A `number` | `9007199254740991`; `5.0` and `1e3` are 5 and 1000 |
+| Integer-valued, outside the range | A `bigint` holding exactly that integer, **always**, even where a double could hold it | `9007199254740992` is `9007199254740992n`; `9007199254740993`, `9007199254740993.0` and `9.007199254740993e15` are all `9007199254740993n`; `1e21` is `10n ** 21n`; `1e400` is `10n ** 400n` |
+| Not an integer, and writing the number back states the same decimal: its decimal value is the decimal value of the number's own JSON serialisation | A `number`, the double it parses to | `1.5`; `0.30000000000000004`; `0.1`, `0.10` and `1e-1`, which are one decimal |
+| Not an integer, and a double does not give that decimal back; or an integer of more than `MAX_EXACT_DIGITS` (4096) digits | Nothing. The reader cannot hold it and does not return it rounded: the line is [held back](#quarantine) | `0.10000000000000001`; `0.1000000000000000055`; `1e-400`; `1e1000000000` |
+| A string of digits | The string it is | `"9007199254740993"` |
+
+Because the boundary is fixed, neighbouring large identifiers never alternate between two types,
+and which type a value has depends on the value alone, never on how it was spelt. A line whose
+numbers all load as JavaScript numbers, which is nearly every line an ordinary writer produces, is
+parsed by `JSON.parse` and nothing else.
+
+**Two decimals that round to one double are not the same evidence.** `0.1` and
+`0.10000000000000001` state different values, and the reader does not infer from the digits that
+the longer one was a formatter's rendering of the shorter
+([flyingrobots/parley#173](https://github.com/flyingrobots/parley/issues/173)). Accepting `0.1` is
+not a claim that it has an exact binary form: it is that loading it and serialising it preserves
+the decimal the JSON states. The cost falls on a writer that prints doubles with seventeen
+significant digits, as C's `%.17g` does. Not on every line it writes: on the spellings that fail
+the rule. `0.5`, `0.25` and `0.30000000000000004` print the same either way and load; `0.1` printed
+as `0.10000000000000001` is held back. Keeping a decimal's exact identity beside the number, so
+those spellings load too, is that issue's open follow-up.
+
+**The cap is an implementation limit, not a rule about numbers.** An integer of more than 4096
+digits is a legitimate JSON number; this reader does not build it. Nothing is built in proportion
+to a number's magnitude: `1e1000000000` is classified from its digits and its exponent, found to
+be past the cap, and held back without being materialised, and a token of two million digits is
+counted, not converted. The value stays visible through the refusal: the line's bytes are kept
+verbatim in the defect, with its file and line number.
+
+### Writing a record back out
+
+The exact parser and serialiser are the writer's, `@flyingrobots/parley-emit`'s `parseExact`
+and `exactJson`; this package has no copy of its own and re-exports `exactJson`, `ExactValue` and
+`MAX_EXACT_DIGITS`. The reader, both writers and the corpus under
+[conformance/numbers](../../../conformance/numbers/README.md) are held to one rule: every case of
+that corpus is run through the loader (RD-124).
+
+**`JSON.stringify` throws on a record that holds a `bigint`.** `exactJson(value)` is
+`JSON.stringify` for such a value: the integer is written as the JSON number it is, exact unquoted
+digits (`{"value":9007199254740993}`), never a string and never with a suffix; a value holding
+none comes out byte for byte as `JSON.stringify` writes it. A record loaded and written with
+`exactJson` carries the digits its receipt carries (RD-120h).
+
+A consumer that parses that text with an ordinary `JSON.parse` **loses the precision again**. The
+digits survive only through a parser that keeps them, as this one does.
+
+### What the reader does with a `bigint`
+
+| Where | What happens |
+| --- | --- |
+| Copies of one `(run, seq)`, the [least-projected copy](#the-least-projected-copy) and the [fold](#runs-of-one-invocation-are-named-once) | Compared through `exactJson`, by value: two different integers never compare equal, an integer equals the same integer written another way, and a number never equals a string of its digits |
+| The drill-down's [byte bound](#a-byte-bound) | `recordBytes` is the UTF-8 length of the record's `exactJson` text, so the integer counts by its digits |
+| Validation against a shipped schema | **Decided exactly, as far as it can be**: see [validating a record that holds one](#validating-a-record-that-holds-one). `invalid` on one conclusive failure, `validated` when every constraint that applies was decided, `partial` with `why: "number_undecided"` otherwise. Never a verdict from a rounded stand-in. A read's own `parley.lens` line whose section carries such a `resolved` loads `validated`: the schema says of `resolved` only that it is an object, and that is decided |
+| `seq` | **Rejected when out of range.** Every identity the reader hands out is a `number`, so the largest `seq` it places is 9007199254740991. A line whose `seq` is beyond it is [held back](#quarantine) whole and never placed at another `seq` |
+| `t` | Kept exact in the record. `LoadedRecord.t` is null, so the record is undated: it is in no window, `counts.undated` counts it, and it sorts last in its tier |
+| `end.status` | A status other than zero: the run `failed` and replay is unavailable for `end.status_nonzero`. `Bundle.status` is a `number` or null, and is null. Separately, the record is `invalid` against `parley.end`, whose `maximum` is 255: schema validity and the run's outcome are two findings |
+| A `sidecar` event's `source` or `bytes` | The sidecar is `unreadable`: it does not name a usable `source` and `bytes` |
+| A run section's `resolved` | Carried whole and exact, like any other: the lens line that is written holds the integer's digits. The section's size, `digestLine` and the byte budget are measured on that text. It is left out only when the section is too large, and `dropped` means that and nothing else (RD-123) |
+| The lines a read writes | Written by the writer library (`@flyingrobots/parley-emit` 0.5.0 or later), which writes a `bigint` as exact digits. A lens names records by `(run, seq)`, `event`, `t` and `code`; the one field copied from a record is `resolved`, the row above. `answer.lines` are those lines parsed exactly, so a `bigint` the read wrote comes back as one |
+
+### Validating a record that holds one
+
+The schema validator checks `integer` and `number` by JavaScript type and holds every number as a
+double, so it is never handed a `bigint` and never a rounded stand-in for one. A record that
+holds a `bigint` is decided in two parts (`src/decide.ts`):
+
+- **Every part of the record that holds no `bigint` goes to the schema validator**, with the
+  subschema that applies to it, unchanged. An ordinary `status: 256`, a wrong type or a missing
+  required member beside an unrelated `bigint` is found exactly as it always was.
+- **Along the path to a `bigint`, the reader evaluates the keywords itself**, with the integer's
+  exact value.
+
+| Decided exactly | How |
+| --- | --- |
+| `type` | A `bigint` is an `integer` and a `number` |
+| `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum` | The integer against the schema's number, compared exactly |
+| `multipleOf` a positive integer | Integer arithmetic |
+| `const`, `enum` | By value, at any depth |
+| `required`, `properties`, `patternProperties`, `additionalProperties`, `propertyNames`, `minProperties`, `maxProperties`, `dependentRequired`, `dependentSchemas` | On the object that holds the integer |
+| `items`, `prefixItems`, `minItems`, `maxItems`, `uniqueItems`, `contains` without `minContains` or `maxContains` | On the array that holds it; `uniqueItems` compares by exact value |
+| `allOf`, `anyOf`, `oneOf`, `not`, `if` / `then` / `else` | Three-valued, below |
+| String keywords and non-numeric `format`s | Do not apply to a number, an array or an object |
+
+| Stays undecided | Because |
+| --- | --- |
+| `$ref`, `$dynamicRef`, in the path to the integer or in a subschema handed to the validator | A reference is written against the whole document; a part is not decided alone |
+| A numeric `format` (`int32`, `int64`, `float`, `double`) on the integer | Not implemented |
+| `multipleOf` a non-integer; `contains` with `minContains` or `maxContains`; `unevaluatedProperties`, `unevaluatedItems`; the older tuple form of `items`; any keyword not named above | Not implemented |
+| A bound, `const` or `enum` member in the schema that is itself an integer beyond the safe range | The schema document was parsed into doubles, so that constant may not be the one written |
+
+The verdicts combine as the keywords do, and soundly:
+
+- A schema is a conjunction. **One conclusive failure makes the record `invalid`**, whatever else
+  is undecided, and the rest need not be evaluated to say so. It is `validated` only when every
+  keyword that applies was decided and none failed. Otherwise it is `partial` with
+  `why: "number_undecided"` and a `record.number_undecided` defect.
+- `anyOf` fails only when every branch fails. A failing branch beside an undecided one proves
+  nothing. `oneOf` fails on two passing branches, or on none with none undecided.
+- A failure under `not` is the keyword passing; an undecided schema under `not` stays undecided.
+- `if` takes the branch its condition's verdict selects. With an undecided condition, only what
+  `then` and `else` agree on is concluded.
+
+Every schema the package ships uses only keywords in the first table, with no `$ref` and no
+numeric `format`, so a shipped-schema record holding a `bigint` is decided: an `end` whose `status`
+is `9007199254740993` is `invalid` (`/status must be <= 255`); a `receipt.head` whose `t` is that
+integer is `validated`, because the schema says of `t` only that it is an integer of at least 0.
+That verdict is about the schema. It does not say the reader can date the record: it cannot, and
+`LoadedRecord.t` is null. `partial` arises with a caller's own schemas (RD-121).
+
+### What the scan costs
+
+Establishing that a line's numbers are ordinary is one pass over its text, skipping strings. A
+number of at most fifteen digits with no exponent is settled without parsing it; a longer one, or
+one with an exponent, is parsed and compared; a line that holds a `bigint` is parsed a second time
+by the writer's exact parser, which the reader imports.
+
+Two workloads were measured, and they are two workloads: nothing here is a claim about receipts
+in general. Each is one receipt of 200,002 lines, a head, an `end`, and 200,000 lines alternating
+a `receipt.step` record with a tool's own result holding a path, two integers, a six-digit
+fraction, a 64-character hex digest and an array of four numbers.
+
+| Workload | The array's third number | Size |
+| --- | --- | --- |
+| mixed | `1e3`, an exponent form, which the scan parses | 58.8 MB |
+| ordinary | `1000`: integers and short decimals only | 58.9 MB |
+
+Method: the receipt is written once to a fresh temporary directory; `loadReceipts` is called seven
+times in one process and each call timed with `performance.now()`; the median of the seven is one
+figure. Three rounds, alternating the reader before the change (origin/main's sources, which are
+0.2.0's) and after it, on Bun 1.4.5 on one machine that was running other work at the time.
+Measured on 2026-11-26 at commit `b7c6f82`, after the parser became the writer's.
+
+| Workload | Median before (ms), three rounds | Median after (ms), three rounds |
+| --- | --- | --- |
+| mixed | 164, 174, 165 | 225, 230, 232 |
+| ordinary | 174, 170, 173 | 211, 233, 224 |
+
+The after figure was higher in every pair: by 56 to 67 ms on the mixed receipt and by 37 to 63 ms
+on the ordinary one, which is 0.2 to 0.35 µs a line and about a third more time for a load of this
+shape. An earlier measurement, on a busier machine and with the reader's former copy of the
+parser, put the difference between 7 and 93 ms with a spread as large as the difference; these
+rounds agree with one another to within 20 ms. They measure loading only. A read also serialises
+records to compare and to size them, and that cost was not measured.
+
 ## Quarantine
 
-Four codes are a kept line rather than a judgement about a record, and `QUARANTINE_CODES` names
+Five codes are a kept line rather than a judgement about a record, and `QUARANTINE_CODES` names
 them. Each carries the bytes verbatim in `raw`, the file and 1-based line, and the run it is
 attributed to:
 
@@ -121,14 +283,25 @@ attributed to:
 | `line.blank` | Empty or whitespace, which is not a JSON object either | §1.4 |
 | `line.no_envelope` | A JSON object with no usable `run` and `seq`, so it cannot be placed in a run or deduplicated | §1.3 |
 | `line.unterminated` | The final fragment, with no newline | §5.4 |
+| `line.number_unrepresentable` | A JSON object holding a [number the reader cannot represent](#numbers), or whose `seq` is beyond the safe-integer range | §1.1, §1.3 |
 
 §1.4 asks that a quarantined line be attributed to the run. A receipt file is one run's by name
 (§5: `<run>.jsonl`), so that is the attribution; a file holding more than one run, with a name
-that names neither, leaves its quarantined lines unattributed rather than guessed at.
+that names neither, leaves its quarantined lines unattributed rather than guessed at. A
+`line.number_unrepresentable` line is a JSON object, so when it states a `run` it is attributed to
+that run whatever the file is called, and it carries its `seq` when it states a usable one.
 
 A quarantined line is never evidence of anything beyond the fact that the writer, or something
 sharing its descriptors, wrote it. It is not a record, it does not count toward validation, and it
 cannot close a run.
+
+`line.number_unrepresentable` is the one code that is the reader's limit rather than the line's
+fault, and it is evidence of one thing more: its run has a record the reader could not return. So
+a read never folds that run into another, or another into it; it counts such lines in
+`counts.unrepresentable`; and it reports one `warning` on its own run, code
+`read.number_unrepresentable`, naming how many lines and which runs (the first twenty), because
+`parley.lens` has no field that could say so. The drill-down answers that line's id
+`seq_not_found`, saying that the line is there and where its bytes are.
 
 ## One event per `(run, seq)`
 
@@ -232,6 +405,7 @@ by `source`, marked `fromSidecar`. A `SidecarResolution` says what happened:
 | `bytes_mismatch` | The digest matched but the length did not |
 | `escapes_bundle` | The path is absolute or would leave the receipt's directory. It was **not read** |
 | `unparseable` | The bytes are intact but are not a JSON object, so they hold no record |
+| `number_unrepresentable` | The bytes are intact and hold a [number the reader cannot represent](#numbers), so the record is not restored with the number rounded. `actual` carries the measured `bytes` and `sha256` |
 | `unreadable` | The `sidecar` event does not name a `source`, `path`, `bytes` and `sha256`, or its file could not be opened |
 | `unchecked` | `sidecars: false` was passed, so the stored bytes were never looked at and nothing about them is established either way (§1.2a) |
 
@@ -246,6 +420,8 @@ rule:
 | Reason | Rule |
 | --- | --- |
 | `sidecar.missing`, `sidecar.digest_mismatch`, `sidecar.bytes_mismatch`, `sidecar.escapes_bundle`, `sidecar.unparseable`, `sidecar.unreadable` | §5: a reader that finds a sidecar missing or its digest mismatched must treat the bundle as unavailable for replay |
+| `sidecar.number_unrepresentable` | §5.4: replay requires the records it needs, and this reader could not restore one without changing a number in it |
+| `line.number_unrepresentable` | §5.4: the same, for a line of the receipt itself: the reader held it back, so a record of the run is not among the bundle's |
 | `sidecar.unchecked` | §5.4: replay requires intact sidecars, and with resolution off this reader has not established that they are |
 | `receipt.no_end` | §5.4: replay requires the records it needs, and nothing establishes termination |
 | `end.status_nonzero` | §5.4: replay requires a successful outcome |
@@ -437,7 +613,9 @@ until it fits, and `dropped` names them. `resolved` goes first because it is the
 the tool's own shape, while `argv` is the protocol's. A string or an object is never cut part-way,
 because a cut argument reads as a different argument. `run`, `outcome`, `reason`, `head` and `folded` are never dropped, because without them
 the section does not say which run it is or what became of it; a run id long enough to break the
-bound on its own is left whole, and the line's `budget.bytes` still holds. The ids in
+bound on its own is left whole, and the line's `budget.bytes` still holds. A `resolved` that holds
+an integer beyond the safe range is measured by the digits that are written and is dropped only
+on those terms: for size ([numbers](#numbers)). The ids in
 `folded.stands_for` are not counted against the section's bound: a section that stands for forty
 runs carries over a kilobyte of them, and counting them would drop `resolved` and `argv` from
 exactly the sections that stand for the most. They are part of the line, so `budget.bytes` does
@@ -484,6 +662,7 @@ named by the last of them, which reads as this run plus nine others like it.
 | A run with no `inv` never folds | §2.2 omits `inv` when a program cannot make it safe, and a discovery run has none. Argument vectors are not identity |
 | A run the window shows to be redacted does not fold: its head carries `redacted`, an `end` in the window says `redacted: true`, or the window holds a `redaction` of it. Nor does a run whose window holds neither its head nor an `end`, since nothing then shows it is unredacted | A redacted receipt shares its `inv` with every run that differed only in a secret (§2.3), and a missing statement is not a negative one (§1.2a) |
 | **Every comparison above is of the records the window holds.** A run only partly inside the window is compared by that part, so two runs can fold under one window and not under a wider one that shows where they differ | The reader answers for a window and reads nothing outside it. A section marks a run the window did not hold whole in two cases: `head: "not_in_window"` when the window does not hold its head, and `outcome: "undetermined"` with `reason: "no_end_in_window"` when it holds no `end` for it and no failure either. A run the window shows to have failed is `failed` with or without its `end`, so its section does not say whether the window holds the `end`. Runs that fold agree on outcome, reason and the head's `resolved`, so a run whose head the window holds does not fold with one whose head it does not. To see such runs apart, read with `fold: false` or under a window that holds them whole (RD-112) |
+| A run the loader held a line back from never folds (`line.number_unrepresentable`, [numbers](#numbers)) | The run has a record the reader could not return, so nothing establishes that it is the same as another. The loader marks every record of such a run (`LoadedRecord.runHeldBack`), and `foldRuns` and `digestFor` fold no run whose records carry the mark, whatever arguments they are called with. `heldBack` names such runs as well, for a run none of whose records were handed over; a `LoadedRecord` built by hand has no mark. A kept line holds back the run it names wherever it was read, including a source that holds no other line of that run, and a line too deeply nested for the exact parser to walk is held back the same way: its run is read from the top-level `run` member of its text. An unreadable line that names no run holds back every run of its file |
 | Nothing folds when `digestFor` is given no outcomes | "The same result" cannot be established without them |
 | The representative is the run whose latest dated record in the window is latest, ties to the greater run id | The most recent run is the one a resuming reader is likeliest to act on |
 
@@ -665,9 +844,9 @@ twice. Nothing about one id can lose the others, and nothing throws:
 | --- | --- | --- |
 | `opened` | The record is there | `record` in full; `sidecar` when the record was restored from one; `held`, the stored record in full, when the id names the `sidecar` event itself |
 | `over_budget` | The record is there but opening it would pass the caller's `budget.bytes` | `bytes`, the size it would have occupied, `problem`, `remedy` and the bundle's ruling. **No record and no part of one** |
-| `sidecar_unavailable` | The id is a `sidecar` event or the record one holds, and the stored bytes could not be established: `missing`, `digest_mismatch`, `bytes_mismatch`, `escapes_bundle`, `unparseable`, `unreadable`, or `unchecked` when resolution was off | `record` is the pointer and only the pointer, `sidecar` with the declared and actual digests, `problem` and `remedy`. The contents are never claimed |
+| `sidecar_unavailable` | The id is a `sidecar` event or the record one holds, and the stored bytes could not be established: `missing`, `digest_mismatch`, `bytes_mismatch`, `escapes_bundle`, `unparseable`, `number_unrepresentable`, `unreadable`, or `unchecked` when resolution was off | `record` is the pointer and only the pointer, `sidecar` with the declared and actual digests, `problem` and `remedy`. The contents are never claimed |
 | `run_not_found` | No receipt in either location holds that run | `problem` and `remedy` |
-| `seq_not_found` | The run is there and holds no record at that `seq` | `problem`, `remedy` and the bundle's ruling |
+| `seq_not_found` | The run is there and holds no record at that `seq`. When the run has a line at that `seq` the loader held back for a [number it cannot represent](#numbers), `problem` says so and `remedy` names the file and line | `problem`, `remedy` and the bundle's ruling |
 
 ### A byte bound
 
@@ -844,9 +1023,17 @@ still ranks above a succeeded run's. `what-failed` is unaffected: every warning 
 - Serve a reader over the network, or hold an index. A read is a function call that loads the
   directory it was pointed at, once, per read; the store's indexing is
   [flyingrobots/parley#2](https://github.com/flyingrobots/parley/issues/2).
-- Return an integer beyond 2^53 exactly. A record is parsed as JSON into doubles, so
-  `9007199254740993` comes back as `9007199254740992`, and two results that differ only in such an
-  integer compare equal and fold ([flyingrobots/parley#159](https://github.com/flyingrobots/parley/issues/159)).
+- Make a non-integral decimal exact. A non-integral number is a double; one a double does not
+  give back, and an integer of more than 4096 digits, it cannot hold at all, and it says so and keeps
+  the line's bytes rather than return the number rounded ([numbers](#numbers);
+  [flyingrobots/parley#173](https://github.com/flyingrobots/parley/issues/173)).
+- Decide every schema keyword for an integer beyond the safe range. What it decides and what
+  stays `partial` is [listed](#validating-a-record-that-holds-one); complete positive validation
+  is [flyingrobots/parley#172](https://github.com/flyingrobots/parley/issues/172).
+- Versions up to 0.2.0 parsed every number into a double, so there an integer outside
+  −(2^53)+1 to (2^53)−1 might not be returned exactly, and two results that differed only in such
+  integers could compare equal and fold, which they did when both parsed to one double
+  ([flyingrobots/parley#159](https://github.com/flyingrobots/parley/issues/159)).
 - Write, create or repair anything.
 - Windows paths. v0.2 of the spec is POSIX-only.
 

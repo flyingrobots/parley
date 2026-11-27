@@ -1266,7 +1266,7 @@ describe("PE-39 nothing a tool is handed, or hands over in parts, changes what w
         const added = await go((run) => { run.result({ event: "result", value: 1 }, P.count); }, { argv: ["count", "--token", secret], transform: (rec) => (rec.event === "result" ? add(rec) : rec) });
         const warnings = of(added.err, "warning").filter((l) => l.includes("history.transform_unredacted"));
         expect(warnings.length).toBe(1);
-        expect(warnings[0]).toContain("that the line did not hold");
+        expect(warnings[0]).toContain("in a member it changed or added");
         expect(warnings[0]).not.toContain("already replaced");
         expect(of(added.stream, "result")).toEqual([]);
       }
@@ -1275,5 +1275,100 @@ describe("PE-39 nothing a tool is handed, or hands over in parts, changes what w
     const moved = await go(() => {}, { argv: ["count", "--token", "false"], transform: (rec) => (rec.event === "receipt.head" ? { ...rec, effects: { reads: [], writes: [], idempotent: true }, note: false } : rec) });
     expect(of(moved.err, "warning").filter((l) => l.includes("history.transform_unredacted")).length).toBe(1);
     expect(of(moved.stream, "receipt.head")).toEqual([]);
+  });
+
+  // The guard compares each member the transform returns with the receipt line's member at the
+  // same place, and searches only what changed or was added (Baker Street review of
+  // flyingrobots/parley#199, F-1). A place that held a declared value may hold only that value
+  // afterwards; an occurrence elsewhere in the line never covers a new one.
+  const twoSecrets = (version = "0.0.1"): Partial<ToolSpec> => ({ version, commands: { count: { intent: "Count things", effects: { reads: [], writes: [], network: false, idempotent: true }, secrets: ["--token", "--pin"], emits: [{ ...P.count, schema: COUNT }, { ...P.note, schema: NOTE }, P.any] } } });
+  const unredacted = (r: Outcome) => of(r.err, "warning").filter((l) => l.includes("history.transform_unredacted"));
+  /** Withheld with one warning, the event absent from the stream, the restored text on no stream line, and the exit status untouched. */
+  function withheld(r: Outcome, event: string, restored: string): void {
+    expect(r.status).toBe(0);
+    expect(unredacted(r).length).toBe(1);
+    expect(of(r.stream, event)).toEqual([]);
+    for (const line of r.stream) expect(line).not.toContain(restored);
+    // The receipt is the tool's record, redacted; it never holds the restored text either.
+    for (const line of r.receipt) expect(line).not.toContain(restored);
+  }
+  type Rec = Record<string, unknown>;
+  const onResult = (f: (rec: Rec) => Rec): HistoryTransform => (rec) => (rec.event === "result" ? f(rec) : rec);
+  const onHead = (f: (rec: Rec) => Rec): HistoryTransform => (rec) => (rec.event === "receipt.head" ? f(rec) : rec);
+
+  test("a secret that is a piece of [redacted], put back where the writer replaced it, is withheld (F-1: --token red and note restored to \"red\")", async () => {
+    for (const [secret, note] of [["red", "red"], ["acted", "acted"], ["red", "my red car"]] as const) {
+      const r = await go((run) => { run.result({ event: "result", note }, P.note); }, { argv: ["count", "--token", secret], transform: onResult((rec) => ({ ...rec, note })) });
+      withheld(r, "result", `"note":${JSON.stringify(note)}`);
+    }
+  });
+
+  test("a secret is withheld though another declared value made its place held and its digits occur elsewhere in the line (F-1: --token red --pin 4821 beside 14821)", async () => {
+    const body = (run: Run) => { run.result({ event: "result", note: "pin 4821", value: 14821 }, P.note); };
+    const dropped = await go(body, { argv: ["count", "--token", "red", "--pin", "4821"], over: twoSecrets(), transform: onResult(({ value: _v, ...rec }) => ({ ...rec, note: "pin 4821" })) });
+    withheld(dropped, "result", `"note":"pin 4821"`);
+    const changed = await go(body, { argv: ["count", "--token", "red", "--pin", "4821"], over: twoSecrets(), transform: onResult((rec) => ({ ...rec, note: "pin 4821", value: 1 })) });
+    withheld(changed, "result", `"note":"pin 4821"`);
+  });
+
+  test("a secret is withheld when the tool version holds its digits (F-1: argv[5] set back to \"2024\", and a key \"2024\", with v 2024.1.0)", async () => {
+    const argv = (rec: Rec) => { const a = [...(rec.argv as string[])]; a[5] = "2024"; return a; };
+    const restored = await go(() => {}, { argv: ["count", "--token", "red", "--pin", "2024"], over: twoSecrets("2024.1.0"), transform: onHead((rec) => ({ ...rec, v: "x", argv: argv(rec) })) });
+    withheld(restored, "receipt.head", `"--pin","2024"`);
+    const keyed = await go(() => {}, { argv: ["count", "--token", "effects", "--pin", "2024"], over: twoSecrets("2024.1.0"), transform: onHead((rec) => ({ ...rec, v: "x", "2024": "--pin" })) });
+    withheld(keyed, "receipt.head", `"2024":"--pin"`);
+  });
+
+  test("a place that held one declared value may not take another, and a declared value moved to another place is withheld (F-1)", async () => {
+    const effects = (rec: Rec, network: boolean, idempotent: boolean) => ({ ...rec, effects: { ...(rec.effects as Rec), network, idempotent } });
+    // `false` held /effects/network and `true` held /effects/idempotent: swapped, each place holds the other declared value.
+    const swapped = await go(() => {}, { argv: ["count", "--token", "false", "--pin", "true"], over: twoSecrets(), transform: onHead((rec) => effects(rec, true, false)) });
+    withheld(swapped, "receipt.head", `"network":true`);
+    // Only `false` declared: it leaves /effects/network for /effects/idempotent.
+    const moved = await go(() => {}, { argv: ["count", "--token", "false"], transform: onHead((rec) => effects(rec, true, false)) });
+    withheld(moved, "receipt.head", `"idempotent":false`);
+  });
+
+  test("a number the transform changed is searched by its digits, and one it left alone is the line's own (F-1, F-6)", async () => {
+    const body = (run: Run) => { run.result({ event: "result", value: 1234 }, P.count); };
+    const same = await go(body, { argv: ["count", "--token", "23"], transform: (rec) => rec });
+    expect(unredacted(same)).toEqual([]);
+    expect(of(same.stream, "result").length).toBe(1);
+    const changed = await go(body, { argv: ["count", "--token", "23"], transform: onResult((rec) => ({ ...rec, value: 1235 })) });
+    withheld(changed, "result", `"value":1235`);
+  });
+
+  test("what the transform added is searched whole, structure and escaped spellings included", async () => {
+    for (const [secret, add] of [
+      ['pa"ss', (rec: Rec) => ({ ...rec, note: 'pa"ss' })],
+      ["pa\\ss", (rec: Rec) => ({ ...rec, note: "pa\\ss" })],
+      ['pa"ss', (rec: Rec) => ({ ...rec, ['k pa"ss']: 1 })],
+      ["hunter2", (rec: Rec) => ({ ...rec, extra: { deep: ["x", "hunter2"] } })],
+      ['a","b', (rec: Rec) => ({ ...rec, pair: ["a", "b"] })],
+    ] as const) {
+      const r = await go((run) => { run.result({ event: "result", note: "n" }, P.note); }, { argv: ["count", "--token", secret], transform: onResult(add) });
+      expect(r.status).toBe(0);
+      expect(unredacted(r).length).toBe(1);
+      expect(of(r.stream, "result")).toEqual([]);
+    }
+  });
+
+  test("identity and narrowing transforms pass whatever the declared value equals in the writer's own lines (flyingrobots/parley#186, flyingrobots/parley#164)", async () => {
+    for (const secret of ["false", "network", "effects", "decision", "because", "detail", "segments", "red"]) {
+      const r = await go((run) => { run.result({ event: "result", note: secret }, P.note); }, { argv: ["count", "--token", secret], transform: (rec) => rec });
+      expect(unredacted(r)).toEqual([]);
+      expect(of(r.stream, "receipt.head").length).toBe(1);
+      expect(of(r.stream, "receipt.step").length).toBe(of(r.receipt, "receipt.step").length);
+      expect(of(r.stream, "result").length).toBe(1);
+    }
+    // `role` is a field name of receipt.inputs; the line holds it whenever an input declares one.
+    const inputs = await go(() => {}, { argv: ["count", "--token", "role"], transform: (rec) => rec, extra: { inputs: () => [{ path: "a.txt" }, { path: "b.txt", role: "cfg" }] } });
+    expect(unredacted(inputs)).toEqual([]);
+    expect(of(inputs.stream, "receipt.inputs").length).toBe(1);
+    // Narrowing: a member dropped, every member kept unchanged, `[redacted]` included.
+    const narrowed = await go((run) => { run.result({ event: "result", note: "red", value: 1 }, P.note); }, { argv: ["count", "--token", "red"], transform: onResult(({ value: _v, ...rec }) => rec) });
+    expect(unredacted(narrowed)).toEqual([]);
+    expect(of(narrowed.stream, "result").length).toBe(1);
+    expect(of(narrowed.stream, "result")[0]).toContain(`"note":"[redacted]"`);
   });
 });

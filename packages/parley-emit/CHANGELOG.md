@@ -172,6 +172,16 @@ that is not finite, which is now refused.
   (below) an occurrence inside a leaf or member name the transform left as the receipt line had
   it, at the same place, is the line's own and does not withhold the line; everything else in the
   body's text is still searched.
+- **PRIVACY: a history transform could put a declared secret on the shared stream when the
+  secret runs from the body into the envelope beside it** (Baker Street case
+  2026-11-27-parley-pr199-r2; flyingrobots/parley#199). The guard behind
+  `history.transform_unredacted` searched the body's text, never the line as written, which
+  also holds the envelope. A declared value holding JSON punctuation, such as `x","_schema` or
+  `x","event`, could be completed by a member the transform added beside `_schema` or ahead of
+  `event`; the line was appended with no warning and status 0. Present in 0.2.0, 0.2.1, 0.2.2,
+  0.2.3, 0.2.4, 0.3.0 and 0.4.0, each confirmed by running both cases against that tag's source;
+  0.1.0 has no history transform and is not affected. The guard now searches the whole line as
+  it would be written, envelope included. The receipt, stdout and stderr were not affected.
 - **A payload is read once** (review case 2026-11-25). The writer takes one snapshot of a payload
   as it would be written (`plain`: hooks applied, boxes opened, functions gone) before it is
   refused, scrubbed, checked or given a `seq`, and every sink is written from that snapshot by a
@@ -231,8 +241,7 @@ that is not finite, which is now refused.
   line's member at the same place: object members by name, array elements by index. A leaf with
   the same JSON text as the line's leaf at that place, and a member name the line's object there
   also has, is unchanged: the line's own. The whole JSON text of the line as it would be written is searched for every declared value in every spelling the writer recognises (JSON-escaped
-  included), structure included, and now the envelope too: before, only the body's text was searched, so
-  a value running from the body into the envelope beside it (`x","_schema`) was missed. An occurrence is excused only when it lies wholly inside the
+  included), structure included, and now the envelope too (the PRIVACY entry above). An occurrence is excused only when it lies wholly inside the
   text of one unchanged leaf or member name. So a place that held a declared value may hold only
   that value afterwards, and no occurrence elsewhere in the line covers a new one. Any other
   occurrence withholds the line: in a changed or added leaf, member or element; across several of

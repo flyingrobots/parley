@@ -163,8 +163,10 @@ export function scrubPlain(value: unknown, values: ReadonlySet<string>, pointer 
 }
 
 
-// Taken when this module loads, so a transform that replaces a built-in during its own call
-// cannot change how its result is read.
+// Taken when this module loads, so a transform that replaces `Object.hasOwn` or `Object.keys`
+// during its own call cannot change how its result is walked. The transform runs in this process
+// and can replace other built-ins (`String.prototype.indexOf`); that is outside what the writer
+// can guard against code it runs.
 const hasOwn: (o: object, k: PropertyKey) => boolean = Object.hasOwn;
 const keysOf: (o: object) => string[] = Object.keys;
 const isLeaf = (v: unknown): boolean => v === null || typeof v !== "object";
@@ -177,10 +179,11 @@ function scrubFinds(value: unknown, values: ReadonlySet<string>): boolean {
 }
 
 /**
- * Whether a history transform's `body` carries a declared value in what it changed or added,
- * against `line`, the receipt line's body it was handed, read before the transform ran (spec
- * §5.3, §8; flyingrobots/parley#186, flyingrobots/parley#164, and the Baker Street reviews of
- * flyingrobots/parley#199). Both are plain data with no envelope.
+ * Whether `body`, a history transform's line as it would be written, carries a declared value
+ * anywhere but where `line`, the receipt line it was handed, read before the transform ran, held
+ * it (spec §5.3, §8; flyingrobots/parley#186, flyingrobots/parley#164, and the Baker Street
+ * reviews of flyingrobots/parley#199). Both are plain data, envelope included: the envelope is
+ * the receipt line's, so its leaves and names are unchanged and the text beside it is searched.
  *
  * The two are walked together by real path: object members by name, array elements by index.
  * A leaf (a string, number, boolean or null) is **unchanged** when the line has a leaf at the

@@ -350,11 +350,7 @@ export class Run {
     // transform that mutates the record it was handed and returns it would otherwise hand back its
     // own envelope, and the receipt line's is the only one that may stand (§1.3).
     const envelope = { event: rec.event, t: rec.t, seq: rec.seq, run: rec.run, _schema: { id: stamp?.id, version: stamp?.version } };
-    // The receipt line's body, from the reading the transform never sees. The writer's own lines
-    // hold scalars and field names of their own (`false`, `decision`), and a secret equal to one
-    // of them, left where it was, is not something a transform restored.
     const secrets = this.init.secretValues;
-    const { event: _e0, t: _t0, seq: _s0, run: _r0, _schema: _c0, ...original } = line;
     let returned: unknown;
     try { returned = p.fn(rec); } catch (e) {
       const msg = e instanceof Error ? e.message || e.name : String(e);
@@ -379,15 +375,18 @@ export class Run {
       return null;
     }
     const { event: _event, t: _t, seq: _seq, run: _run, _schema: _stamp, ...body } = taken as Record_;
-    // Each member of the body is compared with the receipt line's member at the same place. The
-    // body's whole JSON text is searched for every declared value, where a quote, a backslash or a
-    // newline in the secret is escaped (review case 2026-11-25), and changed or added material is
-    // searched as the scrub looks too. An occurrence wholly inside a leaf or member name left as
-    // the line had it is the line's own (flyingrobots/parley#186, flyingrobots/parley#164); any
-    // other withholds the line, so a place that held a declared value may hold only that value and
-    // no occurrence elsewhere covers a new one (Baker Street reviews of flyingrobots/parley#199).
-    // See `changedCarriesSecret`.
-    if (changedCarriesSecret(body, original, secrets)) {
+    const out: Record_ = { event: envelope.event, t: envelope.t, seq: envelope.seq, run: envelope.run, ...body, _schema: envelope._schema };
+    // The line as it would be written is compared with the receipt line, from the reading the
+    // transform never sees, member by member at the same place, the envelope included. Its whole
+    // JSON text is searched for every declared value, where a quote, a backslash or a newline in
+    // the secret is escaped (review case 2026-11-25), and changed or added material is searched as
+    // the scrub looks too. An occurrence wholly inside a leaf or member name left as the line had it
+    // is the line's own: the writer's scalars and field names (`false`, `decision`) equal to a
+    // secret are not something a transform restored (flyingrobots/parley#186,
+    // flyingrobots/parley#164). Any other occurrence withholds the line, so a place that held a
+    // declared value may hold only that value and no occurrence elsewhere covers a new one (Baker
+    // Street reviews of flyingrobots/parley#199). See `changedCarriesSecret`.
+    if (changedCarriesSecret(out, line, secrets)) {
       this.withhold({ code: "history.transform_unredacted", problem: `the history transform ${p.name} returned a body for seq ${seq} that carries a declared secret value outside the leaves and member names it left as the receipt line had them at the same place; that line is not on the shared stream`, remedy: "a transform narrows a record; it never adds a declared secret value, or restores one §5.3 replaced" });
       return null;
     }
@@ -396,7 +395,6 @@ export class Run {
       this.withhold({ code: "history.transform_uncheckable", problem: `seq ${seq} advertises ${pair}, which this writer holds no schema document for, so the projection by ${p.name} could not be re-validated and that line is not on the shared stream`, remedy: "declare the schema on the command's emitted type (spec §4.2) so a projection of it can be checked, or remove the transform" });
       return null;
     }
-    const out: Record_ = { event: envelope.event, t: envelope.t, seq: envelope.seq, run: envelope.run, ...body, _schema: envelope._schema };
     // A body the writer could not write is no more the stream's than the receipt's. Asked before
     // the schema is, so the warning names the cause whatever the schema says of the field.
     const why = unwritablePlain(body);

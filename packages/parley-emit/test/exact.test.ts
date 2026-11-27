@@ -7,9 +7,9 @@
 // by its `event` or to read a string field such as a path.
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
+import { mkdtempSync, openSync, readFileSync, readdirSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import * as emit from "../src/index.ts";
 import { checkRecord, canonical, computeInv, defineTool, main, scrub, declaredProjection, ParleyRedactionConflict, ParleyRedactionUnchecked, type HistoryTransform, type MainOptions, type Run, type ToolSpec } from "../src/index.ts";
 import { pinned } from "./fixtures/pin-inv.ts";
@@ -1102,6 +1102,101 @@ describe("PE-38 a payload is read once, and what is checked is what is written (
   });
 });
 
+/** A strict ULID: 26 Crockford characters, the first 0 to 7, so its time fits the 48 bits a ULID holds. */
+const STRICT_ULID = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
+/** The millisecond time a run id's first ten characters encode. */
+const ulidTime = (id: string): number => [...id.slice(0, 10)].reduce((t, c) => t * 32 + "0123456789ABCDEFGHJKMNPQRSTVWXYZ".indexOf(c), 0);
+
+interface ClockRun {
+  status: number | undefined; rejected: unknown; consoleRestored: boolean; run: string; seed: string;
+  out: string[]; err: string[]; receipt: string[]; receipts: { name: string; size: number }[]; segments: string[]; stream: string[]; from: number; to: number;
+}
+
+/**
+ * One run through the real `main` with an injected clock and, unless asked otherwise, the history
+ * stream on. Before it, a run on the system clock leaves a receipt that is cut to its head and
+ * aged two days, and the stream is given a segment from 2000, so both retentions have something
+ * to decide by the clock. `fail` makes `resolved` throw: a startup failure after the receipt is
+ * reserved and the stream resolved. `argv` follows the command. Whether `main` rejected, and
+ * whether it left the console captured, is recorded, and the console is put back either way.
+ */
+async function clockRun(now: () => number, o: { stream?: boolean; fail?: boolean; argv?: string[] } = {}): Promise<ClockRun> {
+  const stream = o.stream ?? true;
+  const cwd = mkdtempSync(join(tmpdir(), "parley-clock-"));
+  const state = mkdtempSync(join(tmpdir(), "parley-clock-state-"));
+  const hist = mkdtempSync(join(tmpdir(), "parley-clock-hist-"));
+  const spec = tool({ retention: { count: 1 } });
+  const opts = (clock: () => number, out: string[], err: string[], fail: boolean): MainOptions => ({
+    cwd, env: { XDG_STATE_HOME: state, ...(stream ? { PARLEY_HISTORY: hist } : {}) }, home: state, now: clock,
+    stdout: { write: (l) => { out.push(l); } }, stderr: { write: (l) => { err.push(l); } },
+    ...(stream ? {} : { history: null }),
+    ...(fail ? { resolved: () => { throw new Error("arguments refused on purpose"); } } : {}),
+  });
+  let seedPath = "";
+  expect(await main(spec, ["t", "count"], (run) => { seedPath = run.receiptPath; }, opts(Date.now, [], [], false))).toBe(0);
+  writeFileSync(seedPath, readFileSync(seedPath, "utf8").split("\n")[0] + "\n");
+  const aged = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+  utimesSync(seedPath, aged, aged);
+  if (stream) writeFileSync(join(hist, "2000-01-01.jsonl"), "");
+  const receiptDir = dirname(seedPath);
+
+  const con = console as unknown as Record<string, unknown>;
+  const real = new Map(Object.getOwnPropertyNames(console).map((k) => [k, con[k]]));
+  const out: string[] = [], err: string[] = [];
+  let status: number | undefined, rejected: unknown;
+  const from = Date.now();
+  try {
+    status = await main(spec, ["t", "count", ...(o.argv ?? [])], (run) => { run.result({ event: "result", value: 1 }, P.any); }, opts(now, out, err, o.fail === true));
+  } catch (e) { rejected = e; }
+  const to = Date.now();
+  const consoleRestored = [...real].every(([k, fn]) => con[k] === fn);
+  for (const [k, fn] of real) con[k] = fn;
+
+  const lines = (text: string) => (text === "" ? [] : text.trimEnd().split("\n"));
+  const first = out[0] ?? err[0];
+  const run = first === undefined ? "" : String((JSON.parse(first) as { run?: unknown }).run);
+  const receipts = readdirSync(receiptDir).filter((n) => n.endsWith(".jsonl")).sort().map((name) => ({ name, size: statSync(join(receiptDir, name)).size }));
+  const receipt = receipts.some((f) => f.name === `${run}.jsonl`) ? lines(readFileSync(join(receiptDir, `${run}.jsonl`), "utf8")) : [];
+  const segments = stream ? readdirSync(hist).sort() : [];
+  const streamLines = segments.flatMap((n) => lines(readFileSync(join(hist, n), "utf8"))).filter((l) => l.includes(`"run":"${run}"`));
+  return { status, rejected, consoleRestored, run, seed: seedPath.slice(receiptDir.length + 1), out: out.flatMap(lines), err: err.flatMap(lines), receipt, receipts, segments, stream: streamLines, from, to };
+}
+
+/**
+ * What a run whose clock was not believed holds: `main` returned, the console is its own again,
+ * the run id is a strict ULID of the system's time, and every line's `t` is the system's. A run
+ * that started has a receipt named for its id and both retentions ran by the system's time; a
+ * startup failure left no receipt of its own behind, empty or not.
+ */
+function expectSystemTime(r: ClockRun): void {
+  expect(r.rejected).toBeUndefined();
+  expect(r.consoleRestored).toBe(true);
+  expect(r.run).toMatch(STRICT_ULID);
+  expect(ulidTime(r.run)).toBeGreaterThanOrEqual(r.from);
+  expect(ulidTime(r.run)).toBeLessThanOrEqual(r.to);
+  const lines = [...r.out, ...r.err, ...r.receipt, ...r.stream];
+  expect(lines.length).toBeGreaterThan(0);
+  for (const line of lines) {
+    expect(line).toContain(`"run":"${r.run}"`);
+    const t = /"t":(\d+),/.exec(line);
+    expect(t).not.toBeNull();
+    expect(Number(t![1])).toBeGreaterThanOrEqual(r.from);
+    expect(Number(t![1])).toBeLessThanOrEqual(r.to);
+  }
+  expect(r.err.filter((l) => l.includes('"uncaught.'))).toEqual([]);
+  for (const f of r.receipts) expect(f.size).toBeGreaterThan(0);
+  if (r.status === 3) {
+    expect(of(r.err, "startup.failed").length).toBe(1);
+    expect(r.receipts.map((f) => f.name)).toEqual([r.seed]);
+    return;
+  }
+  expect(r.receipts.map((f) => f.name)).toEqual([`${r.run}.jsonl`]);
+  expect(r.receipt.some((l) => l.includes("retention: deleted 1 receipt bundle(s)"))).toBe(true);
+  expect(r.segments.length).toBe(1);
+  expect(r.segments[0]).toMatch(/^\d{4}-\d{2}-\d{2}\.jsonl$/);
+  expect(r.receipt.some((l) => l.includes("history retention: deleted 1 segment(s)"))).toBe(true);
+}
+
 describe("PE-39 nothing a tool is handed, or hands over in parts, changes what was checked (fresh review pass, case 2026-11-25)", () => {
   test("a --human renderer that changes the record it is handed changes nothing the receipt or the stream holds, and cannot change the end status", async () => {
     const human = (line: Record<string, unknown>): string | null => {
@@ -1251,6 +1346,151 @@ describe("PE-39 nothing a tool is handed, or hands over in parts, changes what w
       try { got = emit.exactText(value); plainGot = emit.exactText({ list: [1, 2] }); } finally { delete proto.toJSON; }
       expect(got).toBe(text);
       expect(plainGot).toBe(`{"list":[1,2]}`);
+    }
+  });
+
+  test("a clock that is never a time gives a real run id and a real t, at startup too", async () => {
+    const started = await go((run) => { run.result({ event: "result", value: 1 }, P.any); }, { extra: { now: () => Number.NaN } });
+    expect(started.status).toBe(0);
+    for (const line of [...started.out, ...started.receipt]) { expect(line).toMatch(/"t":\d+,/); expect(line).toMatch(/"run":"[0-7][0-9A-HJKMNP-TV-Z]{25}"/); }
+    const failed = await go(() => {}, { extra: { now: () => Number.NaN, resolved: () => { throw new Error("arguments refused on purpose"); } } });
+    expect(failed.status).toBe(3);
+    expect(failed.err[0]).toMatch(/"t":\d+,/);
+    expect(failed.err[0]).toMatch(/"run":"[0-7][0-9A-HJKMNP-TV-Z]{25}"/);
+  });
+
+  test("a clock reading a run id cannot hold (2^48 ms and later) is not believed, and 2^48-1 is (flyingrobots/parley#189, case 2026-11-26-parley-pr195 F-1)", async () => {
+    // The largest time a ULID holds is 2^48-1 ms: its first character is then 7.
+    const last = await clockRun(() => 2 ** 48 - 1, { stream: false });
+    expect(last.status).toBe(0);
+    expect(last.run.slice(0, 10)).toBe("7ZZZZZZZZZ");
+    for (const line of [...last.out, ...last.receipt]) expect(line).toContain(`"t":${2 ** 48 - 1},`);
+    for (const reading of [2 ** 48, 2 ** 50, 8_640_000_000_000_001, Number.MAX_SAFE_INTEGER]) {
+      const started = await clockRun(() => reading);
+      expectSystemTime(started);
+      expect(started.status).toBe(0);
+      const failed = await clockRun(() => reading, { fail: true });
+      expectSystemTime(failed);
+      expect(failed.status).toBe(3);
+    }
+  });
+
+  test("a clock that throws is not believed: the system's reading is used and main returns a status (case 2026-11-26-parley-pr195 F-2)", async () => {
+    const throws = (): number => { throw new Error("the clock failed on purpose"); };
+    const started = await clockRun(throws);
+    expectSystemTime(started);
+    expect(started.status).toBe(0);
+    const failed = await clockRun(throws, { fail: true });
+    expectSystemTime(failed);
+    expect(failed.status).toBe(3);
+    // Real readings first, then a throw: the run id keeps the first reading's time.
+    let calls = 0;
+    const later = await clockRun(() => { if (calls++ < 2) return 1795326412346; throw new Error("the clock failed on purpose"); });
+    expect(later.rejected).toBeUndefined();
+    expect(later.consoleRestored).toBe(true);
+    expect(later.status).toBe(0);
+    expect(later.run).toMatch(STRICT_ULID);
+    expect(ulidTime(later.run)).toBe(1795326412346);
+    expect(later.err.filter((l) => l.includes('"uncaught.'))).toEqual([]);
+  });
+
+  test("a clock that is never a time, with the history stream on, gives a real day file and real stream lines, and retention runs (case 2026-11-26-parley-pr195 F-4)", async () => {
+    const r = await clockRun(() => Number.NaN);
+    expectSystemTime(r);
+    expect(r.status).toBe(0);
+    expect(of(r.stream, "result").length).toBe(1);
+    expect(of(r.stream, "result")[0]).toContain(`"run":"${r.run}"`);
+  });
+
+  test("a clock reading that is negative, fractional or not a number is not believed, and 0 is (case 2026-11-27-parley-pr195-r2 F-9)", async () => {
+    const first = await clockRun(() => 0, { stream: false });
+    expect(first.status).toBe(0);
+    expect(first.run.slice(0, 10)).toBe("0000000000");
+    for (const line of [...first.out, ...first.receipt]) expect(line).toContain(`"t":0,`);
+    const readings: unknown[] = [-1, 0.5, 1e12 + 0.5, Number.POSITIVE_INFINITY, "1000000000000", 10n ** 12n, new Number(1e12)];
+    for (const reading of readings) {
+      const started = await clockRun(() => reading as number);
+      expectSystemTime(started);
+      expect(started.status).toBe(0);
+      const failed = await clockRun(() => reading as number, { fail: true });
+      expectSystemTime(failed);
+      expect(failed.status).toBe(3);
+    }
+  });
+
+  test("the run id's second reading, taken when the first id carries a declared secret, is held to the same rule (case 2026-11-27-parley-pr195-r2 F-9)", async () => {
+    // The first reading is a real time whose ULID time part is declared as a secret, so `main`
+    // must read the clock again for the run id. The prefix is encoded here, not by the writer.
+    const first = 1795326412346;
+    let prefix = "", rest = first;
+    for (let i = 0; i < 10; i++) { prefix = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"[rest % 32] + prefix; rest = Math.floor(rest / 32); }
+    expect(ulidTime(`${prefix}0000000000000000`)).toBe(first);
+    const throws = (): number => { throw new Error("the clock failed on purpose"); };
+    for (const next of [() => Number.NaN, throws, () => 2 ** 48]) {
+      let calls = 0;
+      const r = await clockRun(() => (calls++ === 0 ? first : next()), { argv: ["--token", prefix] });
+      expect(calls).toBeGreaterThan(1);
+      expectSystemTime(r);
+      expect(r.status).toBe(0);
+      expect(r.run.startsWith(prefix)).toBe(false);
+      for (const f of r.receipts) expect(f.name).not.toContain("undefined");
+      for (const line of [...r.out, ...r.err, ...r.receipt, ...r.stream]) expect(line).not.toContain(prefix);
+    }
+  });
+
+  test("a Run built directly holds its clock to the same rule (case 2026-11-27-parley-pr195-r2 F-9)", () => {
+    const direct = (now: () => number): { lines: string[]; from: number; to: number } => {
+      const dir = mkdtempSync(join(tmpdir(), "parley-clock-run-"));
+      const receiptPath = join(dir, "01KAAAAAAAAAAAAAAAAAAAAAAA.jsonl");
+      const out: string[] = [];
+      const from = Date.now();
+      const run = new emit.Run({
+        tool: "t", v: "0.0.1", id: "01KAAAAAAAAAAAAAAAAAAAAAAA", dryRun: false,
+        stdout: { write: (l) => { out.push(l); } }, stderr: { write: (l) => { out.push(l); } },
+        receiptFd: openSync(receiptPath, "w"), receiptPath, receiptDir: dir,
+        secretValues: new Set(), now, cwd: dir, command: "count", resolved: {}, inputs: [], headRedacted: false,
+      });
+      run.bootstrap(undefined);
+      run.result({ event: "result", value: 1 }, P.any);
+      run.end(0);
+      const to = Date.now();
+      const lines = (out.join("") + readFileSync(receiptPath, "utf8")).trimEnd().split("\n");
+      return { lines, from, to };
+    };
+    const kept = direct(() => 1795326412346);
+    expect(kept.lines.length).toBeGreaterThan(2);
+    for (const line of kept.lines) expect(line).toContain(`"t":1795326412346,`);
+    const throws = (): number => { throw new Error("the clock failed on purpose"); };
+    for (const now of [() => Number.NaN, () => -1, () => 0.5, () => 2 ** 48, throws]) {
+      const r = direct(now);
+      expect(r.lines.length).toBeGreaterThan(2);
+      for (const line of r.lines) {
+        const t = /"t":(\d+),/.exec(line);
+        expect(t).not.toBeNull();
+        expect(Number(t![1])).toBeGreaterThanOrEqual(r.from);
+        expect(Number(t![1])).toBeLessThanOrEqual(r.to);
+      }
+    }
+  });
+
+  test("retention never deletes the history segment or the receipt this run holds open, however the clock's readings change between them (CodeRabbit on flyingrobots/parley#195)", async () => {
+    // The day file is chosen from one reading and retention decides from a later one. Each reading
+    // is judged on its own, so the two can come from different clocks: believed, then refused (the
+    // run writes a 2020 file and retention runs by today), and refused, then believed (the run
+    // writes today's file and retention runs in 2030).
+    const past = Date.UTC(2020, 0, 1), future = Date.UTC(2030, 0, 1);
+    for (const [first, later] of [[past, Number.NaN], [Number.NaN, future]] as const) {
+      let calls = 0;
+      const r = await go((run) => { run.result({ event: "result", value: 1 }, P.any); }, { stream: true, over: { retention: { count: 1 } }, extra: { now: () => (calls++ < 2 ? first : later) } });
+      expect(calls).toBeGreaterThan(2);
+      expect(r.status).toBe(0);
+      expect(of(r.receipt, "end").length).toBe(1);
+      expect(r.receipt.some((l) => l.includes("history retention: deleted"))).toBe(false);
+      expect(r.receipt.some((l) => l.includes("retention: deleted"))).toBe(false);
+      const run = (JSON.parse(r.out[0]!) as { run: string }).run;
+      const mine = r.stream.filter((l) => l.includes(`"run":"${run}"`));
+      expect(of(mine, "result").length).toBe(1);
+      expect(of(mine, "end").length).toBe(1);
     }
   });
 

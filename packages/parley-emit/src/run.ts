@@ -10,6 +10,7 @@ import type { HistoryProjection, HistorySink } from "./history.ts";
 import { canonicalPlain, computeInvPlain, digestInput, sha256, type InputDecl, type InputDescriptor } from "./inv.ts";
 import { carriesSecret, changedCarriesSecret, replaceSecrets, scrubPlain, scrubPointer } from "./redact.ts";
 import { isHistoryRefusal, type HistoryRefusal } from "./refusal.ts";
+import { readClock } from "./ulid.ts";
 
 export interface Sink { write(line: string): void }
 export const SIDECAR_THRESHOLD = 65_536;
@@ -217,8 +218,8 @@ export class Run {
 
   private next(t?: number): { seq: number; t: number } { this.seq += 1; return { seq: this.seq, t: t ?? this.time() }; }
 
-  /** The clock's reading when it is a time (a non-negative safe integer of milliseconds), and the system's otherwise: `t` is never written as `null`. */
-  private time(): number { const t = this.init.now(); return Number.isSafeInteger(t) && t >= 0 ? t : Date.now(); }
+  /** The clock's reading by `readClock`'s rule, so `t` is never written as `null`. `main` hands over a clock already read by that rule; a `Run` built directly is held to it here. */
+  private time(): number { return readClock(() => this.init.now()); }
 
   private envelope(payload: Record_, schema: SchemaRef, at: { seq: number; t: number }): Record_ {
     const { event, ...rest } = payload;

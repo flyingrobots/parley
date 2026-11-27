@@ -2,7 +2,7 @@
 // into a conforming run (spec §3, §4, §6).
 import { closeSync, openSync, readSync, readdirSync, rmSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { historyBookkeeping, historyDays, historyProjection, isHistoryFailure, isHistorySink, openHistory, resolveHistory, retainHistory, type HistoryConfig, type HistoryPlan, type HistoryProjection, type HistorySink } from "./history.ts";
 import { exactJson, plain, unwritableClause, unwritablePlain } from "./exact.ts";
 import { computeInvPlain, type InputDecl } from "./inv.ts";
@@ -10,7 +10,7 @@ import { bookkeepingFor, chooseLocation, isLocationFailure, type Bookkeeping } f
 import { carriesSecret, classifySecrets, collectSecretValues, redactArgv, scrub, scrubPlain } from "./redact.ts";
 import { ParleyRedactionConflict, Run, SCHEMA_IDS, type Record_, type SchemaRef, type Sink } from "./run.ts";
 import { SCHEMAS } from "./schemas.ts";
-import { ulid } from "./ulid.ts";
+import { readClock, ulid } from "./ulid.ts";
 
 export interface Effects { reads: string[]; writes: string[]; network: boolean; idempotent: boolean }
 export interface EmittedType extends SchemaRef { readonly schema?: Record<string, unknown> }
@@ -60,6 +60,14 @@ export interface MainOptions {
   stdout?: Sink;
   stderr?: Sink;
   session?: string;
+  /**
+   * The clock, in milliseconds since the epoch; the default is `Date.now`. A reading is believed
+   * only when it is an integer from 0 to 2^48-1, the times a run id can hold. Any other reading,
+   * or a throw, is replaced by `Date.now()` for that reading alone, without notice. The readings
+   * decide the run id, every `t`, the history stream's day file and both retentions. The clock
+   * is called unbound, so a method that reads `this` throws and is replaced: bind it
+   * (`now: () => harness.now()`).
+   */
   now?: () => number;
   /** The declared inputs of this invocation, from the command's arguments. */
   inputs?: (args: string[], command: string) => InputDecl[] | Promise<InputDecl[]>;
@@ -110,7 +118,12 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
   const env = opts.env ?? process.env;
   const cwd = resolve(opts.cwd ?? process.cwd());
   const stdout = opts.stdout ?? fdSink(1), stderr = opts.stderr ?? fdSink(2);
-  const now = opts.now ?? Date.now;
+  // Every reading of the clock goes through `readClock` (ulid.ts): one that is not a time a run id
+  // can hold (an integer of milliseconds from 0 to 2^48-1), or a throw, is not believed and the
+  // system's reading is used, reading by reading. That decides the run id, every `t`, the history
+  // stream's day file and both retentions.
+  const clock = opts.now ?? Date.now;
+  const now = (): number => readClock(clock);
   const rawArgs = argv.slice(1);
   // `--` ends the writer's flags (flyingrobots/parley#103): the writer's own flags are recognised
   // anywhere before the first `--`, that `--` is removed, and every argument after it is the
@@ -275,7 +288,7 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
     run.noteProjection();
 
     retain(run, location.receiptDir, spec.retention.count, dryRun, now());
-    if (history) retainStream(run, history.dir, historyPlan?.days ?? historyDays(env), dryRun, now());
+    if (history) retainStream(run, history.dir, historyPlan?.days ?? historyDays(env), dryRun, now(), basename(history.path));
 
     if (discovery) {
       try { discover(run, spec, discovery, commandName, bookkeeping); } catch (e) {
@@ -470,8 +483,9 @@ export function retain(run: Run, receiptDir: string, count: number, dryRun: bool
  * unlinking a segment nobody is writing to and cannot be expired by rewriting. Recorded as a
  * decision, like the receipt's retention, and skipped on a dry run.
  */
-function retainStream(run: Run, dir: string, days: number, dryRun: boolean, at: number): void {
-  const segments = retainHistory(dir, days, at, dryRun);
+function retainStream(run: Run, dir: string, days: number, dryRun: boolean, at: number, open: string): void {
+  // The open segment is never retention's to delete: it was chosen from an earlier reading than `at`.
+  const segments = retainHistory(dir, days, at, dryRun, open);
   if (!segments.length) return;
   if (dryRun) { run.writerStep(`history retention: would delete ${segments.length} segment(s)`, `the shared history stream keeps ${days} daily segment(s), today's included; a dry run performs no retention deletion (§4.3)`, { segments }); return; }
   run.writerStep(`history retention: deleted ${segments.length} segment(s)`, `the shared history stream keeps ${days} daily segment(s), today's included; older segments are deleted whole, since an append-only file with concurrent writers cannot be rewritten safely (§5.1, §8)`, { segments });

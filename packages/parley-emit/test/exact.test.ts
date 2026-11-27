@@ -7,9 +7,9 @@
 // by its `event` or to read a string field such as a path.
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import * as emit from "../src/index.ts";
 import { checkRecord, canonical, computeInv, defineTool, main, scrub, declaredProjection, ParleyRedactionConflict, ParleyRedactionUnchecked, type HistoryTransform, type MainOptions, type Run, type ToolSpec } from "../src/index.ts";
 import { pinned } from "./fixtures/pin-inv.ts";
@@ -1102,6 +1102,101 @@ describe("PE-38 a payload is read once, and what is checked is what is written (
   });
 });
 
+/** A strict ULID: 26 Crockford characters, the first 0 to 7, so its time fits the 48 bits a ULID holds. */
+const STRICT_ULID = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
+/** The millisecond time a run id's first ten characters encode. */
+const ulidTime = (id: string): number => [...id.slice(0, 10)].reduce((t, c) => t * 32 + "0123456789ABCDEFGHJKMNPQRSTVWXYZ".indexOf(c), 0);
+
+interface ClockRun {
+  status: number | undefined; rejected: unknown; consoleRestored: boolean; run: string; seed: string;
+  out: string[]; err: string[]; receipt: string[]; receipts: { name: string; size: number }[]; segments: string[]; stream: string[]; from: number; to: number;
+}
+
+/**
+ * One run through the real `main` with an injected clock and, unless asked otherwise, the history
+ * stream on. Before it, a run on the system clock leaves a receipt that is cut to its head and
+ * aged two days, and the stream is given a segment from 2000, so both retentions have something
+ * to decide by the clock. `fail` makes `resolved` throw: a startup failure after the receipt is
+ * reserved and the stream resolved. Whether `main` rejected, and whether it left the console
+ * captured, is recorded, and the console is put back either way.
+ */
+async function clockRun(now: () => number, o: { stream?: boolean; fail?: boolean } = {}): Promise<ClockRun> {
+  const stream = o.stream ?? true;
+  const cwd = mkdtempSync(join(tmpdir(), "parley-clock-"));
+  const state = mkdtempSync(join(tmpdir(), "parley-clock-state-"));
+  const hist = mkdtempSync(join(tmpdir(), "parley-clock-hist-"));
+  const spec = tool({ retention: { count: 1 } });
+  const opts = (clock: () => number, out: string[], err: string[], fail: boolean): MainOptions => ({
+    cwd, env: { XDG_STATE_HOME: state, ...(stream ? { PARLEY_HISTORY: hist } : {}) }, home: state, now: clock,
+    stdout: { write: (l) => { out.push(l); } }, stderr: { write: (l) => { err.push(l); } },
+    ...(stream ? {} : { history: null }),
+    ...(fail ? { resolved: () => { throw new Error("arguments refused on purpose"); } } : {}),
+  });
+  let seedPath = "";
+  expect(await main(spec, ["t", "count"], (run) => { seedPath = run.receiptPath; }, opts(Date.now, [], [], false))).toBe(0);
+  writeFileSync(seedPath, readFileSync(seedPath, "utf8").split("\n")[0] + "\n");
+  const aged = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+  utimesSync(seedPath, aged, aged);
+  if (stream) writeFileSync(join(hist, "2000-01-01.jsonl"), "");
+  const receiptDir = dirname(seedPath);
+
+  const con = console as unknown as Record<string, unknown>;
+  const real = new Map(Object.getOwnPropertyNames(console).map((k) => [k, con[k]]));
+  const out: string[] = [], err: string[] = [];
+  let status: number | undefined, rejected: unknown;
+  const from = Date.now();
+  try {
+    status = await main(spec, ["t", "count"], (run) => { run.result({ event: "result", value: 1 }, P.any); }, opts(now, out, err, o.fail === true));
+  } catch (e) { rejected = e; }
+  const to = Date.now();
+  const consoleRestored = [...real].every(([k, fn]) => con[k] === fn);
+  for (const [k, fn] of real) con[k] = fn;
+
+  const lines = (text: string) => (text === "" ? [] : text.trimEnd().split("\n"));
+  const first = out[0] ?? err[0];
+  const run = first === undefined ? "" : String((JSON.parse(first) as { run?: unknown }).run);
+  const receipts = readdirSync(receiptDir).filter((n) => n.endsWith(".jsonl")).sort().map((name) => ({ name, size: statSync(join(receiptDir, name)).size }));
+  const receipt = receipts.some((f) => f.name === `${run}.jsonl`) ? lines(readFileSync(join(receiptDir, `${run}.jsonl`), "utf8")) : [];
+  const segments = stream ? readdirSync(hist).sort() : [];
+  const streamLines = segments.flatMap((n) => lines(readFileSync(join(hist, n), "utf8"))).filter((l) => l.includes(`"run":"${run}"`));
+  return { status, rejected, consoleRestored, run, seed: seedPath.slice(receiptDir.length + 1), out: out.flatMap(lines), err: err.flatMap(lines), receipt, receipts, segments, stream: streamLines, from, to };
+}
+
+/**
+ * What a run whose clock was not believed holds: `main` returned, the console is its own again,
+ * the run id is a strict ULID of the system's time, and every line's `t` is the system's. A run
+ * that started has a receipt named for its id and both retentions ran by the system's time; a
+ * startup failure left no receipt of its own behind, empty or not.
+ */
+function expectSystemTime(r: ClockRun): void {
+  expect(r.rejected).toBeUndefined();
+  expect(r.consoleRestored).toBe(true);
+  expect(r.run).toMatch(STRICT_ULID);
+  expect(ulidTime(r.run)).toBeGreaterThanOrEqual(r.from);
+  expect(ulidTime(r.run)).toBeLessThanOrEqual(r.to);
+  const lines = [...r.out, ...r.err, ...r.receipt, ...r.stream];
+  expect(lines.length).toBeGreaterThan(0);
+  for (const line of lines) {
+    expect(line).toContain(`"run":"${r.run}"`);
+    const t = /"t":(\d+),/.exec(line);
+    expect(t).not.toBeNull();
+    expect(Number(t![1])).toBeGreaterThanOrEqual(r.from);
+    expect(Number(t![1])).toBeLessThanOrEqual(r.to);
+  }
+  expect(r.err.filter((l) => l.includes('"uncaught.'))).toEqual([]);
+  for (const f of r.receipts) expect(f.size).toBeGreaterThan(0);
+  if (r.status === 3) {
+    expect(of(r.err, "startup.failed").length).toBe(1);
+    expect(r.receipts.map((f) => f.name)).toEqual([r.seed]);
+    return;
+  }
+  expect(r.receipts.map((f) => f.name)).toEqual([`${r.run}.jsonl`]);
+  expect(r.receipt.some((l) => l.includes("retention: deleted 1 receipt bundle(s)"))).toBe(true);
+  expect(r.segments.length).toBe(1);
+  expect(r.segments[0]).toMatch(/^\d{4}-\d{2}-\d{2}\.jsonl$/);
+  expect(r.receipt.some((l) => l.includes("history retention: deleted 1 segment(s)"))).toBe(true);
+}
+
 describe("PE-39 nothing a tool is handed, or hands over in parts, changes what was checked (fresh review pass, case 2026-11-25)", () => {
   test("a --human renderer that changes the record it is handed changes nothing the receipt or the stream holds, and cannot change the end status", async () => {
     const human = (line: Record<string, unknown>): string | null => {
@@ -1257,11 +1352,54 @@ describe("PE-39 nothing a tool is handed, or hands over in parts, changes what w
   test("a clock that is never a time gives a real run id and a real t, at startup too", async () => {
     const started = await go((run) => { run.result({ event: "result", value: 1 }, P.any); }, { extra: { now: () => Number.NaN } });
     expect(started.status).toBe(0);
-    for (const line of [...started.out, ...started.receipt]) { expect(line).toMatch(/"t":\d+,/); expect(line).toMatch(/"run":"[0-9A-HJKMNP-TV-Z]{26}"/); }
+    for (const line of [...started.out, ...started.receipt]) { expect(line).toMatch(/"t":\d+,/); expect(line).toMatch(/"run":"[0-7][0-9A-HJKMNP-TV-Z]{25}"/); }
     const failed = await go(() => {}, { extra: { now: () => Number.NaN, resolved: () => { throw new Error("arguments refused on purpose"); } } });
     expect(failed.status).toBe(3);
     expect(failed.err[0]).toMatch(/"t":\d+,/);
-    expect(failed.err[0]).toMatch(/"run":"[0-9A-HJKMNP-TV-Z]{26}"/);
+    expect(failed.err[0]).toMatch(/"run":"[0-7][0-9A-HJKMNP-TV-Z]{25}"/);
+  });
+
+  test("a clock reading a run id cannot hold (2^48 ms and later) is not believed, and 2^48-1 is (flyingrobots/parley#189, case 2026-11-26-parley-pr195 F-1)", async () => {
+    // The largest time a ULID holds is 2^48-1 ms: its first character is then 7.
+    const last = await clockRun(() => 2 ** 48 - 1, { stream: false });
+    expect(last.status).toBe(0);
+    expect(last.run.slice(0, 10)).toBe("7ZZZZZZZZZ");
+    for (const line of [...last.out, ...last.receipt]) expect(line).toContain(`"t":${2 ** 48 - 1},`);
+    for (const reading of [2 ** 48, 2 ** 50, 8_640_000_000_000_001, Number.MAX_SAFE_INTEGER]) {
+      const started = await clockRun(() => reading);
+      expectSystemTime(started);
+      expect(started.status).toBe(0);
+      const failed = await clockRun(() => reading, { fail: true });
+      expectSystemTime(failed);
+      expect(failed.status).toBe(3);
+    }
+  });
+
+  test("a clock that throws is not believed: the system's reading is used and main returns a status (case 2026-11-26-parley-pr195 F-2)", async () => {
+    const throws = (): number => { throw new Error("the clock failed on purpose"); };
+    const started = await clockRun(throws);
+    expectSystemTime(started);
+    expect(started.status).toBe(0);
+    const failed = await clockRun(throws, { fail: true });
+    expectSystemTime(failed);
+    expect(failed.status).toBe(3);
+    // Real readings first, then a throw: the run id keeps the first reading's time.
+    let calls = 0;
+    const later = await clockRun(() => { if (calls++ < 2) return 1795326412346; throw new Error("the clock failed on purpose"); });
+    expect(later.rejected).toBeUndefined();
+    expect(later.consoleRestored).toBe(true);
+    expect(later.status).toBe(0);
+    expect(later.run).toMatch(STRICT_ULID);
+    expect(ulidTime(later.run)).toBe(1795326412346);
+    expect(later.err.filter((l) => l.includes('"uncaught.'))).toEqual([]);
+  });
+
+  test("a clock that is never a time, with the history stream on, gives a real day file and real stream lines, and retention runs (case 2026-11-26-parley-pr195 F-4)", async () => {
+    const r = await clockRun(() => Number.NaN);
+    expectSystemTime(r);
+    expect(r.status).toBe(0);
+    expect(of(r.stream, "result").length).toBe(1);
+    expect(of(r.stream, "result")[0]).toContain(`"run":"${r.run}"`);
   });
 
   test("a transform's line is not withheld as unredacted for a declared value the line holds where the transform left it, and is for one the transform added (flyingrobots/parley#186, flyingrobots/parley#164)", async () => {

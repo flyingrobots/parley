@@ -10,6 +10,7 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { types } from "node:util";
 import * as emit from "../src/index.ts";
 import { checkRecord, canonical, computeInv, defineTool, main, scrub, declaredProjection, ParleyRedactionConflict, ParleyRedactionUnchecked, type HistoryTransform, type MainOptions, type Run, type ToolSpec } from "../src/index.ts";
 import { pinned } from "./fixtures/pin-inv.ts";
@@ -1451,13 +1452,23 @@ describe("PE-39b a valueOf replaced before the writer loads is checked once, and
   const PAST_64 = "1180591620717411303427"; // 2n ** 70n + 3n
   /** Each value as a writer with no replacement writes it: the fixture's `none` mode, stated independently. */
   const CONTROL: Record<string, string> = {
-    box: "5", foreignBox: "5", bigBox: PAST_64, foreignBigBox: `-${PAST_64}`, primitive: BIG_TEXT, date: ISO, url: `"https://example.com/a?b=1"`, map: "{}", regexp: "{}", error: "{}",
+    box: "5", foreignBox: "5", bigBox: PAST_64, foreignBigBox: `-${PAST_64}`,
+    nullProtoBox: "5", objProtoBox: "5", foreignNullProtoBox: "5", foreignObjProtoBox: "5", twice: `{"a":5,"b":5}`,
+    primitive: BIG_TEXT, date: ISO, url: `"https://example.com/a?b=1"`, map: "{}", regexp: "{}", error: "{}",
     instance: `{"x":1,"y":2}`, number: "42", string: `"s"`, foreignPlain: `{"a":1}`, foreignDate: ISO,
+    nullProtoPlain: `{"a":1}`, nullChain: `{"a":1}`,
   };
-  const BOXES = ["box", "foreignBox", "bigBox", "foreignBigBox"];
+  /** Every value holding a box: a refusal of boxes refuses each of these. */
+  const BOXES = ["box", "foreignBox", "bigBox", "foreignBigBox", "nullProtoBox", "objProtoBox", "foreignNullProtoBox", "foreignObjProtoBox", "twice"];
+  /**
+   * Whether this Bun's `types.isBigIntObject` recognises a box whose prototype was changed. Bun
+   * 1.2.0's does not (review round 3, F-13); then, with no realm, no object but an array can be
+   * told from a box.
+   */
+  const RECOGNISES_CHANGED = [null, Object.prototype, {}].every((proto) => types.isBigIntObject(Object.setPrototypeOf(Object(1n), proto)));
   const REFUSAL = "TypeError: a boxed bigint could not be read: BigInt.prototype.valueOf was replaced before this package was loaded, and the replacement does not behave as the original";
   const DISAGREES = "TypeError: a boxed bigint could not be read: BigInt.prototype.valueOf was replaced before this package was loaded, and the replacement does not agree with the original for this value";
-  const NO_REALM = "TypeError: a boxed bigint, or an object from another realm, could not be written: no genuine BigInt.prototype.valueOf could be made in a new node:vm realm to recognise or read a box";
+  const NO_REALM = "TypeError: a boxed bigint, or an object that cannot be told from one, could not be written: no genuine BigInt.prototype.valueOf could be made in a new node:vm realm to recognise or read a box";
   /** What captured console text holds in place of a value the writer refused: the reason's head. */
   const marked = (refusal: string) => JSON.stringify(`[unwritable: ${refusal.slice("TypeError: ".length, refusal.indexOf(":", "TypeError: ".length))}]`);
   const refusedAll = (reason: string, names = BOXES) => Object.fromEntries(names.map((name) => [name, reason]));
@@ -1522,7 +1533,7 @@ describe("PE-39b a valueOf replaced before the writer loads is checked once, and
     // Console output of an object holding boxes is kept as that object's JSON, with each box the
     // writer refused marked where it was: never `[object Object]`, never an integer it did not read.
     const text = (name: string, value: string) => refused[name] === undefined ? value : marked(refused[name]);
-    const logged = `row {"id":${text("box", "5")},"big":${text("bigBox", PAST_64)},"when":${ISO}}`;
+    const logged = `row {"id":${text("box", "5")},"big":${text("bigBox", PAST_64)},"when":${ISO},"odd":${text("nullProtoBox", "5")}}`;
     expect(s.logged.status).toBe(0);
     expect(of(s.logged.receipt, "receipt.step").filter((l) => l.includes("captured console output")).map((l) => (JSON.parse(l) as { detail: { text: string } }).detail.text)).toEqual([logged]);
   }
@@ -1557,13 +1568,33 @@ describe("PE-39b a valueOf replaced before the writer loads is checked once, and
     ["later7", "is faithful while the writer loads and then answers 7n", refusedAll(DISAGREES)],
     ["laterthrows", "is faithful while the writer loads and then throws a RangeError", refusedAll(DISAGREES)],
     ["laterstr", "is faithful while the writer loads and then answers a box's digits as a string, not a bigint", refusedAll(DISAGREES)],
+    ["reproto", "answers rightly and, once the writer has loaded, changes the box's prototype to Object.prototype (review round 3, C-K-1)", {}],
   ])("valueOf replaced by %s, one that passes the load check and %s: a box is written only as a genuine valueOf reads it, and refused where the replacement disagrees; every other object is written as with no replacement", async (mode, _what, refused) => {
     refuses(await seen(mode), refused);
   });
 
-  // Review round 2, F-12: when no realm can be made, nothing is read or written that only a genuine
-  // `valueOf` could recognise or read. Objects of this realm are written as the control.
-  test("when node:vm cannot make a realm, a box of any realm and an object from another realm are refused with a TypeError naming the reason, never written as {}; every object of this realm is written as with no replacement", async () => {
-    refuses(await seen("novm"), refusedAll(NO_REALM, [...BOXES, "foreignPlain", "foreignDate"]));
+  // Review round 2, F-12, and round 3, F-13 and F-15: when no realm can be made, nothing is read or
+  // written that only a genuine `valueOf` could recognise or read, so nothing is ever written as `{}`
+  // in a box's place. Where the runtime recognises a box with a changed prototype, an object whose
+  // prototype is `Object.prototype` or `null`, or whose chain reaches this realm's `Object.prototype`,
+  // is written as the control, and every other object is refused. Where it does not (Bun 1.2.0), no
+  // object but an array can be told from a box, so every run is refused at startup.
+  test("when node:vm cannot make a realm, a box of any realm and with any prototype, and every object that cannot be told from one, is refused with a TypeError naming the reason, never written as {}", async () => {
+    const s = await seen("novm");
+    if (RECOGNISES_CHANGED) {
+      refuses(s, refusedAll(NO_REALM, [...BOXES, "foreignPlain", "foreignDate", "nullChain"]));
+      return;
+    }
+    expect(s.threw).toEqual({});
+    for (const name of Object.keys(CONTROL)) expect(s.exact[name]).toBe(`threw ${NO_REALM}`);
+    for (const run of [s.results, s.resolvedDate, s.resolvedBox, s.logged]) {
+      expect(run.status).toBe(3);
+      expect(run.stdout).toEqual([]);
+      expect(run.receipt).toEqual([]);
+      expect(run.stream).toEqual([]);
+      expect(run.stderr).toHaveLength(1);
+      expect(run.stderr[0]).toContain(`"code":"startup.arguments_invalid"`);
+      expect(run.stderr[0]).toContain(NO_REALM.slice("TypeError: ".length));
+    }
   });
 });

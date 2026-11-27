@@ -23,6 +23,8 @@
 //   laterthrows calls the original until the writer has loaded, then throws a RangeError
 //   laterstr    calls the original until the writer has loaded, then answers its digits as a
 //               string
+//   reproto     calls the original, and once the writer has loaded also sets the box's prototype
+//               to Object.prototype: it answers rightly and changes the box (review round 3, C-K-1)
 //
 // And the controls:
 //
@@ -66,6 +68,11 @@ const replacements: Record<string, (this: unknown) => unknown> = {
   later7() { return loaded ? 7n : original.call(this as bigint); },
   laterthrows() { if (loaded) throw new RangeError("replaced valueOf"); return original.call(this as bigint); },
   laterstr() { const held = original.call(this as bigint); return loaded ? String(held) : held; },
+  reproto() {
+    const held = original.call(this as bigint);
+    if (loaded) Object.setPrototypeOf(this as object, Object.prototype);
+    return held;
+  },
 };
 if (mode !== "none" && mode !== "novm") {
   const replacement = replacements[mode];
@@ -92,6 +99,14 @@ const values: Record<string, () => unknown> = {
   foreignBox: () => realm("Object(5n)"),
   bigBox: () => Object(2n ** 70n + 3n),
   foreignBigBox: () => realm("Object(-(2n ** 70n) - 3n)"),
+  // Boxes whose prototype was changed (review round 3, F-13): still boxes, holding 5n.
+  nullProtoBox: () => Object.setPrototypeOf(Object(5n), null),
+  objProtoBox: () => Object.setPrototypeOf(Object(5n), Object.prototype),
+  foreignNullProtoBox: () => realm("Object.setPrototypeOf(Object(5n), null)"),
+  foreignObjProtoBox: () => realm("Object.setPrototypeOf(Object(5n), Object.prototype)"),
+  // One box in two places, so a replacement that changes the box when asked is asked before the
+  // second place is read (review round 3, C-K-1).
+  twice: () => { const box = Object(5n); return { a: box, b: box }; },
   primitive: () => 9007199254740993n,
   date: () => new Date(0),
   url: () => new URL("https://example.com/a?b=1"),
@@ -103,6 +118,9 @@ const values: Record<string, () => unknown> = {
   string: () => new String("s"),
   foreignPlain: () => realm("({ a: 1 })"),
   foreignDate: () => realm("new Date(0)"),
+  // Objects of this realm with unusual prototype chains (review round 3, F-15).
+  nullProtoPlain: () => Object.assign(Object.create(null) as object, { a: 1 }),
+  nullChain: () => Object.assign(Object.create(Object.create(null) as object) as object, { a: 1 }),
 };
 
 const P = { id: "t.any", version: "1.0.0" };
@@ -146,6 +164,6 @@ const results = await run((r) => {
 
 const resolvedDate = await run(() => {}, () => ({ command: "count", when: new Date(0), at: new Point() }));
 const resolvedBox = await run(() => {}, () => ({ command: "count", id: Object(5n) }));
-const logged = await run(() => { console.log("row", { id: Object(5n), big: Object(2n ** 70n + 3n), when: new Date(0) }); });
+const logged = await run(() => { console.log("row", { id: Object(5n), big: Object(2n ** 70n + 3n), when: new Date(0), odd: Object.setPrototypeOf(Object(5n), null) }); });
 
 console.log(JSON.stringify({ mode, exact, threw, results, resolvedDate, resolvedBox, logged }));

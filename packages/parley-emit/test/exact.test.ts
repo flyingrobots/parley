@@ -14,6 +14,7 @@ import * as emit from "../src/index.ts";
 import { checkRecord, canonical, computeInv, defineTool, main, scrub, declaredProjection, ParleyRedactionConflict, ParleyRedactionUnchecked, type HistoryTransform, type MainOptions, type Run, type ToolSpec } from "../src/index.ts";
 import { pinned } from "./fixtures/pin-inv.ts";
 import { unwritable } from "../src/exact.ts";
+import { changedCarriesSecret } from "../src/redact.ts";
 /** The cap guard alone: whether `unwritable` refuses the value for an integer past the cap. */
 const holdsUnreadable = (v: unknown): boolean => unwritable(v) === "integer";
 
@@ -1253,7 +1254,7 @@ describe("PE-39 nothing a tool is handed, or hands over in parts, changes what w
     }
   });
 
-  test("a transform's line is withheld as unredacted only for a declared value in a member the transform changed or added, never for one the line holds where it held it (flyingrobots/parley#186, flyingrobots/parley#164)", async () => {
+  test("a transform's line is not withheld as unredacted for a declared value the line holds where the transform left it, and is for one the transform added (flyingrobots/parley#186, flyingrobots/parley#164)", async () => {
     // The writer's own lines hold scalars and field names of their own: the head's `"network":false`
     // and its `effects`. A declared secret equal to one of them is not something an identity transform restored.
     for (const secret of ["false", "network", "effects"]) {
@@ -1266,7 +1267,7 @@ describe("PE-39 nothing a tool is handed, or hands over in parts, changes what w
         const added = await go((run) => { run.result({ event: "result", value: 1 }, P.count); }, { argv: ["count", "--token", secret], transform: (rec) => (rec.event === "result" ? add(rec) : rec) });
         const warnings = of(added.err, "warning").filter((l) => l.includes("history.transform_unredacted"));
         expect(warnings.length).toBe(1);
-        expect(warnings[0]).toContain("in a member it changed or added");
+        expect(warnings[0]).toContain("outside the leaves and member names it left as the receipt line had them");
         expect(warnings[0]).not.toContain("already replaced");
         expect(of(added.stream, "result")).toEqual([]);
       }
@@ -1351,6 +1352,58 @@ describe("PE-39 nothing a tool is handed, or hands over in parts, changes what w
       expect(unredacted(r).length).toBe(1);
       expect(of(r.stream, "result")).toEqual([]);
     }
+  });
+
+  test("a declared value split across pieces the transform changed or added is withheld, the structure between them included (Baker Street case 2026-11-27-parley-pr199-r2, F-8)", async () => {
+    const cases: [string, Rec, (rec: Rec) => Rec][] = [
+      // The writer replaced list's one element; the transform puts the secret back as two elements.
+      ['a","b', { note: "n", list: ['a","b'] }, (rec) => ({ ...rec, list: ["a", "b"] })],
+      // The writer replaced note; the transform writes it back as note plus a member it adds.
+      ['x","b":"y', { note: 'x","b":"y' }, (rec) => ({ ...rec, note: "x", b: "y" })],
+      // Two sibling members added.
+      ['x","b":"y', { note: "n" }, (rec) => ({ ...rec, a: "x", b: "y" })],
+      // Both elements of an array changed.
+      ['a","b', { note: "n", list: ["p", "q"] }, (rec) => ({ ...rec, list: ["a", "b"] })],
+      // Two members added inside an object the line has.
+      ['x","q":"y', { note: "n", obj: { k: "z" } }, (rec) => ({ ...rec, obj: { k: "z", p: "x", q: "y" } })],
+    ];
+    for (const [secret, payload, f] of cases) {
+      const r = await go((run) => { run.result({ event: "result", ...payload }, P.note); }, { argv: ["count", "--token", secret], transform: onResult(f) });
+      withheld(r, "result", secret);
+    }
+  });
+
+  test("a declared value formed at a joint between unchanged members, by one dropped or by a new order, is withheld (Baker Street case 2026-11-27-parley-pr199-r2, F-9)", async () => {
+    const secret = 'x","b":"y';
+    const dropped = await go((run) => { run.result({ event: "result", note: "x", value: 1, b: "y" }, P.note); }, { argv: ["count", "--token", secret], transform: onResult(({ value: _v, ...rec }) => rec) });
+    withheld(dropped, "result", secret);
+    const reordered = await go((run) => { run.result({ event: "result", b: "y", note: "x" }, P.note); }, { argv: ["count", "--token", secret], transform: onResult(({ b, note, ...rec }) => ({ ...rec, note, b })) });
+    withheld(reordered, "result", secret);
+    // The same members in the line's own order, unchanged: the line's own text, so it passes.
+    const same = await go((run) => { run.result({ event: "result", note: "x", value: 1, b: "y" }, P.note); }, { argv: ["count", "--token", secret], transform: (rec) => rec });
+    expect(unredacted(same)).toEqual([]);
+    expect(of(same.stream, "result").length).toBe(1);
+  });
+
+  test("the guard writes the body's text as exactText does, so a body the transform left alone is the line's own whatever it holds (F-8)", () => {
+    const line = JSON.parse(`{"__proto__":{"k":"v"},"s":"q\\"\\n\\u2028 v","arr":[null,true,1.5,-0,{"k":"v"}],"n":{}}`) as Record<string, unknown>;
+    line.big = BIG;
+    const values = new Set(["v", "true", BIG_TEXT]);
+    // The same data, read again: every occurrence is inside an unchanged leaf or name.
+    const again = JSON.parse(JSON.stringify({ ...line, big: 0 })) as Record<string, unknown>;
+    again.big = BIG;
+    for (const k of Object.keys(line)) expect(Object.hasOwn(again, k)).toBe(true);
+    expect(changedCarriesSecret(again, line, values)).toBe(false);
+    // One leaf changed to a value that holds a declared one: found.
+    const changedLeaf = JSON.parse(JSON.stringify({ ...line, big: 0 })) as Record<string, unknown>;
+    changedLeaf.big = BIG;
+    (changedLeaf.arr as Rec[])[4] = { k: "vv" };
+    expect(changedCarriesSecret(changedLeaf, line, values)).toBe(true);
+    // Every occurrence is judged, not the first: one inside an unchanged leaf excuses no other.
+    expect(changedCarriesSecret({ a: "false", b: "false" }, { a: "false", b: "x" }, new Set(["false"]))).toBe(true);
+    expect(changedCarriesSecret({ b: "x", a: "false" }, { a: "false", b: "x" }, new Set(["false"]))).toBe(false);
+    // A range is a whole token, quotes included, and an occurrence must lie wholly inside it.
+    expect(changedCarriesSecret({ a: "x", b: "y" }, { a: "x", b: "y" }, new Set(['x","b']))).toBe(true);
   });
 
   test("identity and narrowing transforms pass whatever the declared value equals in the writer's own lines (flyingrobots/parley#186, flyingrobots/parley#164)", async () => {

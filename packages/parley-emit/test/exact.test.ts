@@ -1331,12 +1331,12 @@ describe("PE-39 nothing a tool is handed, or hands over in parts, changes what w
   });
 
   test("a number the transform changed is searched by its digits, and one it left alone is the line's own (F-1, F-6)", async () => {
-    const body = (run: Run) => { run.result({ event: "result", value: 1234 }, P.count); };
-    const same = await go(body, { argv: ["count", "--token", "23"], transform: (rec) => rec });
+    const body = (run: Run) => { run.result({ event: "result", value: 148210 }, P.count); };
+    const same = await go(body, { argv: ["count", "--token", "4821"], transform: (rec) => rec });
     expect(unredacted(same)).toEqual([]);
     expect(of(same.stream, "result").length).toBe(1);
-    const changed = await go(body, { argv: ["count", "--token", "23"], transform: onResult((rec) => ({ ...rec, value: 1235 })) });
-    withheld(changed, "result", `"value":1235`);
+    const changed = await go(body, { argv: ["count", "--token", "4821"], transform: onResult((rec) => ({ ...rec, value: 248219 })) });
+    withheld(changed, "result", `"value":248219`);
   });
 
   test("what the transform added is searched whole, structure and escaped spellings included", async () => {

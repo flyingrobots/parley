@@ -1252,11 +1252,81 @@ describe("PE-39 nothing a tool is handed, or hands over in parts, changes what w
       expect(plainGot).toBe(`{"list":[1,2]}`);
     }
   });
+});
 
-  test("when BigInt.prototype.valueOf was replaced before the package loaded, a boxed bigint is refused, never written as what the replacement returns; a primitive is still its digits", async () => {
-    const proc = Bun.spawn([process.execPath, join(import.meta.dir, "fixtures/valueof-before-load.ts")], { stdout: "pipe", stderr: "pipe" });
-    const out = await new Response(proc.stdout).text();
+// PE-39b: a `valueOf` on `BigInt.prototype` replaced before the writer loads (flyingrobots/parley#190,
+// the review of PR #196). The fixture runs as its own process, with `process.execPath`, so it runs on
+// the Bun the suite runs on, Bun 1.2.0 in the `oldest-bun` job. Its oracle is the contract, written
+// here: what a writer with no replacement writes for each value.
+describe("PE-39b a valueOf replaced before the writer loads is checked once, and is never what reads a box or classifies another object (flyingrobots/parley#190)", () => {
+  interface Sinks { status: number; stdout: string[]; stderr: string[]; receipt: string[]; stream: string[] }
+  interface Seen { mode: string; exact: Record<string, string>; threw: Record<string, string>; results: Sinks; resolvedDate: Sinks; resolvedBox: Sinks }
+  const ISO = `"1970-01-01T00:00:00.000Z"`;
+  /** Each value as a writer with no replacement writes it: the fixture's `none` mode, stated independently. */
+  const CONTROL: Record<string, string> = {
+    box: "5", foreignBox: "5", primitive: BIG_TEXT, date: ISO, url: `"https://example.com/a?b=1"`, map: "{}", regexp: "{}", error: "{}",
+    instance: `{"x":1,"y":2}`, number: "42", string: `"s"`, foreignPlain: `{"a":1}`, foreignDate: ISO,
+  };
+  const BOXES = ["box", "foreignBox"];
+  const REFUSAL = "TypeError: a boxed bigint could not be read: BigInt.prototype.valueOf was replaced before this package was loaded, and the replacement does not behave as the original";
+
+  async function seen(mode: string): Promise<Seen> {
+    const proc = Bun.spawn([process.execPath, join(import.meta.dir, "fixtures/valueof-before-load.ts"), mode], { stdout: "pipe", stderr: "pipe" });
+    const [out, err] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+    expect(err).toBe("");
     expect(await proc.exited).toBe(0);
-    expect(out.trim()).toBe(`{"boxed":"threw TypeError","primitive":"{\\"n\\":9007199254740993}"}`);
+    return JSON.parse(out) as Seen; // every value in it is a string: the sinks' lines are carried as text
+  }
+  /** The result lines of one sink, as `name` and the text of `value`, in the order written. */
+  const written = (lines: string[]) => of(lines, "result").map((l) => [(JSON.parse(l) as { name: string }).name, valueText(l)]);
+  const seqs = (lines: string[]) => lines.map((l) => Number(/"seq":(\d+),/.exec(l)![1]));
+
+  /** Every value is written as with no replacement, the same on every sink, with no `seq` skipped. */
+  function writesAsControl(s: Seen, refused: string[]) {
+    const expected = Object.entries(CONTROL).filter(([name]) => !refused.includes(name));
+    expect(s.results.status).toBe(0);
+    expect(s.results.stderr).toEqual([]);
+    for (const sink of [s.results.stdout, s.results.receipt, s.results.stream]) expect(written(sink)).toEqual(expected);
+    expect(of(s.results.stdout, "result")).toEqual(of(s.results.receipt, "result"));
+    // The receipt's seqs run on from the head with no gap: a refusal took none.
+    expect(seqs(s.results.receipt)).toEqual(s.results.receipt.map((_, i) => i + 1));
+    for (const [name, text] of expected) expect(s.exact[name]).toBe(`{"v":${text}}`);
+    // `resolved` holding a Date and a class instance is written as they are.
+    expect(s.resolvedDate.status).toBe(0);
+    expect(s.resolvedDate.receipt[0]).toContain(`"resolved":{"command":"count","when":${ISO},"at":{"x":1,"y":2}}`);
+  }
+
+  test("control: with no replacement, and with one that calls the original, every value is written as it is, a box as its digits", async () => {
+    for (const mode of ["none", "delegate"]) {
+      const s = await seen(mode);
+      expect(s.mode).toBe(mode);
+      expect(s.threw).toEqual({});
+      writesAsControl(s, []);
+      expect(s.resolvedBox.status).toBe(0);
+      expect(s.resolvedBox.receipt[0]).toContain(`"resolved":{"command":"count","id":5}`);
+    }
+  });
+
+  test.each([
+    ["hooked", "answers with an object holding a toJSON hook (the issue's)"],
+    ["str", "answers with a string"],
+    ["constbig", "answers with 7n for anything"],
+    ["throws", "throws a RangeError for anything"],
+  ])("valueOf replaced by %s, one that %s: a boxed bigint, of this realm or another, is refused with a TypeError naming the reason before a seq is taken and is on no sink; every other object is written as with no replacement, never refused, never an integer", async (mode) => {
+    const s = await seen(mode);
+    expect(s.threw).toEqual({ box: REFUSAL, foreignBox: REFUSAL });
+    for (const name of BOXES) expect(s.exact[name]).toBe(`threw ${REFUSAL}`);
+    writesAsControl(s, BOXES);
+    for (const sink of [s.results.stdout, s.results.receipt, s.results.stream]) {
+      for (const line of sink) expect(line).not.toMatch(/"name":"(box|foreignBox)"/);
+      expect(sink.join("\n")).not.toContain("call-");
+    }
+    // `resolved` holding a box is a startup failure that says why, with nothing on stdout.
+    expect(s.resolvedBox.status).toBe(3);
+    expect(s.resolvedBox.stdout).toEqual([]);
+    expect(s.resolvedBox.receipt).toEqual([]);
+    expect(s.resolvedBox.stderr).toHaveLength(1);
+    expect(s.resolvedBox.stderr[0]).toContain(`"code":"startup.arguments_invalid"`);
+    expect(s.resolvedBox.stderr[0]).toContain(REFUSAL.slice("TypeError: ".length));
   });
 });

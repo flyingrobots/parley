@@ -114,9 +114,13 @@ function declaresWrite(record: LoadedRecord): boolean {
   return Array.isArray(writes) && writes.length > 0;
 }
 
-/** `end` with a status that is a number other than zero: a run that did not succeed (§3.3, §3.4). */
+/**
+ * `end` with a status that is a number other than zero: a run that did not succeed (§3.3, §3.4).
+ * An integer beyond the safe range, which the loader keeps as a `bigint`, is a number other than zero.
+ */
 function endedBadly(record: LoadedRecord): boolean {
-  return record.event === "end" && typeof record.record.status === "number" && record.record.status !== 0;
+  const status = record.record.status;
+  return record.event === "end" && ((typeof status === "number" && status !== 0) || (typeof status === "bigint" && status !== 0n));
 }
 
 /**

@@ -26,10 +26,11 @@ byte-identical by test (spec §4.5). Fifteen are the versions released with spec
 `parley.query` and `parley.lens` are at 1.1.0, released with spec `0.2.1`, with their released 1.0.0 shipped beside them
 so lines an earlier reader wrote still validate (flyingrobots/parley#133).
 
-This is a library with no command, for Bun 1.2 or later. This is version 0.2.0 (tag
-`parley-read-v0.2.0`), on npm once the owner approves it
+This is a library with no command, for Bun 1.2 or later. This is version 0.3.0 (tag
+`parley-read-v0.3.0`), on npm once the owner releases and approves it
 ([docs/workflows/release-parley-read](../../docs/workflows/release-parley-read/README.md)).
-`bun add @flyingrobots/parley-read` installs it with `@flyingrobots/parley-emit` `^0.4.0`.
+`bun add @flyingrobots/parley-read` installs it with `@flyingrobots/parley-emit` `^0.5.0`, whose
+exact parser and serialiser it uses.
 Inside this repository it is the workspace package `@flyingrobots/parley-read`.
 
 ## Loading a directory's receipts
@@ -521,8 +522,8 @@ the ids are opened; a drill-down past it declines as a read does and opens nothi
 | `openRecords(request, opts)`, `planOpen(request)`, `openOne(id, bundles)` | The drill-down: records by `(run, seq)`, one outcome per id, recorded as a `parley.query` carrying `records`; its refusal rules as a pure function; one id resolved against loaded bundles |
 | `planQuery(request)`, `queryRecord(query)` | The refusal rules and the recorded payload, without any reading or writing |
 | `rankRecords(query, records)` | The view's order over records, pure: the same records reordered, never a subset |
-| `digestFor(query, answers, ranked, envelope, outcomes?)` | The bound over that order, pure: the digest's payload, the records it names, the count it excluded and how many of those it `folded`, the bytes its line takes and whether it `fits` a stated byte bound at all |
-| `foldRuns(ranked, outcomes?, view?)` | The fold `digestFor` applies first unless the read states `fold: false`, pure: runs of one invocation with one result named by the most recent of them, which lists the others in `stands_for` |
+| `digestFor(query, answers, ranked, envelope, outcomes?, heldBack?)` | The bound over that order, pure: the digest's payload, the records it names, the count it excluded and how many of those it `folded`, the bytes its line takes and whether it `fits` a stated byte bound at all |
+| `foldRuns(ranked, outcomes?, view?, heldBack?)` | The fold `digestFor` applies first unless the read states `fold: false`, pure: runs of one invocation with one result named by the most recent of them, which lists the others in `stands_for`; a run whose records carry `runHeldBack`, or one named in `heldBack`, never folds |
 | `sufficientBytes(query, answers, total, envelope, folded?)` | The smallest `budget.bytes` that holds a digest naming no records, which a byte decline names |
 | `Deadline`, `MONOTONIC`, `OVER_BUDGET`, `declineOnRun(run, budget, phase, last, over)` | The deadline `budget.ms` is checked against, the default clock, the decline code, and the step and error a decline reports on its run |
 | `digestLine`, `digestBytes` | The line the writer will write for a digest, and its length in UTF-8 bytes |
@@ -535,6 +536,9 @@ the ids are opened; a drill-down past it declines as a read does and opens nothi
 | `validator(schemas?)`, `schemaRef`, `envelopeGaps` | Exact-pair validation and the version-independent core (§4.5, §4.6) |
 | `SCHEMAS`, `SCHEMA_SOURCE` | The nineteen schemas this reader ships: each of the seventeen messages at its current released version, and the released 1.0.0 of `parley.query` and `parley.lens` beside their 1.1.0, with the commit and digest of each |
 | `QUARANTINE_CODES` | Which defect codes are a kept line rather than a judgement about a record |
+| `exactText(value)` | The writer's, re-exported: the JSON text of a record the reader returned, with no `toJSON` hook asked, which is what the reader itself compares and measures with |
+| `exactJson(value)`, `MAX_EXACT_DIGITS`, `ExactValue` | The writer's, re-exported. `JSON.stringify` for a record that may hold a `bigint`, which it writes as the JSON number it is; the most digits an integer may have and still be held exactly (4096); the type of a value a record can hold |
+| `heldBackRuns(load)`, `NUMBER_UNREPRESENTABLE`, `UNREPRESENTABLE_WARNING` | The runs a load held a line back from, which never fold; that line's defect code; and the code of the warning a read reports for them |
 
 ## What a load says, rule by rule
 
@@ -545,14 +549,69 @@ the ids are opened; a drill-down past it declines as a read does and opens nothi
 | A copy's extra fields folded in, a disagreement as a defect | §1.3: a copy may carry fields another omits, but copies must agree on every field they share |
 | The copy from the source with no transform line for the run, and the other as a `Projection` | §8: the receipt copy is the record and a projection is a view of it, so a reader prefers the least-projected copy it can see — and says what the other one was, and which `seq` it withheld |
 | A stray line quarantined, kept, attributed to the run | §1.4: kept and reported, and evidence of nothing but the fact that something wrote it |
+| Each integer with the value its text states: a `bigint` outside the safe-integer range, a number inside it | §1.1: a line is JSON, and a JSON number is a decimal of any size. A record never states an integer its receipt does not hold |
+| A line holding a number it cannot represent at all, held back whole as `line.number_unrepresentable` | The same: a non-integral decimal a double does not give back is not returned rounded. The bytes are kept, the run never folds, and a read warns |
 | An unterminated final line ignored, including a parseable `end` | §5.4: it is not a line, so it cannot establish termination |
 | `validated`, `invalid`, `partial`, `unvalidated` per record | §4.5: full validation is against the exact pair, and "the part I recognise passed" is never "the contract passed" |
 | A sidecar's bytes checked against `bytes` and `sha256`, and the record restored | §5: a sidecar stands in a record's place, and its path must not leave the bundle |
-| `replay.unavailable` with its reasons | §5, §5.3, §5.4: a broken sidecar, no terminated `end`, a non-zero status or a redacted receipt each rule replay out |
+| `replay.unavailable` with its reasons | §5, §5.3, §5.4: a broken sidecar, a line or sidecar holding a number the reader cannot hold, no terminated `end`, a non-zero status or a redacted receipt each rule replay out |
 
 `replay.unavailable: false` means only that nothing in the bundle rules replay out. Eligibility
 under §2.3 and §5.3 for the invocation at hand — whether that invocation supplied a declared
 secret, whether its `inv` matches — is the caller's to decide, and this reader does not know it.
+
+## Integers beyond the safe range are `bigint`
+
+A record comes back with the integers its receipt states (flyingrobots/parley#159). The boundary
+is JavaScript's safe-integer range, decided from the number as written:
+
+| In the receipt | In the returned record |
+| --- | --- |
+| `9007199254740991`, `5.0`, `1e3`: integer-valued, inside −9007199254740991 to 9007199254740991 | `number` |
+| `9007199254740992`, `9007199254740993`, `9007199254740993.0`, `9.007199254740993e15`, `1e400`: integer-valued, outside it | `bigint`, exact to the digit, **always**, even where a double could hold it |
+| `1.5`, `0.1`, `0.10`, `1e-1`: not an integer, and a double gives the decimal back | `number` |
+| `0.10000000000000001`, `1e-400`: not an integer, and a double does not give it back | not returned: the line is held back (below) |
+| `"9007199254740993"` | the string it is |
+
+So a caller receives a `bigint` exactly when a receipt line, or a sidecar's contents, holds an
+integer-valued number outside that range, at any depth. `ExactValue` is the type of a value a
+record can hold. This fixes integer precision only: a non-integral number is still a double, or its line is held back.
+
+**`JSON.stringify` throws on such a record.** Use the exported serialiser, which writes the
+integer as the JSON number it is, exact unquoted digits, and is otherwise `JSON.stringify` byte
+for byte. Illustrative, not captured:
+
+```ts
+import { exactJson, loadReceipts } from "@flyingrobots/parley-read";
+
+const record = loadReceipts({ cwd }).bundles[0].records[1].record;
+// Before 0.3.0: JSON.stringify(record) wrote {"value":9007199254740992} for a receipt holding ...993.
+// From 0.3.0:   JSON.stringify(record) throws a TypeError when the record holds a bigint.
+const text = exactJson(record);            // {"value":9007199254740993}
+if (typeof record.value === "bigint") { /* arithmetic on it is bigint arithmetic */ }
+```
+
+A consumer that parses that text with an ordinary `JSON.parse` loses the precision again.
+
+A read's own `parley.lens` line carries such an integer exactly when a head's `resolved` holds
+one: the section is measured by the text written, and `dropped` still means left out for size and
+nothing else.
+
+A record of a `parley.*` schema that holds a `bigint` is validated with the integer's exact
+value: `invalid` on one conclusive failure (an `end.status` of `9007199254740993` is over the
+schema's maximum), `validated` when every constraint that applies was decided, and `partial` with
+`why: "number_undecided"` when one could not be. Never on a rounded value. A `seq` beyond the
+range is rejected; a `t` beyond it leaves the record undated; an `end.status` beyond it is a
+failed run.
+
+A non-integral number is a `number` only when writing it back states the decimal it stated: `0.1`,
+`0.10` and `1e-1` are one value. A number the reader cannot hold at all is a non-integral decimal
+a double does not give back, such as `0.10000000000000001` or `0.1000000000000000055`, or an
+integer of more than 4096 digits, such as `1e1000000000` (an implementation limit). Its line is
+not returned as a record. It is kept verbatim as a `line.number_unrepresentable` defect,
+`counts.unrepresentable` counts it, its run never folds and is unavailable for replay, and the read reports a
+`read.number_unrepresentable` warning on its own run. The whole contract, and the measured cost of
+the scan, are in the [living reference](../../docs/topics/parley-read/README.md#numbers).
 
 ## What it does not do
 
@@ -570,9 +629,14 @@ secret, whether its `inv` matches — is the caller's to decide, and this reader
   digest the receipt declared, and nothing else.
 - Judge conformance. The doctor under `scripts/` names violated rules; this is a loader, and a
   defect it reports is what it could not read or could not validate.
-- Return an integer beyond 2^53 exactly. A record is parsed as JSON into doubles, so
-  `9007199254740993` comes back as `9007199254740992`, and two results that differ only in such an
-  integer compare equal and fold (flyingrobots/parley#159).
+- Make a non-integral decimal exact, or hold one a double does not give back, such as
+  `0.10000000000000001`, or an integer of more than 4096 digits. It keeps the line's bytes and
+  says so rather than return the number rounded. Versions up to 0.2.0 parsed every number into a
+  double, so there an integer outside −(2^53)+1 to (2^53)−1 might not be returned exactly, and two
+  results that differed only in such integers could compare equal and fold
+  (flyingrobots/parley#159).
+- Decide every schema keyword for an integer beyond the safe range: one it cannot decide leaves
+  the record `partial` (the living reference lists which).
 - Write, create or repair anything. Locating a location does not create it.
 - Windows paths. v0.2 of the spec is POSIX-only.
 

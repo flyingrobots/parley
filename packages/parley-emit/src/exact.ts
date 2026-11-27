@@ -34,26 +34,71 @@
 // of two million digits is counted, not converted.
 
 import { types } from "node:util";
+import { runInNewContext } from "node:vm";
 
 // Taken when this module loads, so a `valueOf` the process later puts on `BigInt.prototype` is
 // not what opens a boxed bigint. A primitive's digits are taken with `String`, which asks no
 // method of the prototype at all.
-const bigValueOf = BigInt.prototype.valueOf;
+const bigValueOf: unknown = BigInt.prototype.valueOf;
+
+/**
+ * Whether a method behaves as the real `BigInt.prototype.valueOf` on two values whose answers are
+ * known: a box holding `1n` answers `1n`, and a `Date`, which holds no bigint, throws. The method
+ * is called, and what it answers is compared, never used.
+ */
+function behavesAsValueOf(method: unknown): method is (this: unknown) => bigint {
+  if (typeof method !== "function") return false;
+  try { if (method.call(Object(1n)) !== 1n) return false; } catch { return false; }
+  try { method.call(new Date(0)); } catch { return true; }
+  return false;
+}
+
+/**
+ * Whether the method taken at load can be trusted to read a box (flyingrobots/parley#190). It is
+ * checked once, here. It fails only when the process replaced `valueOf` before this module loaded
+ * with one that does not behave as the original: it answers something else for a box, or answers
+ * for an object that holds no bigint, or throws for a box. A wrapper that calls the original passes.
+ * When it fails the writer never asks that method again: a boxed bigint is refused (`snapshot`),
+ * and every other object is classified and written as it would be with no replacement.
+ */
+const valueOfTrusted = behavesAsValueOf(bigValueOf);
+
+/**
+ * When the taken method is not trusted: the real `valueOf` of a realm this module makes for the
+ * purpose, unreachable by the replacement, used only to recognise a box from another realm on a
+ * Bun that `types.isBigIntObject` does not (1.2.0), never to read one. Made on first use; `null`
+ * when it cannot be made or does not behave as the original either.
+ */
+let recogniser: ((this: unknown) => bigint) | null | undefined;
+function untrustedRecogniser(): ((this: unknown) => bigint) | null {
+  if (recogniser === undefined) {
+    try {
+      const fresh: unknown = runInNewContext("BigInt.prototype.valueOf");
+      recogniser = behavesAsValueOf(fresh) ? fresh : null;
+    } catch { recogniser = null; }
+  }
+  return recogniser;
+}
 
 /**
  * Whether a value is a boxed `bigint`, from any realm. `types.isBigIntObject` answers it, except
  * that Bun 1.2.0 says no for a box made in another realm (a `vm` context), which the serialiser
  * still unboxes. So an object that is not plainly an ordinary one is asked directly: `valueOf`
  * reads the held value and throws for anything that holds none. Nothing of the value's own is
- * read to decide, no tag and no property, since the serialiser reads none either.
+ * read to decide, no tag and no property, since the serialiser reads none either. The `valueOf`
+ * asked is the one taken at load when it is trusted, and otherwise one of a fresh realm's.
  */
 export function isBoxedBigInt(value: unknown): boolean {
   if (types.isBigIntObject(value)) return true;
   if (value === null || typeof value !== "object" || Array.isArray(value) || types.isProxy(value)) return false;
   const proto: unknown = Object.getPrototypeOf(value);
   if (proto === Object.prototype || proto === null) return false; // an ordinary object of this realm: the common case, decided without a throw
-  try { bigValueOf.call(value); return true; } catch { return false; }
+  const ask = valueOfTrusted ? bigValueOf as (this: unknown) => bigint : untrustedRecogniser();
+  if (ask === null) return false;
+  try { ask.call(value); return true; } catch { return false; }
 }
+
+const UNREADABLE_BOX = "a boxed bigint could not be read: BigInt.prototype.valueOf was replaced before this package was loaded, and the replacement does not behave as the original";
 
 /** The most decimal digits an integer may have and still be held exactly; `1e400` has 401. */
 export const MAX_EXACT_DIGITS = 4096;
@@ -340,11 +385,12 @@ function snapshot(value: unknown, key: string, hooked: boolean, inside: object[]
   }
   if (typeof value === "function") return undefined;
   if (boxedBig) {
-    // The method this module took when it loaded is the real one unless the process replaced it
-    // first. The real one answers with a bigint; anything else means the box cannot be read,
-    // and it is refused, never written as what a replacement returned.
-    const held: unknown = bigValueOf.call(value);
-    if (typeof held !== "bigint") throw new TypeError("a boxed bigint could not be read: BigInt.prototype.valueOf was replaced before this package was loaded");
+    // The method this module took when it loaded reads the box only when it was found at load to
+    // behave as the real one. Otherwise the box is refused before anything is written, never
+    // read with a replacement and never written as what one returned.
+    if (!valueOfTrusted) throw new TypeError(UNREADABLE_BOX);
+    const held: unknown = (bigValueOf as (this: unknown) => unknown).call(value);
+    if (typeof held !== "bigint") throw new TypeError(UNREADABLE_BOX); // a backstop: a trusted method answers with a bigint
     return held;
   }
   if (types.isNumberObject(value)) return Number(value);

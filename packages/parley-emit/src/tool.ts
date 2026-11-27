@@ -64,7 +64,9 @@ export interface MainOptions {
    * The clock, in milliseconds since the epoch; the default is `Date.now`. A reading is believed
    * only when it is an integer from 0 to 2^48-1, the times a run id can hold. Any other reading,
    * or a throw, is replaced by `Date.now()` for that reading alone, without notice. The readings
-   * decide the run id, every `t`, the history stream's day file and both retentions.
+   * decide the run id, every `t`, the history stream's day file and both retentions. The clock
+   * is called unbound, so a method that reads `this` throws and is replaced: bind it
+   * (`now: () => harness.now()`).
    */
   now?: () => number;
   /** The declared inputs of this invocation, from the command's arguments. */

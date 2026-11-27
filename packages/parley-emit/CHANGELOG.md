@@ -236,15 +236,18 @@ that is not finite, which is now refused.
   retentions, and `Run` holds a clock handed to it directly to the same rule. `main` now returns
   a status for each case below. Where it rejected after it had begun capturing the console, the
   console stayed captured for the rest of the process and an empty receipt file was left behind.
-  Before:
-  - a clock returning `NaN` put `"t":null` on `startup.failed` and `undefined` in the run id and
-    the receipt's file name; with the history stream on, `main` rejected with `RangeError`;
-  - a negative or fractional reading was written as `t` on `startup.failed`, against its schema,
-    and a fractional one set the run id's time; a string was written as `t` as a string; a
-    `bigint` made `main` reject with `TypeError`;
+  Before, in 0.4.0, `main` and `Run` used each reading as given:
+  - a clock returning `NaN` or `Infinity` put `"t":null` on every line and `undefined` ten times in
+    the run id and the receipt's file name; with the history stream on, `main` rejected with
+    `RangeError`;
+  - a negative or fractional reading was written as every line's `t`, against its schema, and set
+    the run id's time (`-1` as 0, `1.5` as 1); a string was written as every `t` as a string, and
+    with the history stream on `main` rejected with `RangeError`; a `bigint` made `main` reject
+    with `TypeError`;
   - a reading of 2^48 or later gave a run id that is not a ULID (from 2^50 its time wraps to the
     start), and above 8.64e15 with the history stream on `main` rejected with `RangeError`;
-  - a clock that throws made `main` reject with the clock's error and write no `startup.failed`.
+  - a clock that throws made `main` reject with the clock's error and write no `startup.failed`,
+    unless the run had already started, when it ended with status 4.
 - Captured console output of a number that is not finite is its name (`NaN`, `Infinity`), as the
   console prints it; it was `null`. Inside a logged object it is still `null`: that text is the
   object's JSON form.

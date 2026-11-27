@@ -1311,6 +1311,7 @@ describe("PE-39b a valueOf replaced before the writer loads is checked once, and
     ["hooked", "answers with an object holding a toJSON hook (the issue's)"],
     ["str", "answers with a string"],
     ["constbig", "answers with 7n for anything"],
+    ["onebig", "answers with 1n for anything, right for a box holding 1n"],
     ["throws", "throws a RangeError for anything"],
   ])("valueOf replaced by %s, one that %s: a boxed bigint, of this realm or another, is refused with a TypeError naming the reason before a seq is taken and is on no sink; every other object is written as with no replacement, never refused, never an integer", async (mode) => {
     const s = await seen(mode);

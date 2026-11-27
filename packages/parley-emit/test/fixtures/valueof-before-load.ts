@@ -7,6 +7,7 @@
 //   hooked    answers with an object holding a toJSON hook (the issue's replacement)
 //   str       answers with a string
 //   constbig  answers with 7n for any receiver
+//   onebig    answers with 1n for any receiver, which is right for a box holding 1n
 //   throws    throws a RangeError for any receiver
 //   delegate  calls the original: a faithful wrapper
 //
@@ -26,6 +27,7 @@ const replacements: Record<string, (this: unknown) => unknown> = {
   hooked() { calls++; return { toJSON: () => `call-${calls}` }; },
   str() { return "zz"; },
   constbig() { return 7n; },
+  onebig() { return 1n; },
   throws() { throw new RangeError("replaced valueOf"); },
   delegate() { return original.call(this as bigint); },
 };

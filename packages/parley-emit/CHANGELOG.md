@@ -166,9 +166,11 @@ that is not finite, which is now refused.
   those characters are escaped, so it was never found; the line was appended with no warning and
   status 0. Present in 0.4.0 and earlier. The guard now looks where the scrub looks, in the
   body's values and keys, and in the text as well. The receipt, stdout and stderr were not
-  affected. The text search is wider than the scrub for numbers, as it was: a number whose
-  digits contain a declared secret is withheld here, though in a record the scrub replaces a
-  number only when its whole decimal form is the secret.
+  affected. The text search is wider than the scrub for numbers: a number the transform changed
+  or added whose digits contain a declared secret is withheld here, though in a record the scrub
+  replaces a number only when its whole decimal form is the secret. A number the transform left
+  as the receipt line had it is the line's own and is not searched (flyingrobots/parley#186,
+  below).
 - **A payload is read once** (review case 2026-11-25). The writer takes one snapshot of a payload
   as it would be written (`plain`: hooks applied, boxes opened, functions gone) before it is
   refused, scrubbed, checked or given a `seq`, and every sink is written from that snapshot by a
@@ -219,14 +221,25 @@ that is not finite, which is now refused.
 - Captured console output of a number that is not finite is its name (`NaN`, `Infinity`), as the
   console prints it; it was `null`. Inside a logged object it is still `null`: that text is the
   object's JSON form.
-- **A history transform's line is withheld as unredacted only for a declared value the transform
-  added** (flyingrobots/parley#186, flyingrobots/parley#164). The guard withheld any line whose
-  body matched a declared value, including one the writer's own line holds: with a secret equal
-  to `false`, or to a field name such as `network`, an identity transform lost the head from the
-  stream, and the warning said the writer "had already replaced" a value it had not. The guard
-  now compares the body with the receipt line: it withholds for a declared value in a place the
-  line did not have one, or one that occurs more often in the body's text than in the line's.
-  The warning says the body carries a declared value that the line did not hold.
+- **A history transform's line is withheld as unredacted only for a declared value in a member
+  the transform changed or added** (flyingrobots/parley#186, flyingrobots/parley#164). The guard
+  withheld any line whose body matched a declared value, including one the writer's own line
+  holds: with a secret equal to `false`, or to a field name such as `network`, an identity
+  transform lost the head from the stream, and the warning said the writer "had already
+  replaced" a value it had not. The guard now compares each member of the body with the receipt
+  line's member at the same place: object members by name, array elements by index. A leaf with
+  the same JSON text as the line's leaf at that place is the line's own and is not searched, so a
+  place that held a declared value may hold only that value afterwards, and no occurrence
+  elsewhere in the line covers a new one. A changed leaf is searched as itself and as its JSON
+  text. An added member, element or subtree is searched whole: its name, every value and key
+  under it, and its JSON text, structure included. The search is as strict as before: every
+  declared value, in every spelling the writer recognises (JSON-escaped included), as a
+  substring of a string or key, and of a number, boolean or null's text. A declared value that spans JSON
+  structure is matched only within changed or added material: one that runs across a changed
+  leaf and the unchanged text beside it is not found. A value moved to another place is
+  withheld, and so is an element that an earlier one dropped from its array has shifted to
+  another index (flyingrobots/parley#205). The warning says the body carries a declared value in
+  a member the transform changed or added.
 - **A member named `__proto__` is no longer dropped when a secret is present.** The scrub's copy
   assigned it, which set the copy's prototype instead of a member; so a record relayed from
   parsed JSON lost it beside any secret, and two `resolved` values differing only there shared

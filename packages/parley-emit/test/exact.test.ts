@@ -1253,7 +1253,7 @@ describe("PE-39 nothing a tool is handed, or hands over in parts, changes what w
     }
   });
 
-  test("a transform's line is withheld as unredacted only for a declared value the transform added, never for one the line already held (flyingrobots/parley#186, flyingrobots/parley#164)", async () => {
+  test("a transform's line is withheld as unredacted only for a declared value in a member the transform changed or added, never for one the line holds where it held it (flyingrobots/parley#186, flyingrobots/parley#164)", async () => {
     // The writer's own lines hold scalars and field names of their own: the head's `"network":false`
     // and its `effects`. A declared secret equal to one of them is not something an identity transform restored.
     for (const secret of ["false", "network", "effects"]) {

@@ -1473,6 +1473,27 @@ describe("PE-39 nothing a tool is handed, or hands over in parts, changes what w
     }
   });
 
+  test("retention never deletes the history segment or the receipt this run holds open, however the clock's readings change between them (CodeRabbit on flyingrobots/parley#195)", async () => {
+    // The day file is chosen from one reading and retention decides from a later one. Each reading
+    // is judged on its own, so the two can come from different clocks: believed, then refused (the
+    // run writes a 2020 file and retention runs by today), and refused, then believed (the run
+    // writes today's file and retention runs in 2030).
+    const past = Date.UTC(2020, 0, 1), future = Date.UTC(2030, 0, 1);
+    for (const [first, later] of [[past, Number.NaN], [Number.NaN, future]] as const) {
+      let calls = 0;
+      const r = await go((run) => { run.result({ event: "result", value: 1 }, P.any); }, { stream: true, over: { retention: { count: 1 } }, extra: { now: () => (calls++ < 2 ? first : later) } });
+      expect(calls).toBeGreaterThan(2);
+      expect(r.status).toBe(0);
+      expect(of(r.receipt, "end").length).toBe(1);
+      expect(r.receipt.some((l) => l.includes("history retention: deleted"))).toBe(false);
+      expect(r.receipt.some((l) => l.includes("retention: deleted"))).toBe(false);
+      const run = (JSON.parse(r.out[0]!) as { run: string }).run;
+      const mine = r.stream.filter((l) => l.includes(`"run":"${run}"`));
+      expect(of(mine, "result").length).toBe(1);
+      expect(of(mine, "end").length).toBe(1);
+    }
+  });
+
   test("a transform's line is not withheld as unredacted for a declared value the line holds where the transform left it, and is for one the transform added (flyingrobots/parley#186, flyingrobots/parley#164)", async () => {
     // The writer's own lines hold scalars and field names of their own: the head's `"network":false`
     // and its `effects`. A declared secret equal to one of them is not something an identity transform restored.

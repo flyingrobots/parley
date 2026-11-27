@@ -138,7 +138,7 @@ stream configured is the program that existed before the sink did.
 | Retention | `PARLEY_HISTORY_DAYS` daily segments, today's included, default 14; older segments are unlinked whole and the deletion is a `receipt.step`. Never on `--dry-run`, which records what it would delete |
 | Appending | `O_APPEND`, one whole line per write, so concurrent writers cannot split each other's lines. A short write is abandoned rather than continued and the stream is dropped for the rest of the run |
 | Failing | An unopenable path is one `history.unavailable` warning; a failed append is one `history.write_failed` warning. Neither is an error, a sink failure or a change of exit status |
-| Injecting | `MainOptions.history` takes a sink, `null`, or `{ sink?, transform?, name? }`, beside `stdout`, `stderr`, `now` and `home` |
+| Injecting | `MainOptions.history` takes a sink, `null`, or `{ sink?, transform?, name? }`, beside `stdout`, `stderr`, `now` and `home`. A reading of `now` that is not an integer from 0 to 2^48-1 milliseconds, or a throw, is replaced by the system clock's reading for that reading alone, without notice; the readings choose the day file and decide retention |
 | Projecting | `{ history: { transform } }` narrows the stream copy and nothing else; see below. `refuseSuspectedSecrets()` is the built-in |
 
 Two decisions the issue (flyingrobots/parley#3) left to the owner are implemented behind a

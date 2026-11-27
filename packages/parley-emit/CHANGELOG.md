@@ -227,9 +227,24 @@ that is not finite, which is now refused.
 - A `bigint` is its digits whatever the process has put on `BigInt.prototype`: `toString` and
   `valueOf` there are not asked either. (A `valueOf` installed before this package is loaded
   still opens a boxed `bigint`; a primitive is unaffected.)
-- A clock that answers with something that is not a time (an injected `now` returning `NaN`) no
-  longer puts `"t":null` on a line or `undefined` in a run id: the system clock's reading is
-  used, at startup and after (flyingrobots/parley#189).
+- An injected clock (`MainOptions.now`) is believed only when it answers with a time a run id can
+  hold: an integer number of milliseconds from 0 to 2^48-1 (in the year 10889). Any other answer,
+  and a throw, is not believed and the system clock's reading is used, at startup and after
+  (flyingrobots/parley#189). Each reading is judged on its own and replaced without notice, so a
+  clock that is a time only sometimes gives a run whose run id and `t` values come from both
+  clocks. The rule decides the run id, every `t`, the history stream's day file and both
+  retentions, and `Run` holds a clock handed to it directly to the same rule. `main` now returns
+  a status for each case below. Where it rejected after it had begun capturing the console, the
+  console stayed captured for the rest of the process and an empty receipt file was left behind.
+  Before:
+  - a clock returning `NaN` put `"t":null` on `startup.failed` and `undefined` in the run id and
+    the receipt's file name; with the history stream on, `main` rejected with `RangeError`;
+  - a negative or fractional reading was written as `t` on `startup.failed`, against its schema,
+    and a fractional one set the run id's time; a string was written as `t` as a string; a
+    `bigint` made `main` reject with `TypeError`;
+  - a reading of 2^48 or later gave a run id that is not a ULID (from 2^50 its time wraps to the
+    start), and above 8.64e15 with the history stream on `main` rejected with `RangeError`;
+  - a clock that throws made `main` reject with the clock's error and write no `startup.failed`.
 - Captured console output of a number that is not finite is its name (`NaN`, `Infinity`), as the
   console prints it; it was `null`. Inside a logged object it is still `null`: that text is the
   object's JSON form.

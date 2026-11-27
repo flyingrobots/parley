@@ -230,7 +230,7 @@ that is not finite, which is now refused.
   replaced" a value it had not. The guard now compares each member of the body with the receipt
   line's member at the same place: object members by name, array elements by index. A leaf with
   the same JSON text as the line's leaf at that place, and a member name the line's object there
-  also has, is unchanged: the line's own. The body's whole JSON text is still searched, as
+  also has, is unchanged: the line's own. The line's whole JSON text as it would be written, envelope included, is still searched, as
   before, for every declared value in every spelling the writer recognises (JSON-escaped
   included), structure included; an occurrence is excused only when it lies wholly inside the
   text of one unchanged leaf or member name. So a place that held a declared value may hold only

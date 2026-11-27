@@ -8,7 +8,7 @@ import { checkRecord } from "./check.ts";
 import { exactText, MAX_EXACT_DIGITS, parseExact, plain, unwritableClause, unwritablePlain } from "./exact.ts";
 import type { HistoryProjection, HistorySink } from "./history.ts";
 import { canonicalPlain, computeInvPlain, digestInput, sha256, type InputDecl, type InputDescriptor } from "./inv.ts";
-import { carriesSecret, replaceSecrets, scrubPlain, scrubPointer } from "./redact.ts";
+import { carriesSecret, changedCarriesSecret, replaceSecrets, scrubPlain, scrubPointer } from "./redact.ts";
 import { isHistoryRefusal, type HistoryRefusal } from "./refusal.ts";
 
 export interface Sink { write(line: string): void }
@@ -333,7 +333,9 @@ export class Run {
     // out would be reported as a receipt sink failure and close the run with status 4 — the stream
     // failing the run it is an optional observer of, which §8 forbids. A record that cannot be
     // serialised (a cycle) is withheld like any other failure.
-    try { return this.projectOne(rec, seq, p); }
+    // A second reading of the same text, which the transform is never handed: what the line held
+    // before the transform could change the record it was given.
+    try { return this.projectOne(rec, (parseExact(text) as { value: Record_ }).value, seq, p); }
     catch (e) {
       const msg = e instanceof Error ? e.message || e.name : String(e);
       this.withhold({ code: "history.transform_failed", problem: `the projection of seq ${seq} by ${p.name} could not be completed: ${msg}; that line is not on the shared stream and the receipt is unaffected`, remedy: "return a record that serialises as JSON: no cycles, nothing the receipt line did not already carry" });
@@ -341,13 +343,14 @@ export class Run {
     }
   }
 
-  private projectOne(rec: Record_, seq: number, p: HistoryProjection): string | null {
+  private projectOne(rec: Record_, line: Record_, seq: number, p: HistoryProjection): string | null {
     const stamp = rec._schema as { id?: unknown; version?: unknown } | undefined;
     const pair = `${typeof stamp?.id === "string" ? stamp.id : "?"}@${typeof stamp?.version === "string" ? stamp.version : "?"}`;
     // The envelope is taken before the transform runs, not read back off the record afterwards: a
     // transform that mutates the record it was handed and returns it would otherwise hand back its
     // own envelope, and the receipt line's is the only one that may stand (§1.3).
     const envelope = { event: rec.event, t: rec.t, seq: rec.seq, run: rec.run, _schema: { id: stamp?.id, version: stamp?.version } };
+    const secrets = this.init.secretValues;
     let returned: unknown;
     try { returned = p.fn(rec); } catch (e) {
       const msg = e instanceof Error ? e.message || e.name : String(e);
@@ -372,13 +375,19 @@ export class Run {
       return null;
     }
     const { event: _event, t: _t, seq: _seq, run: _run, _schema: _stamp, ...body } = taken as Record_;
-    // A declared secret is looked for in the body's values and keys, as the scrub looks, and in
-    // its text as well. The text alone is not enough: there a quote, a backslash or a newline in
-    // the secret is escaped, and the secret is never found (review case 2026-11-25).
-    const restored: string[] = [];
-    if (this.init.secretValues.size > 0) scrubPlain(body, this.init.secretValues, "", restored);
-    if (this.init.secretValues.size > 0 && (restored.length > 0 || carriesSecret(exactText(body), this.init.secretValues))) {
-      this.withhold({ code: "history.transform_unredacted", problem: `the history transform ${p.name} returned a body for seq ${seq} carrying a declared secret value the writer had already replaced; that line is not on the shared stream`, remedy: "a transform narrows a record; it never restores a value §5.3 replaced" });
+    const out: Record_ = { event: envelope.event, t: envelope.t, seq: envelope.seq, run: envelope.run, ...body, _schema: envelope._schema };
+    // The line as it would be written is compared with the receipt line, from the reading the
+    // transform never sees, member by member at the same place, the envelope included. Its whole
+    // JSON text is searched for every declared value, where a quote, a backslash or a newline in
+    // the secret is escaped (review case 2026-11-25), and changed or added material is searched as
+    // the scrub looks too. An occurrence wholly inside a leaf or member name left as the line had it
+    // is the line's own: the writer's scalars and field names (`false`, `decision`) equal to a
+    // secret are not something a transform restored (flyingrobots/parley#186,
+    // flyingrobots/parley#164). Any other occurrence withholds the line, so a place that held a
+    // declared value may hold only that value and no occurrence elsewhere covers a new one (Baker
+    // Street reviews of flyingrobots/parley#199). See `changedCarriesSecret`.
+    if (changedCarriesSecret(out, line, secrets)) {
+      this.withhold({ code: "history.transform_unredacted", problem: `the history transform ${p.name} returned a body for seq ${seq} that carries a declared secret value outside the leaves and member names it left as the receipt line had them at the same place; that line is not on the shared stream`, remedy: "a transform narrows a record; it never adds a declared secret value, or restores one §5.3 replaced" });
       return null;
     }
     const doc = p.schemas.get(pair);
@@ -386,7 +395,6 @@ export class Run {
       this.withhold({ code: "history.transform_uncheckable", problem: `seq ${seq} advertises ${pair}, which this writer holds no schema document for, so the projection by ${p.name} could not be re-validated and that line is not on the shared stream`, remedy: "declare the schema on the command's emitted type (spec §4.2) so a projection of it can be checked, or remove the transform" });
       return null;
     }
-    const out: Record_ = { event: envelope.event, t: envelope.t, seq: envelope.seq, run: envelope.run, ...body, _schema: envelope._schema };
     // A body the writer could not write is no more the stream's than the receipt's. Asked before
     // the schema is, so the warning names the cause whatever the schema says of the field.
     const why = unwritablePlain(body);

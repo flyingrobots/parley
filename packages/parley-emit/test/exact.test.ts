@@ -1385,6 +1385,20 @@ describe("PE-39 nothing a tool is handed, or hands over in parts, changes what w
     expect(of(same.stream, "result").length).toBe(1);
   });
 
+  test("a declared value that runs from a member the transform added into the envelope beside it is withheld (Baker Street case 2026-11-27-parley-pr199-r2, blind pass M-F-1)", async () => {
+    // The body's last member is written beside `_schema`, its first beside `run` or a key the
+    // engine orders first: the line as written is searched, envelope included.
+    const last = await go((run) => { run.result({ event: "result", note: "n" }, P.note); }, { argv: ["count", "--token", 'x","_schema'], transform: onResult((rec) => ({ ...rec, tail: "x" })) });
+    withheld(last, "result", 'x","_schema');
+    const first = await go((run) => { run.result({ event: "result", note: "n" }, P.note); }, { argv: ["count", "--token", 'x","event'], transform: onResult((rec) => ({ ...rec, 1: "x" })) });
+    withheld(first, "result", 'x","event');
+  });
+
+  test("every occurrence of a declared value is judged: one inside a number the transform left alone excuses no other (Baker Street case 2026-11-27-parley-pr199-r2, checker C-F-2)", async () => {
+    const r = await go((run) => { run.result({ event: "result", value: 148210, b: 0 }, P.note); }, { argv: ["count", "--token", "4821"], transform: onResult((rec) => ({ ...rec, b: 48210 })) });
+    withheld(r, "result", `"b":48210`);
+  });
+
   test("the guard writes the body's text as exactText does, so a body the transform left alone is the line's own whatever it holds (F-8)", () => {
     const line = JSON.parse(`{"__proto__":{"k":"v"},"s":"q\\"\\n\\u2028 v","arr":[null,true,1.5,-0,{"k":"v"}],"n":{}}`) as Record<string, unknown>;
     line.big = BIG;

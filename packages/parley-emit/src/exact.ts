@@ -463,8 +463,10 @@ export function plain(value: unknown, key = ""): unknown {
 
 /**
  * `exactJson`, for text that only describes a value (captured console output): a box or an object
- * `plain` refuses is written as a string naming why, `"[unwritable: a boxed bigint could not be
- * read]"`, where `plain` would throw, so the rest of the value is still its JSON.
+ * `plain` refuses is written, where `plain` would throw, as a string naming why: the head of the
+ * refusal's reason, up to its first colon (`"[unwritable: a boxed bigint could not be read]"`, or
+ * with no realm `"[unwritable: a boxed bigint, or an object that cannot be told from one, could
+ * not be written]"`), so the rest of the value is still its JSON.
  */
 export function describingJson(value: unknown): string {
   return exactText(snapshot(value, "", false, [], true));

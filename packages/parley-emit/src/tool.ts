@@ -2,7 +2,7 @@
 // into a conforming run (spec §3, §4, §6).
 import { closeSync, openSync, readSync, readdirSync, rmSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { historyBookkeeping, historyDays, historyProjection, isHistoryFailure, isHistorySink, openHistory, resolveHistory, retainHistory, type HistoryConfig, type HistoryPlan, type HistoryProjection, type HistorySink } from "./history.ts";
 import { exactJson, plain, unwritableClause, unwritablePlain } from "./exact.ts";
 import { computeInvPlain, type InputDecl } from "./inv.ts";
@@ -288,7 +288,7 @@ export async function main(spec: ToolSpec, argv: readonly string[], handler: Han
     run.noteProjection();
 
     retain(run, location.receiptDir, spec.retention.count, dryRun, now());
-    if (history) retainStream(run, history.dir, historyPlan?.days ?? historyDays(env), dryRun, now());
+    if (history) retainStream(run, history.dir, historyPlan?.days ?? historyDays(env), dryRun, now(), basename(history.path));
 
     if (discovery) {
       try { discover(run, spec, discovery, commandName, bookkeeping); } catch (e) {
@@ -483,8 +483,9 @@ export function retain(run: Run, receiptDir: string, count: number, dryRun: bool
  * unlinking a segment nobody is writing to and cannot be expired by rewriting. Recorded as a
  * decision, like the receipt's retention, and skipped on a dry run.
  */
-function retainStream(run: Run, dir: string, days: number, dryRun: boolean, at: number): void {
-  const segments = retainHistory(dir, days, at, dryRun);
+function retainStream(run: Run, dir: string, days: number, dryRun: boolean, at: number, open: string): void {
+  // The open segment is never retention's to delete: it was chosen from an earlier reading than `at`.
+  const segments = retainHistory(dir, days, at, dryRun, open);
   if (!segments.length) return;
   if (dryRun) { run.writerStep(`history retention: would delete ${segments.length} segment(s)`, `the shared history stream keeps ${days} daily segment(s), today's included; a dry run performs no retention deletion (§4.3)`, { segments }); return; }
   run.writerStep(`history retention: deleted ${segments.length} segment(s)`, `the shared history stream keeps ${days} daily segment(s), today's included; older segments are deleted whole, since an append-only file with concurrent writers cannot be rewritten safely (§5.1, §8)`, { segments });

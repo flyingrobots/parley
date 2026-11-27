@@ -203,14 +203,15 @@ export function writeWholeLine(fd: number, line: string, write: (fd: number, b: 
 
 /**
  * §5.1 for the stream: keep `days` daily segments, today's included, and delete the rest whole.
- * Files that are not dated segments are left alone. Returns the names deleted, or the names that
- * would be deleted when `dryRun`.
+ * Files that are not dated segments are left alone, and so is `keep`, the segment a run holds open:
+ * it was chosen from an earlier reading of the clock than `now`, so it may look expired. Returns the
+ * names deleted, or the names that would be deleted when `dryRun`.
  */
-export function retainHistory(dir: string, days: number, now: number, dryRun = false): string[] {
+export function retainHistory(dir: string, days: number, now: number, dryRun = false, keep?: string): string[] {
   const keepFrom = segmentName(now - (Math.max(1, days) - 1) * DAY_MS);
   let names: string[];
   try { names = readdirSync(dir).filter((n) => SEGMENT.test(n)); } catch { return []; }
-  const stale = names.filter((n) => n < keepFrom).sort();
+  const stale = names.filter((n) => n < keepFrom && n !== keep).sort();
   if (dryRun) return stale;
   const gone: string[] = [];
   for (const n of stale) {

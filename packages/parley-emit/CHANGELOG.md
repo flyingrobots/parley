@@ -248,6 +248,11 @@ that is not finite, which is now refused.
     start), and above 8.64e15 with the history stream on `main` rejected with `RangeError`;
   - a clock that throws made `main` reject with the clock's error and write no `startup.failed`,
     unless the run had already started, when it ended with status 4.
+- Stream retention never deletes the segment the run itself holds open. The day file is chosen
+  from one reading of the clock and retention decides from a later one, so a clock whose readings
+  changed between the two (believed, then refused, or the reverse) could make the open segment
+  look expired and delete it, losing the rest of the run's stream lines. `retainHistory` takes the
+  segment to keep as a new optional last argument. The run's own receipt was already spared.
 - Captured console output of a number that is not finite is its name (`NaN`, `Infinity`), as the
   console prints it; it was `null`. Inside a logged object it is still `null`: that text is the
   object's JSON form.

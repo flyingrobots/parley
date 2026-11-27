@@ -88,7 +88,7 @@ it. This page is the reference for what the package does on `main`; the package
    what the hook returns, applied once, and a boxed primitive as its primitive
    (flyingrobots/parley#178). The payload is read once for this, the refusal and every sink:
    one snapshot, taken before a `seq`. A `toJSON` on `BigInt.prototype` is never asked, so a
-   `bigint` is its digits whatever the process has installed (a boxed one is refused if `BigInt.prototype.valueOf` was replaced before the package loaded). What is recognised is the value
+   `bigint` is its digits whatever the process has installed. A boxed one is read with the `BigInt.prototype.valueOf` taken when the package loads, which is checked once then against the original's answers for a box holding `1n` and for a `Date`; if the process replaced it before that with one that fails the check (it answers otherwise, or throws), a boxed `bigint` of any realm is refused with a `TypeError` before a `seq` (in `resolved`, `startup.arguments_invalid`), and every other object is classified and written as it is with no replacement, never refused and never written as an integer. A replacement that answers both check values as the original does and lies for other receivers is not detected: it is trusted, and a `bigint` it answers for a box, or for another object it does not throw for, is written as that object's value (flyingrobots/parley#190). What is recognised is the value
    inside one string, as a scalar's decimal form, or inside a key: not the value split, parsed
    into parts, re-encoded, hashed or truncated, which is the tool's to keep out. The default
    descriptor sinks retry a full pipe and continue a partial write; a sidecar that cannot be

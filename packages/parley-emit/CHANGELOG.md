@@ -212,10 +212,7 @@ that is not finite, which is now refused.
 - A diagnostic passed to `warning` or `error` is read once, so the `code` that is checked is the
   `code` that is written; its getters were read twice.
 - A `bigint` is its digits whatever the process has put on `BigInt.prototype`: `toString` and
-  `valueOf` there are not asked either. One limit: the writer takes `valueOf` when it is loaded,
-  so if a process replaced it before that, a boxed `bigint` (`Object(5n)`) cannot be read and is
-  refused with a `TypeError`, never written as what the replacement returns
-  (flyingrobots/parley#190). A primitive `bigint` is unaffected.
+  `valueOf` there are not asked either. One limit, for a boxed `bigint` (`Object(5n)`) only (flyingrobots/parley#190): the writer takes `valueOf` when it is loaded and checks once that it behaves as the original (a box holding `1n` answers `1n`, a `Date` throws), which calls it at most twice. A wrapper that calls the original passes. If the process replaced `valueOf` before the package loaded with one that fails the check, whether it answers a non-`bigint`, answers a `bigint` for anything, or throws, a boxed `bigint` of any realm is refused with a `TypeError` that names the reason, before a `seq` is taken, and every other object (a `Date`, `URL`, `Map`, `Error`, class instance, boxed `Number` or `String`, or an object from another realm) is written as it is with no replacement: never refused as a box, never written as an integer. A replacement that answers both check values as the original does and lies for other receivers is not detected: it is trusted, so a `bigint` it answers for a box, or for another object it does not throw for, is written as that object's value. A primitive `bigint` is unaffected.
 - A clock that answers with something that is not a time (an injected `now` returning `NaN`) no
   longer puts `"t":null` on a line: the system clock's reading is used.
 - Captured console output of a number that is not finite is its name (`NaN`, `Infinity`), as the

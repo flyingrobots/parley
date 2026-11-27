@@ -359,9 +359,9 @@ Before 0.5.0 the call threw `TypeError: JSON.stringify cannot serialize BigInt.`
 with `uncaught.exception` and status 2, unless the process had installed a `toJSON` on
 `BigInt.prototype`, in which case the `bigint` was written as what that hook returned (a quoted
 string, with the common polyfill). From 0.5.0 that hook is never asked: a `bigint` is written as
-its digits whatever the process has installed on `BigInt.prototype`. One limit: a boxed `bigint`
-(`Object(5n)`) is refused with a `TypeError` if the process replaced `BigInt.prototype.valueOf`
-before this package was loaded, because the box can then not be read.
+its digits whatever the process has installed on `BigInt.prototype`.
+
+A boxed `bigint` (`Object(5n)`) has one limit (flyingrobots/parley#190). The writer reads a box with the `BigInt.prototype.valueOf` it takes when it is loaded, so a replacement installed later is never asked. When it loads it checks once that the method it took behaves as the original: a box holding `1n` must answer `1n`, and a `Date` must throw. That calls the method at most twice. A wrapper that calls the original passes, and nothing changes. If the process replaced `valueOf` before this package was loaded with one that fails the check (it answers something else for a box, answers for an object that holds no `bigint`, or throws), the writer never asks it again. A boxed `bigint`, from this realm or another, is then refused with `TypeError: a boxed bigint could not be read: …` before a `seq` is taken, and nothing of the record is written; in `resolved` it is `startup.arguments_invalid`, exit 3. The refusal is a `TypeError` even when the replacement throws something else. Every other value is written as it is with no replacement: a primitive `bigint` as its digits, a `Date` as its ISO string, a class instance as its members, a boxed `Number` or `String` as its primitive, an object from another realm as its members. None of them is refused, and none is written as an integer. What the check cannot see is a replacement that answers both of its values as the original does and lies for others: it is trusted, so a `bigint` it answers for a box, or for another object it does not throw for, is written as that object's value.
 
 | Where | What happens to a `bigint` |
 | --- | --- |

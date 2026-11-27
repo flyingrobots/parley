@@ -3225,14 +3225,15 @@ describe("PE-34 a record the writer raises on its own account is writer-built, a
       writeFileSync(join(hist, stale), "{}\n");
       const r = await runCount(dir, { ...env, PARLEY_HISTORY: hist, PARLEY_HISTORY_DAYS: "2" }, ["count", "--token", secret], () => {}, {}, [], { history: { transform: (rec) => rec, name: "identity" } });
       settled(r, secret, 0);
-      // The stream copy is another matter and a warning, never an error: the check on what a
-      // transform returns counts a field name equal to the secret as the secret, so those lines
-      // stay off the shared stream (flyingrobots/parley#164). The receipt has every one.
-      expect(r.stderr.objs.map((o) => [o.event, o.code]).filter(([e, c]) => e !== "warning" || c !== "history.transform_unredacted")).toEqual([]);
-      if (secret === CONTROL) expect(r.stderr.objs).toEqual([]);
+      // The stream copy is the same: an identity transform returns every member of the line
+      // unchanged, and a field name equal to the secret is the line's own, not something the
+      // transform restored (flyingrobots/parley#164). No warning, and both steps on the stream.
+      expect(r.stderr.objs).toEqual([]);
       const decisions = (r.receiptLines.filter((o) => o.event === "receipt.step") as unknown as { decision: string; because: string }[]).map((o) => o.decision);
       expect(decisions).toEqual(["the shared stream's copy of this run is a projection by identity", "history retention: deleted 1 segment(s)"]);
       expect(existsSync(join(hist, stale))).toBe(false);
+      const streamed = readdirSync(hist).flatMap((n) => readFileSync(join(hist, n), "utf8").trimEnd().split("\n")).map((l) => JSON.parse(l) as { event?: string; decision?: string });
+      expect(streamed.filter((o) => o.event === "receipt.step").map((o) => o.decision)).toEqual(decisions);
     });
   }
 

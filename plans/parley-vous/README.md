@@ -15,7 +15,7 @@ The plan is a task graph and one drafted issue body per task. Table 1 lists the 
 | `dag.v1.json` | The graph before `edits-0744.sh` (kept to show what changed) |
 | `edits-0744.sh` | The edits that produced `dag.json` from `dag.v1.json`, then verified it with Taskalisk |
 | `render.ts` | Renders one issue body per task into `issues/`, from the canonical Taskalisk task template's sections |
-| `issues/*.md` | The drafted issue bodies, 26 of the 31; references are symbolic (`@KEY`) until the issues exist |
+| `issues/*.md` | The drafted issue bodies, all 31; references are symbolic (`@KEY`) until the issues exist |
 
 _Table 1. The files of the draft plan._
 
@@ -39,22 +39,9 @@ The decision task A comes first; the four H tasks can start beside it.
 
 ## Still to do before filing
 
-Five tasks are in the graph but have no drafted body yet. Table 3 lists them.
+All 31 bodies are drafted, and every task's prerequisites in `render.ts` match `dag.json`. The five added last (M4, N3, N4, R and X) came with the edits in `edits-0744.sh`; adding them also brought the bodies of K, M1, M3, N, N2 and P in line with the graph. The remaining steps, in order:
 
-| Task | Title |
-| --- | --- |
-| M4 | parley-vous (PyPI) reads receipts: the read API, ported from the TypeScript reader |
-| N3 | parley-vous (crate) writes Parley-vous output: the write API |
-| N4 | parley-vous (crate) reads receipts: the read API |
-| R | The parley-vous CLI (Rust, on the crate) queries history, opens records and checks a captured run (existing parley#138, rewritten) |
-| X | A language-agnostic conformance corpus (bash + bats) runs against every parley-vous package |
-
-_Table 3. Tasks without a drafted body. Each needs one before the plan is filed._
-
-The remaining steps, in order:
-
-1. Write the five missing bodies in `render.ts` and regenerate `issues/`.
-2. Show every body to the maintainer word for word; file only what is approved (Taskalisk's *Propose, then apply*).
-3. File the issues, replace each `@KEY` with the real `owner/repo#N`, and compile the plan with Taskalisk against GitHub.
+1. Show every body to the maintainer word for word; file only what is approved (Taskalisk's *Propose, then apply*).
+2. File the issues, replace each `@KEY` with the real `owner/repo#N`, and compile the plan with Taskalisk against GitHub.
 
 After step 3, change nothing here: the issues are the plan.

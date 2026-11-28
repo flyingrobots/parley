@@ -5,7 +5,7 @@
 .id: flyingrobots/parley-vous#NEW
 .kind: task
 .type: feature
-.blocked_by: [@L3, @M3, @N2, @O, @K]
+.blocked_by: [@L3, @M3, @N2, @O, @X, @R]
 .size_hours: 1
 ```
 
@@ -25,7 +25,8 @@ One approved tag publishes the npm, PyPI and crates.io `parley-vous` packages at
 - [ ] @M3: PyPI artifact proven
 - [ ] @N2: crate artifact proven
 - [ ] @O: version gate in place
-- [ ] @K: the site deploys with the release
+- [ ] @X: the three packages agree on one conformance corpus
+- [ ] @R: the command ships in the crate's release
 
 ## Safe intermediate state
 Nothing publishes until the tag is approved.

@@ -5,7 +5,7 @@
 .id: flyingrobots/parley-vous#NEW
 .kind: task
 .type: feature
-.blocked_by: [@J]
+.blocked_by: [@P]
 .size_hours: 1
 ```
 
@@ -19,7 +19,7 @@
 - DNS or hosting changes outside this repository: listed in the PR for the owner.
 
 ## Prerequisites
-- [ ] @J: the site publishes generated files
+- [ ] @P: the site serves the released schemas, so they must be released first
 
 ## Safe intermediate state
 The site may lag a release; the `$id`s are names, and resolving them is a convenience the check reports.

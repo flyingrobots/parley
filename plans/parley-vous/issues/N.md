@@ -16,7 +16,7 @@
 - Cargo workspace in the repo; the pipeline writes `src/messages.rs`; round-trip tests over real lines; freshness check.
 
 ## Out of scope
-- Read and write APIs in Rust: not in this plan.
+- The write API (@N3) and the read API (@N4).
 
 ## Prerequisites
 - [ ] @J: the pipeline

@@ -60,7 +60,7 @@ function expectLoadsClean(c: Captured, runs: number) {
     expect(b.terminated).toBe(true);
     for (const r of b.records) {
       const id = (r.record._schema as { id: string }).id;
-      if (id.startsWith("parley.")) expect(r.validation.state, `${id} seq ${r.seq}`).toBe("validated");
+      if (id.startsWith("parley-vous.")) expect(r.validation.state, `${id} seq ${r.seq}`).toBe("validated");
       else expect(r.validation.state).toBe("unvalidated");
     }
   }
@@ -124,7 +124,7 @@ describe("parley-emit-py: the doctor over captured runs of examples/count.py", (
     expect(c.status).toBe(0);
     const out = objs(c.stdout);
     expect(out.filter((o) => o.event === "command").map((o) => o.name)).toEqual(["files"]);
-    expect(out.filter((o) => o.event === "schema").map((o) => `${o.id}@${o.version}`)).toEqual(["count.result@1.0.0", "parley.error@2.0.0", "parley.startup.failed@1.0.0"]);
+    expect(out.filter((o) => o.event === "schema").map((o) => `${o.id}@${o.version}`)).toEqual(["count.result@1.0.0", "parley-vous.error@1.0.0", "parley-vous.startup.failed@1.0.0"]);
     expect(violations(c)).toEqual([]);
     expectLoadsClean(c, 1);
   }, SLOW);
@@ -140,16 +140,16 @@ describe("parley-emit-py: the doctor over captured runs of examples/count.py", (
     const schemas = (out: Record<string, unknown>[]) => out.filter((o) => o.event === "schema").map((o) => `${o.id}@${o.version}`);
     expect(emits(ts)).toEqual(emits(py));
     expect(schemas(ts)).toEqual(schemas(py));
-    expect(schemas(ts)).toContain("parley.error@2.0.0");
-    expect(schemas(ts)).toContain("parley.startup.failed@1.0.0");
+    expect(schemas(ts)).toContain("parley-vous.error@1.0.0");
+    expect(schemas(ts)).toContain("parley-vous.startup.failed@1.0.0");
   }, SLOW);
 
   test("PY-4a --schema: every message type the writer can emit, and the doctor passes", () => {
     const c = example(["--schema"]);
     expect(c.status).toBe(0);
     const ids = objs(c.stdout).filter((o) => o.event === "schema").map((o) => `${o.id}@${o.version}`);
-    for (const want of ["count.result@1.0.0", "parley.error@2.0.0", "parley.run.bootstrap@1.1.1", "parley.receipt.head@2.0.0", "parley.end@1.0.0", "parley.sidecar@1.0.0"]) expect(ids).toContain(want);
-    expect(ids).not.toContain("parley.history.transform@1.0.0");
+    for (const want of ["count.result@1.0.0", "parley-vous.error@1.0.0", "parley-vous.run.bootstrap@1.0.0", "parley-vous.receipt.head@1.0.0", "parley-vous.end@1.0.0", "parley-vous.sidecar@1.0.0"]) expect(ids).toContain(want);
+    expect(ids).not.toContain("parley-vous.history.transform@1.0.0");
     expect(violations(c)).toEqual([]);
     expectLoadsClean(c, 1);
   }, SLOW);
@@ -262,17 +262,17 @@ describe("parley-emit-py: the bounded checker against ajv", () => {
 
   test("PY-17a the verdicts agree on samples of eleven drafts and on every single-field mutation of them", () => {
     const samples: Record<string, unknown>[] = [
-      { event: "warning", t: 1, seq: 3, run: "r", code: "a.b", problem: "p", _schema: { id: "parley.warning", version: "1.0.0" } },
-      { event: "error", t: 1, seq: 4, run: "r", code: "contrast.unsatisfiable", problem: "p", measured: 5.3, limit: 7, remedy: "x", _schema: { id: "parley.error", version: "2.0.0" } },
-      { event: "redaction", t: 1, seq: 6, run: "r", in: 4, at: "/detail/url", _schema: { id: "parley.redaction", version: "1.0.0" } },
-      { event: "end", t: 1, seq: 9, run: "r", status: 0, receipt: "/w/r.jsonl", redacted: false, _schema: { id: "parley.end", version: "1.0.0" } },
-      { event: "page", t: 1, seq: 7, run: "r", has_more: true, cursor: "c", _schema: { id: "parley.page", version: "1.0.0" } },
-      { event: "receipt.step", t: 1, seq: 2, run: "r", decision: "d", because: "b", _schema: { id: "parley.receipt.step", version: "1.0.0" } },
-      { event: "sidecar", t: 1, seq: 8, run: "r", source: 7, path: "r/7.json", bytes: 70000, sha256: "a".repeat(64), _schema: { id: "parley.sidecar", version: "1.0.0" } },
-      { event: "startup.failed", t: 1, seq: 0, run: "r", tool: "t", v: "1", code: "startup.receipt_unwritable", problem: "p", remedy: "r", _schema: { id: "parley.startup.failed", version: "1.0.0" } },
-      { event: "receipt.inputs", t: 1, seq: 5, run: "r", inputs: [{ path: "a", sha256: "b".repeat(64) }, { path: "-", role: "stdin", error: "input.unread" }], _schema: { id: "parley.receipt.inputs", version: "1.0.0" } },
-      { event: "run", t: 1, seq: 0, run: "r", tool: "t", v: "1", paths: { receipt: "/w/r.jsonl" }, _schema: { id: "parley.run.bootstrap", version: "1.1.1" } },
-      { event: "receipt.head", t: 1, seq: 1, run: "r", tool: "t", v: "1", argv: ["t", "--token", "[redacted]"], resolved: {}, redacted: { argv: [2], resolved: ["/a~1b"] }, inputs: [], _schema: { id: "parley.receipt.head", version: "2.0.0" } },
+      { event: "warning", t: 1, seq: 3, run: "r", code: "a.b", problem: "p", _schema: { id: "parley-vous.warning", version: "1.0.0" } },
+      { event: "error", t: 1, seq: 4, run: "r", code: "contrast.unsatisfiable", problem: "p", measured: 5.3, limit: 7, remedy: "x", _schema: { id: "parley-vous.error", version: "1.0.0" } },
+      { event: "redaction", t: 1, seq: 6, run: "r", in: 4, at: "/detail/url", _schema: { id: "parley-vous.redaction", version: "1.0.0" } },
+      { event: "end", t: 1, seq: 9, run: "r", status: 0, receipt: "/w/r.jsonl", redacted: false, _schema: { id: "parley-vous.end", version: "1.0.0" } },
+      { event: "page", t: 1, seq: 7, run: "r", has_more: true, cursor: "c", _schema: { id: "parley-vous.page", version: "1.0.0" } },
+      { event: "receipt.step", t: 1, seq: 2, run: "r", decision: "d", because: "b", _schema: { id: "parley-vous.receipt.step", version: "1.0.0" } },
+      { event: "sidecar", t: 1, seq: 8, run: "r", source: 7, path: "r/7.json", bytes: 70000, sha256: "a".repeat(64), _schema: { id: "parley-vous.sidecar", version: "1.0.0" } },
+      { event: "startup.failed", t: 1, seq: 0, run: "r", tool: "t", v: "1", code: "startup.receipt_unwritable", problem: "p", remedy: "r", _schema: { id: "parley-vous.startup.failed", version: "1.0.0" } },
+      { event: "receipt.inputs", t: 1, seq: 5, run: "r", inputs: [{ path: "a", sha256: "b".repeat(64) }, { path: "-", role: "stdin", error: "input.unread" }], _schema: { id: "parley-vous.receipt.inputs", version: "1.0.0" } },
+      { event: "run", t: 1, seq: 0, run: "r", tool: "t", v: "1", paths: { receipt: "/w/r.jsonl" }, _schema: { id: "parley-vous.run.bootstrap", version: "1.0.0" } },
+      { event: "receipt.head", t: 1, seq: 1, run: "r", tool: "t", v: "1", argv: ["t", "--token", "[redacted]"], resolved: {}, redacted: { argv: [2], resolved: ["/a~1b"] }, inputs: [], _schema: { id: "parley-vous.receipt.head", version: "1.0.0" } },
     ];
     const cases: { id: string; version: string; value: unknown }[] = [];
     for (const s of samples) {
@@ -559,7 +559,7 @@ describe("parley-emit-py: a secret that coincides with one of the writer's own w
   const invalid = (o: Record<string, unknown>): string | null => {
     const stamp = o._schema as { id: string; version: string };
     const file = join(RELEASED, stamp.id, `${stamp.version}.schema.json`);
-    if (!existsSync(file)) { expect(stamp.id.startsWith("parley.")).toBe(false); return null; }
+    if (!existsSync(file)) { expect(stamp.id.startsWith("parley-vous.")).toBe(false); return null; }
     const key = `${stamp.id}@${stamp.version}`;
     if (!validators.has(key)) validators.set(key, ajv.compile(JSON.parse(readFileSync(file, "utf8")) as object));
     const v = validators.get(key)!;
@@ -594,7 +594,7 @@ describe("parley-emit-py: a record the writer raises on its own account, and a m
   const invalid = (o: Record<string, unknown>): string | null => {
     const stamp = o._schema as { id: string; version: string };
     const file = join(RELEASED, stamp.id, `${stamp.version}.schema.json`);
-    if (!existsSync(file)) { expect(stamp.id.startsWith("parley.")).toBe(false); return null; }
+    if (!existsSync(file)) { expect(stamp.id.startsWith("parley-vous.")).toBe(false); return null; }
     const key = `${stamp.id}@${stamp.version}`;
     if (!validators.has(key)) validators.set(key, ajv.compile(JSON.parse(readFileSync(file, "utf8")) as object));
     const v = validators.get(key)!;

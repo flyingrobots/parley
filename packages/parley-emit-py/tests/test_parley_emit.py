@@ -768,7 +768,7 @@ class TestRedactionConflict(unittest.TestCase):
 
         o = run_count(d, {**env, "T_TOKEN": "true"}, ["count", "--token", "420000000000042"], body)
         self.assertEqual(o.status, 4)
-        err = {"id": "parley.error", "version": "2.0.0"}
+        err = {"id": "parley-vous.error", "version": "1.0.0"}
         self.assertEqual([c["detail"] for c in self.conflicts(o)],
                          [{"schema": err, "at": ["/code"], "redacted": ["/code"]}, {"schema": err, "at": ["/retryable"], "redacted": ["/retryable"]}])
         self.assertEqual([x["code"] for x in o.stderr.objs], ["redaction.schema_conflict"] * 2)
@@ -1862,9 +1862,9 @@ class TestDiscovery(unittest.TestCase):
         self.assertEqual(out.objs[-1]["event"], "end")
         self.assertEqual([x["name"] for x in out.objs if x["event"] == "command"], ["count"])
         ids = [f"{x['id']}@{x['version']}" for x in out.objs if x["event"] == "schema"]
-        for want in ("t.count@1.0.0", "parley.error@2.0.0", "parley.run.bootstrap@1.1.1", "parley.startup.failed@1.0.0"):
+        for want in ("t.count@1.0.0", "parley-vous.error@1.0.0", "parley-vous.run.bootstrap@1.0.0", "parley-vous.startup.failed@1.0.0"):
             self.assertIn(want, ids)
-        self.assertNotIn("parley.history.transform@1.0.0", ids)
+        self.assertNotIn("parley-vous.history.transform@1.0.0", ids)
         assert_valid(self, Outcome(0, out, err, out.objs[0]["paths"]["receipt"]))
 
     def test_help_describes_one_command_and_its_error_types(self):
@@ -1873,7 +1873,7 @@ class TestDiscovery(unittest.TestCase):
         self.assertEqual(pe.main(tool(), ["t", "count", "--help"], lambda r, a: None, cwd=d, env=env, stdout=out, stderr=err), 0)
         self.assertEqual(len([x for x in out.objs if x["event"] == "command"]), 1)
         ids = [f"{x['id']}@{x['version']}" for x in out.objs if x["event"] == "schema"]
-        self.assertEqual(ids, ["t.count@1.0.0", "parley.error@2.0.0", "parley.startup.failed@1.0.0"])
+        self.assertEqual(ids, ["t.count@1.0.0", "parley-vous.error@1.0.0", "parley-vous.startup.failed@1.0.0"])
 
     def test_a_schema_document_is_published_as_declared(self):
         # PY-4d (flyingrobots/parley#111): a declared secret whose value occurs in a static schema
@@ -1891,7 +1891,7 @@ class TestDiscovery(unittest.TestCase):
         self.assertEqual(status, 0)
         docs = {x["id"]: x["schema"] for x in out.objs if x["event"] == "schema"}
         self.assertEqual(docs["t.count"], RESULT)
-        self.assertEqual(docs["parley.error"], pe.schema_for(("parley.error", "2.0.0")))
+        self.assertEqual(docs["parley-vous.error"], pe.schema_for(("parley-vous.error", "1.0.0")))
         command = next(x for x in out.objs if x["event"] == "command")
         self.assertEqual(command["intent"], "Count each [redacted] under the working directory")
         o = Outcome(status, out, err, out.objs[0]["paths"]["receipt"])

@@ -36,11 +36,11 @@ describe("parley doctor", () => {
     const receipt = JSON.parse(lines(p.stdout)[0] ?? "{}").paths.receipt as string;
     return { stdout: p.stdout, stderr: p.stderr, receipt: readFileSync(receipt, "utf8") };
   };
-  const withoutStartupSchema = (s: string) => lines(s).filter((l) => { const o = JSON.parse(l); return !(o.event === "schema" && o.id === "parley.startup.failed"); }).join("\n") + "\n";
-  test("a --help run that lists parley.startup.failed conforms", () => {
+  const withoutStartupSchema = (s: string) => lines(s).filter((l) => { const o = JSON.parse(l); return !(o.event === "schema" && o.id === "parley-vous.startup.failed"); }).join("\n") + "\n";
+  test("a --help run that lists parley-vous.startup.failed conforms", () => {
     expect(rules(doctor(helpRun()))).toEqual([]);
   });
-  test("detects: a discovery run with no schema line for parley.startup.failed (flyingrobots/parley#92)", () => {
+  test("detects: a discovery run with no schema line for parley-vous.startup.failed (flyingrobots/parley#92)", () => {
     const c = helpRun();
     const vs = doctor({ ...c, stdout: withoutStartupSchema(c.stdout), receipt: withoutStartupSchema(c.receipt) });
     expect(rules(vs)).toEqual(["R10.help_startup_failed"]);
@@ -59,10 +59,10 @@ describe("parley doctor", () => {
     const line = (o: Record<string, unknown>) => JSON.stringify(o) + "\n";
     const run = "01JD3KN8A3B6C1D4E9F2G7H5J8";
     const seg =
-      line({ event: "history.transform", t: 1, seq: 1, run, name: "drop-detail", sha256: "a".repeat(64), _schema: { id: "parley.history.transform", version: "1.0.0" } }) +
-      line({ event: "receipt.head", t: 1, seq: 2, run, tool: "t", v: "1", argv: [], resolved: {}, inputs: [], _schema: { id: "parley.receipt.head", version: "2.0.0" } }) +
+      line({ event: "history.transform", t: 1, seq: 1, run, name: "drop-detail", sha256: "a".repeat(64), _schema: { id: "parley-vous.history.transform", version: "1.0.0" } }) +
+      line({ event: "receipt.head", t: 1, seq: 2, run, tool: "t", v: "1", argv: [], resolved: {}, inputs: [], _schema: { id: "parley-vous.receipt.head", version: "1.0.0" } }) +
       // seq 3 was withheld by the transform: a gap on this copy and nowhere else.
-      line({ event: "end", t: 2, seq: 4, run, status: 0, receipt: "/w/r.jsonl", redacted: false, _schema: { id: "parley.end", version: "1.0.0" } }) +
+      line({ event: "end", t: 2, seq: 4, run, status: 0, receipt: "/w/r.jsonl", redacted: false, _schema: { id: "parley-vous.end", version: "1.0.0" } }) +
       "glibc: warning\n";
     const vs = inspectSegment(seg);
     expect(vs.filter((v) => v.event === "doctor.projection")).toEqual([{ event: "doctor.projection", run, name: "drop-detail", sha256: "a".repeat(64), line: 1 }]);
@@ -74,8 +74,8 @@ describe("parley doctor", () => {
     const line = (o: Record<string, unknown>) => JSON.stringify(o) + "\n";
     const run = "01JD3KN8A3B6C1D4E9F2G7H5J8";
     const seg =
-      line({ event: "receipt.head", t: 1, seq: 1, run, tool: "t", v: "1", argv: [], resolved: {}, inputs: [], _schema: { id: "parley.receipt.head", version: "2.0.0" } }) +
-      line({ event: "sidecar", t: 1, seq: 3, run, source: 2, path: `${run}/2.json`, bytes: 10, sha256: "b".repeat(64), _schema: { id: "parley.sidecar", version: "1.0.0" } });
+      line({ event: "receipt.head", t: 1, seq: 1, run, tool: "t", v: "1", argv: [], resolved: {}, inputs: [], _schema: { id: "parley-vous.receipt.head", version: "1.0.0" } }) +
+      line({ event: "sidecar", t: 1, seq: 3, run, source: 2, path: `${run}/2.json`, bytes: 10, sha256: "b".repeat(64), _schema: { id: "parley-vous.sidecar", version: "1.0.0" } });
     const vs = inspectSegment(seg);
     expect(vs.filter((v) => v.event === "doctor.gap")).toEqual([]);
     expect(vs.at(-1)).toMatchObject({ event: "doctor.segment", passed: true, runs: 1, projected: 0, gaps: 0, incomplete: 1 });
@@ -88,8 +88,8 @@ describe("parley doctor", () => {
     const { stamp } = await import("./doctor.ts");
     const run = "01JD3KN8A3B6C1D4E9F2G7H5J8";
     const seg =
-      JSON.stringify({ event: "history.transform", t: 1, seq: 1, run, name: "n", sha256: "c".repeat(64), _schema: { id: "parley.history.transform", version: "1.0.0" } }) + "\n" +
-      JSON.stringify({ event: "end", t: 2, seq: 3, run, status: 0, receipt: "/w/r.jsonl", redacted: false, _schema: { id: "parley.end", version: "1.0.0" } }) + "\n" +
+      JSON.stringify({ event: "history.transform", t: 1, seq: 1, run, name: "n", sha256: "c".repeat(64), _schema: { id: "parley-vous.history.transform", version: "1.0.0" } }) + "\n" +
+      JSON.stringify({ event: "end", t: 2, seq: 3, run, status: 0, receipt: "/w/r.jsonl", redacted: false, _schema: { id: "parley-vous.end", version: "1.0.0" } }) + "\n" +
       "{}\n" + '{"event":"x","t":1,"seq":9}\n' + '{"broken"';
     const vs: SegmentVerdict[] = inspectSegment(seg);
     expect(vs.length).toBeGreaterThan(4);
@@ -106,7 +106,7 @@ describe("parley doctor", () => {
   const receiptAlone: [string, (r: string) => string, string[]][] = [
     ["no end", (r) => edit(r, 6, () => null), ["R7.receipt_no_end"]],
     ["head not first", (r) => edit(r, 0, () => null), ["R5.head_first"]],
-    ["an event after end", (r) => r + '{"event":"receipt.step","t":1795326412402,"seq":8,"run":"01JD3KN8A3B6C1D4E9F2G7H5J8","decision":"late","because":"x","_schema":{"id":"parley.receipt.step","version":"1.0.0"}}\n', ["R7.after_end", "R7.end_not_final", "R7.receipt_no_end"]],
+    ["an event after end", (r) => r + '{"event":"receipt.step","t":1795326412402,"seq":8,"run":"01JD3KN8A3B6C1D4E9F2G7H5J8","decision":"late","because":"x","_schema":{"id":"parley-vous.receipt.step","version":"1.0.0"}}\n', ["R7.after_end", "R7.end_not_final", "R7.receipt_no_end"]],
     ["status 2 with no error", (r) => edit(r, 6, (o) => ({ ...o, status: 2 })), ["R7.status2_no_error"]],
     ["end.redacted disagrees", (r) => edit(r, 6, (o) => ({ ...o, redacted: false })), ["R8.redacted_aggregate"]],
     ["a line from another run", (r) => edit(r, 3, (o) => ({ ...o, run: "01JD3KS9T4U8V1W5X2Y7Z3A6B9" })), ["R6.run"]],
@@ -134,8 +134,8 @@ describe("parley doctor", () => {
     ["result not retained in the receipt", (c) => ({ receipt: edit(c.receipt, 1, () => null) }), ["R9.not_retained"]],
     ["end.redacted disagrees with the receipt", (c) => ({ stdout: edit(c.stdout, 2, (o) => ({ ...o, redacted: false })), receipt: edit(c.receipt, 6, (o) => ({ ...o, redacted: false })) }), ["R8.redacted_aggregate"]],
     ["status 2 with no error", (c) => ({ stdout: edit(c.stdout, 2, (o) => ({ ...o, status: 2 })), receipt: edit(c.receipt, 6, (o) => ({ ...o, status: 2 })) }), ["R7.status2_no_error"]],
-    ["an event after end", (c) => ({ receipt: c.receipt + '{"event":"receipt.step","t":1795326412402,"seq":8,"run":"01JD3KN8A3B6C1D4E9F2G7H5J8","decision":"late","because":"x","_schema":{"id":"parley.receipt.step","version":"1.0.0"}}\n' }), ["R7.after_end", "R7.end_not_final", "R7.receipt_no_end"]],
-    ["unknown exact pair is reported, never validated", (c) => ({ stderr: edit(c.stderr, 0, (o) => ({ ...o, _schema: { id: "parley.warning", version: "1.4.0" } })), receipt: edit(c.receipt, 2, (o) => ({ ...o, _schema: { id: "parley.warning", version: "1.4.0" } })) }), ["R3.unknown_pair", "R3.unknown_pair"]],
+    ["an event after end", (c) => ({ receipt: c.receipt + '{"event":"receipt.step","t":1795326412402,"seq":8,"run":"01JD3KN8A3B6C1D4E9F2G7H5J8","decision":"late","because":"x","_schema":{"id":"parley-vous.receipt.step","version":"1.0.0"}}\n' }), ["R7.after_end", "R7.end_not_final", "R7.receipt_no_end"]],
+    ["unknown exact pair is reported, never validated", (c) => ({ stderr: edit(c.stderr, 0, (o) => ({ ...o, _schema: { id: "parley-vous.warning", version: "1.4.0" } })), receipt: edit(c.receipt, 2, (o) => ({ ...o, _schema: { id: "parley-vous.warning", version: "1.4.0" } })) }), ["R3.unknown_pair", "R3.unknown_pair"]],
     ["a line that fails its exact schema", (c) => ({ stderr: edit(c.stderr, 0, (o) => ({ ...o, code: "Bad Code" })), receipt: edit(c.receipt, 2, (o) => ({ ...o, code: "Bad Code" })) }), ["R3.invalid", "R3.invalid"]],
     ["missing envelope field", (c) => ({ receipt: edit(c.receipt, 3, (o) => { const { run, ...rest } = o; return rest; }) }), ["R2.envelope", "R3.invalid", "R6.run"]],
     ["receipt head from another tool", (c) => ({ receipt: edit(c.receipt, 0, (o) => ({ ...o, v: "0.3.0" })) }), ["R5.head_tool"]],

@@ -65,7 +65,7 @@ describe("release eligibility: refusals (flyingrobots/parley#145)", () => {
       expect(summary(lines).passed).toBe(false);
       const named = refusals(lines).filter((r) => r.code === "schema.unreleased");
       for (const name of [EMIT, READ, PY]) {
-        expect(named.filter((r) => r.package === name).map((r) => `${r.id}@${r.version}`).sort(), `${phase} ${name}`).toEqual(["parley.lens@1.1.0", "parley.query@1.1.0"]);
+        expect(named.filter((r) => r.package === name).map((r) => `${r.id}@${r.version}`).sort(), `${phase} ${name}`).toEqual(["parley-vous.lens@1.1.0", "parley-vous.query@1.1.0"]);
         expect(pkg(lines, name).passed).toBe(false);
       }
     }
@@ -73,11 +73,11 @@ describe("release eligibility: refusals (flyingrobots/parley#145)", () => {
 
   test("RLC-2: a snapshot exists but no release heading names it: rejected", () => {
     const dir = fixture("drafts");
-    for (const id of ["parley.query", "parley.lens"]) put(dir, snap(id, "1.1.0"), get(dir, top(id)));
+    for (const id of ["parley-vous.query", "parley-vous.lens"]) put(dir, snap(id, "1.1.0"), get(dir, top(id)));
     commit(dir, "snapshots with no dated heading");
     const candidate = check({ phase: "candidate", repo: dir });
     expect(codes(candidate)).toEqual(["release.heading_missing"]);
-    expect(refusals(candidate).filter((r) => r.package === READ).map((r) => `${r.id}@${r.version}`).sort()).toEqual(["parley.lens@1.1.0", "parley.query@1.1.0"]);
+    expect(refusals(candidate).filter((r) => r.package === READ).map((r) => `${r.id}@${r.version}`).sort()).toEqual(["parley-vous.lens@1.1.0", "parley-vous.query@1.1.0"]);
     // Accepted on the default branch in that state, it is still not a release.
     acceptOnMain(dir);
     expect(codes(check({ phase: "publication", repo: dir }))).toEqual(["release.heading_missing"]);
@@ -86,9 +86,9 @@ describe("release eligibility: refusals (flyingrobots/parley#145)", () => {
   test("RLC-3: a released snapshot, its top-level file and every bundled copy changed together: rejected against the baseline", () => {
     const dir = fixture("released");
     git(dir, "checkout", "-q", "-b", "coordinated");
-    const changed = text({ ...schemaDoc("parley.error", "2.0.0"), description: "a released version, edited in place" });
-    put(dir, top("parley.error"), changed);
-    put(dir, snap("parley.error", "2.0.0"), changed);
+    const changed = text({ ...schemaDoc("parley-vous.error", "2.0.0"), description: "a released version, edited in place" });
+    put(dir, top("parley-vous.error"), changed);
+    put(dir, snap("parley-vous.error", "2.0.0"), changed);
     commit(dir, "S': edit a released schema and its snapshot together");
     sync(dir);
     commit(dir, "P': every package copy re-synced from the edit");
@@ -99,19 +99,19 @@ describe("release eligibility: refusals (flyingrobots/parley#145)", () => {
       const lines = check({ phase, repo: dir });
       expect(summary(lines).passed, phase).toBe(false);
       const r = refusals(lines).find((x) => x.code === "snapshot.modified");
-      expect(r?.path, phase).toBe(snap("parley.error", "2.0.0"));
+      expect(r?.path, phase).toBe(snap("parley-vous.error", "2.0.0"));
       for (const p of packages(lines)) expect(p.eligible, `${phase} ${p.package}`).toBe(false);
     }
   }, SLOW);
 
   test("RLC-4: a previously released snapshot is deleted: rejected", () => {
     const dir = fixture("released");
-    rmSync(join(dir, snap("parley.lens", "1.0.0")));
+    rmSync(join(dir, snap("parley-vous.lens", "1.0.0")));
     commit(dir, "delete a released snapshot");
     for (const phase of PHASES) {
       const lines = check({ phase, repo: dir, base: "origin/main" });
       expect(summary(lines).passed, phase).toBe(false);
-      expect(refusals(lines).find((x) => x.code === "snapshot.deleted")?.path, phase).toBe(snap("parley.lens", "1.0.0"));
+      expect(refusals(lines).find((x) => x.code === "snapshot.deleted")?.path, phase).toBe(snap("parley-vous.lens", "1.0.0"));
     }
   }, SLOW);
 
@@ -125,7 +125,7 @@ describe("release eligibility: refusals (flyingrobots/parley#145)", () => {
       for (const name of [EMIT, PY]) {
         const r = refusals(lines).filter((x) => x.package === name);
         expect(r.map((x) => x.code), `${phase} ${name}`).toContain("pin.content_differs");
-        expect(r.find((x) => x.code === "pin.content_differs")?.path).toBe("schemas/parley.error.schema.json");
+        expect(r.find((x) => x.code === "pin.content_differs")?.path).toBe("schemas/parley-vous.error.schema.json");
       }
       expect(pkg(lines, READ).passed).toBe(true);
     }
@@ -146,7 +146,7 @@ describe("release eligibility: refusals (flyingrobots/parley#145)", () => {
     const { p } = releaseDrafts(dir);
     acceptOnMain(dir, p);
     // The pin still names S, and S's digests are still recorded, but the bundled definition is another.
-    edit(dir, "packages/parley-emit/src/schemas.ts", '"title": "parley.error"', '"title": "parley.error, as nobody released it"');
+    edit(dir, "packages/parley-emit/src/schemas.ts", '"title": "parley-vous.error"', '"title": "parley-vous.error, as nobody released it"');
     const lines = check({ phase: "publication", repo: dir });
     expect(refusals(lines).filter((x) => x.package === EMIT).map((x) => x.code).sort()).toEqual(["copy.stale", "definition.differs", "pin.bundle_differs"]);
   }, SLOW);
@@ -159,7 +159,7 @@ describe("release eligibility: refusals (flyingrobots/parley#145)", () => {
     for (const phase of ["candidate", "publication"] as const) {
       const lines = check({ phase, repo: dir });
       expect(refusals(lines).filter((x) => x.package === READ).map((x) => x.code), phase).toEqual(["pin.malformed"]);
-      expect(refusals(lines).filter((x) => x.package === EMIT).map((x) => `${x.code} ${x.id}@${x.version}`), phase).toEqual(["pin.malformed parley.error@2.0.0"]);
+      expect(refusals(lines).filter((x) => x.package === EMIT).map((x) => `${x.code} ${x.id}@${x.version}`), phase).toEqual(["pin.malformed parley-vous.error@2.0.0"]);
     }
     // A malformed pin is an inconsistency of the source, so development refuses it too.
     expect(codes(check({ phase: "development", repo: dir }))).toEqual(["pin.malformed"]);
@@ -170,16 +170,16 @@ describe("release eligibility: refusals (flyingrobots/parley#145)", () => {
     expect(summary(check({ phase: "publication", repo: dir })).passed).toBe(true);
     const tarball = pack(dir, "parley-read", (staged) => {
       const p = join(staged, "src/schemas.ts");
-      writeFileSync(p, readFileSync(p, "utf8").replace('"title": "parley.query"', '"title": "parley.query, packed before the release"'));
+      writeFileSync(p, readFileSync(p, "utf8").replace('"title": "parley-vous.query"', '"title": "parley-vous.query, packed before the release"'));
     });
     const lines = check({ phase: "publication", repo: dir, artifacts: [tarball] });
     expect(summary(lines).passed).toBe(false);
     const r = refusals(lines).filter((x) => x.code === "definition.differs");
-    expect(r.map((x) => `${x.package} ${x.id}@${x.version}`)).toEqual([`${READ} parley.query@1.0.0`]);
+    expect(r.map((x) => `${x.package} ${x.id}@${x.version}`)).toEqual([`${READ} parley-vous.query@1.0.0`]);
     expect(pkg(lines, READ).source).toBe("artifact");
     // The same for the vendorable file: a stale copy beside a correct checkout.
     const stale = join(scratch, "stale_parley_emit.py");
-    writeFileSync(stale, get(dir, "packages/parley-emit-py/parley_emit.py").replace('\\"title\\": \\"parley.error\\"', '\\"title\\": \\"parley.error, vendored long ago\\"'));
+    writeFileSync(stale, get(dir, "packages/parley-emit-py/parley_emit.py").replace('\\"title\\": \\"parley-vous.error\\"', '\\"title\\": \\"parley-vous.error, vendored long ago\\"'));
     const py = check({ phase: "publication", repo: dir, artifacts: [stale] });
     expect(codes(py)).toContain("definition.differs");
     expect(summary(py).passed).toBe(false);
@@ -191,7 +191,7 @@ describe("release eligibility: refusals (flyingrobots/parley#145)", () => {
     for (const phase of PHASES) {
       const lines = check({ phase, repo: dir });
       const r = refusals(lines).filter((x) => x.code === "inventory.declared_not_bundled");
-      expect(r.map((x) => `${x.package} ${x.id}@${x.version}`), phase).toEqual([`${READ} parley.query@1.4.0`]);
+      expect(r.map((x) => `${x.package} ${x.id}@${x.version}`), phase).toEqual([`${READ} parley-vous.query@1.4.0`]);
       expect(pkg(lines, READ).passed).toBe(false);
       expect(pkg(lines, READ).eligible).toBe(false);
     }
@@ -288,7 +288,7 @@ describe("release eligibility: positive controls and edges (flyingrobots/parley#
       const p = pkg(lines, name);
       expect(p.passed).toBe(true);
       expect(p.eligible).toBe(false);
-      expect(pairs(p)).toEqual(["parley.lens@1.1.0", "parley.query@1.1.0"]);
+      expect(pairs(p)).toEqual(["parley-vous.lens@1.1.0", "parley-vous.query@1.1.0"]);
       expect(p.blocking.every((b) => b.code === "schema.unreleased")).toBe(true);
       expect(p.blockers).toEqual([]);
     }
@@ -332,7 +332,7 @@ describe("release eligibility: positive controls and edges (flyingrobots/parley#
     const before = check({ phase: "publication", repo: dir });
     expect(summary(before).passed).toBe(false);
     expect(codes(before)).toEqual(["pin.unreachable", "release.not_accepted"]);
-    expect(refusals(before).filter((r) => r.package === READ && r.code === "release.not_accepted").map((r) => `${r.id}@${r.version}`).sort()).toEqual(["parley.lens@1.1.0", "parley.query@1.1.0"]);
+    expect(refusals(before).filter((r) => r.package === READ && r.code === "release.not_accepted").map((r) => `${r.id}@${r.version}`).sort()).toEqual(["parley-vous.lens@1.1.0", "parley-vous.query@1.1.0"]);
     // Merged with a merge commit, S stays reachable and the same tree is a release.
     git(dir, "checkout", "-q", "main");
     git(dir, "merge", "-q", "--no-ff", "-m", "Merge the 0.2.1 release", "release");
@@ -356,11 +356,11 @@ describe("release eligibility: positive controls and edges (flyingrobots/parley#
   test("RLC-15: a top-level file that differs from its snapshot only in key order passes; the snapshot is byte-frozen", () => {
     const dir = fixture("released");
     git(dir, "checkout", "-q", "-b", "reorder");
-    const doc = schemaDoc("parley.error", "2.0.0");
+    const doc = schemaDoc("parley-vous.error", "2.0.0");
     const reordered = text(Object.fromEntries(Object.entries(doc).reverse()));
-    expect(reordered).not.toBe(get(dir, top("parley.error")));
-    expect(JSON.parse(reordered)).toEqual(JSON.parse(get(dir, top("parley.error"))));
-    put(dir, top("parley.error"), reordered);
+    expect(reordered).not.toBe(get(dir, top("parley-vous.error")));
+    expect(JSON.parse(reordered)).toEqual(JSON.parse(get(dir, top("parley-vous.error"))));
+    put(dir, top("parley-vous.error"), reordered);
     commit(dir, "the top-level file re-serialised, the value unchanged");
     sync(dir);
     commit(dir, "package copies synced from it");
@@ -368,23 +368,23 @@ describe("release eligibility: positive controls and edges (flyingrobots/parley#
     expect(refusals(lines)).toEqual([]);
     expect(summary(lines).passed).toBe(true);
     // The same re-serialisation of the snapshot is a change to a released version.
-    put(dir, snap("parley.error", "2.0.0"), reordered);
+    put(dir, snap("parley-vous.error", "2.0.0"), reordered);
     commit(dir, "the snapshot re-serialised");
     expect(codes(check({ phase: "candidate", repo: dir }))).toEqual(["snapshot.modified"]);
     // And a top-level file that differs in value is refused whatever its bytes.
-    git(dir, "checkout", "-q", "HEAD~1", "--", snap("parley.error", "2.0.0"));
-    put(dir, top("parley.error"), text({ ...doc, description: "changed" }));
+    git(dir, "checkout", "-q", "HEAD~1", "--", snap("parley-vous.error", "2.0.0"));
+    put(dir, top("parley-vous.error"), text({ ...doc, description: "changed" }));
     const differs = check({ phase: "development", repo: dir });
-    expect(refusals(differs).find((r) => r.code === "toplevel.differs")).toMatchObject({ id: "parley.error", version: "2.0.0", path: top("parley.error") });
+    expect(refusals(differs).find((r) => r.code === "toplevel.differs")).toMatchObject({ id: "parley-vous.error", version: "2.0.0", path: top("parley-vous.error") });
   }, SLOW);
 
   test("RLC-16: a snapshot whose content names another identity than its path is rejected", () => {
     const dir = fixture("drafts");
     releaseDrafts(dir);
     // The 1.1.0 path re-pointed at the 1.0.0 definition.
-    put(dir, snap("parley.query", "1.1.0"), get(dir, snap("parley.query", "1.0.0")));
+    put(dir, snap("parley-vous.query", "1.1.0"), get(dir, snap("parley-vous.query", "1.0.0")));
     const lines = check({ phase: "candidate", repo: dir });
-    expect(refusals(lines).find((r) => r.code === "snapshot.mismatched")?.path).toBe(snap("parley.query", "1.1.0"));
+    expect(refusals(lines).find((r) => r.code === "snapshot.mismatched")?.path).toBe(snap("parley-vous.query", "1.1.0"));
     expect(summary(lines).passed).toBe(false);
   }, SLOW);
 
@@ -403,11 +403,11 @@ describe("release eligibility: a backdated heading and the frozen-since referenc
   /** A release branch that snapshots the two drafts and names them under the 0.2.0 heading, which the baseline already has. */
   function backdate(dir: string, heading = "## [0.2.0] — 2026-01-01"): void {
     git(dir, "checkout", "-q", "-b", "backdated");
-    for (const id of ["parley.query", "parley.lens"]) put(dir, snap(id, "1.1.0"), get(dir, top(id)));
+    for (const id of ["parley-vous.query", "parley-vous.lens"]) put(dir, snap(id, "1.1.0"), get(dir, top(id)));
     put(dir, "CHANGELOG.md", [
       "# Changelog", "", "## [Unreleased]", "", heading, "", "### Added", "",
-      "- `parley.error` 2.0.0, `parley.query` 1.0.0 and `parley.lens` 1.0.0.",
-      "- `parley.query` 1.1.0 and `parley.lens` 1.1.0.", "",
+      "- `parley-vous.error` 2.0.0, `parley-vous.query` 1.0.0 and `parley-vous.lens` 1.0.0.",
+      "- `parley-vous.query` 1.1.0 and `parley-vous.lens` 1.1.0.", "",
     ].join("\n"));
     commit(dir, "S: snapshots named under a release that was already cut");
     sync(dir);
@@ -421,7 +421,7 @@ describe("release eligibility: a backdated heading and the frozen-since referenc
     expect(summary(lines).passed).toBe(false);
     expect(codes(lines)).toEqual(["release.heading_backdated"]);
     for (const name of [EMIT, READ, PY]) {
-      expect(refusals(lines).filter((r) => r.package === name).map((r) => `${r.id}@${r.version}`).sort(), name).toEqual(["parley.lens@1.1.0", "parley.query@1.1.0"]);
+      expect(refusals(lines).filter((r) => r.package === name).map((r) => `${r.id}@${r.version}`).sort(), name).toEqual(["parley-vous.lens@1.1.0", "parley-vous.query@1.1.0"]);
       expect(pkg(lines, name).passed).toBe(false);
     }
     expect(refusals(lines)[0]?.problem).toContain("[0.2.0]");
@@ -432,7 +432,7 @@ describe("release eligibility: a backdated heading and the frozen-since referenc
     backdate(dir, "## [0.2.0] — 2026-11-24");
     const lines = check({ phase: "candidate", repo: dir });
     expect(codes(lines)).toEqual(["release.heading_backdated"]);
-    expect(refusals(lines).filter((r) => r.package === READ).map((r) => `${r.id}@${r.version}`).sort()).toEqual(["parley.lens@1.1.0", "parley.query@1.1.0"]);
+    expect(refusals(lines).filter((r) => r.package === READ).map((r) => `${r.id}@${r.version}`).sort()).toEqual(["parley-vous.lens@1.1.0", "parley-vous.query@1.1.0"]);
   }, SLOW);
 
   test("RLC-25: a new heading releases a new snapshot whatever a pull request does to an old entry's text or date", () => {
@@ -441,13 +441,13 @@ describe("release eligibility: a backdated heading and the frozen-since referenc
     // The positive control of RLC-13, with the old entry reworded and re-dated in the same branch:
     // entries are not compared by text, so a typo fix in a released entry is not a refusal.
     edit(dir, "CHANGELOG.md", "## [0.2.0] — 2026-01-01", "## [0.2.0] — 2026-01-02");
-    edit(dir, "CHANGELOG.md", "- `parley.error` 2.0.0, `parley.query` 1.0.0 and `parley.lens` 1.0.0.", "- The first release: `parley.error` 2.0.0, `parley.query` 1.0.0, `parley.lens` 1.0.0.");
+    edit(dir, "CHANGELOG.md", "- `parley-vous.error` 2.0.0, `parley-vous.query` 1.0.0 and `parley-vous.lens` 1.0.0.", "- The first release: `parley-vous.error` 2.0.0, `parley-vous.query` 1.0.0, `parley-vous.lens` 1.0.0.");
     commit(dir, "reword and re-date a released entry");
     const reworded = check({ phase: "candidate", repo: dir });
     expect(refusals(reworded)).toEqual([]);
     expect(summary(reworded).passed).toBe(true);
     // Named under the new heading and repeated under the old one, the pair is released by the new one.
-    edit(dir, "CHANGELOG.md", "- The first release:", "- (`parley.query` 1.1.0 came later.) The first release:");
+    edit(dir, "CHANGELOG.md", "- The first release:", "- (`parley-vous.query` 1.1.0 came later.) The first release:");
     const both = check({ phase: "candidate", repo: dir });
     expect(refusals(both)).toEqual([]);
     // With no new snapshot, an edited old entry is nothing the rule speaks to.
@@ -461,9 +461,9 @@ describe("release eligibility: a backdated heading and the frozen-since referenc
   function mergedEdit(dir: string): string {
     const before = git(dir, "rev-parse", "HEAD");
     git(dir, "tag", "spec-v0.2.0", before);
-    const changed = text({ ...schemaDoc("parley.error", "2.0.0"), description: "a released version, edited in place" });
-    put(dir, top("parley.error"), changed);
-    put(dir, snap("parley.error", "2.0.0"), changed);
+    const changed = text({ ...schemaDoc("parley-vous.error", "2.0.0"), description: "a released version, edited in place" });
+    put(dir, top("parley-vous.error"), changed);
+    put(dir, snap("parley-vous.error", "2.0.0"), changed);
     commit(dir, "S': edit a released schema and its snapshot together");
     sync(dir);
     commit(dir, "P': every package copy re-synced from the edit");
@@ -484,18 +484,18 @@ describe("release eligibility: a backdated heading and the frozen-since referenc
     for (const phase of PHASES) {
       const lines = check({ phase, repo: dir, frozenSince: "spec-v0.2.0" });
       expect(summary(lines).passed, phase).toBe(false);
-      expect(refusals(lines).map((r) => ({ package: r.package, code: r.code, path: r.path })), phase).toEqual([{ package: null, code: "snapshot.modified", path: snap("parley.error", "2.0.0") }]);
+      expect(refusals(lines).map((r) => ({ package: r.package, code: r.code, path: r.path })), phase).toEqual([{ package: null, code: "snapshot.modified", path: snap("parley-vous.error", "2.0.0") }]);
       expect(refusals(lines)[0]?.problem).toContain("spec-v0.2.0");
       for (const p of packages(lines)) expect(p, `${phase} ${p.package}`).toMatchObject({ eligible: false, blockers: ["snapshot.modified"] });
       // Both references are reported, each with the commit it names.
       expect(lines[0]).toMatchObject({ event: "release.baseline", base: "merge-base(HEAD, origin/main)", commit: git(dir, "rev-parse", "HEAD"), snapshots: 3, frozen_since: "spec-v0.2.0", frozen_since_commit: before, frozen_since_snapshots: 3 });
     }
     // A snapshot deleted and merged is seen the same way.
-    rmSync(join(dir, snap("parley.lens", "1.0.0")));
+    rmSync(join(dir, snap("parley-vous.lens", "1.0.0")));
     commit(dir, "delete a released snapshot");
     acceptOnMain(dir);
     expect(refusals(check({ phase: "publication", repo: dir, frozenSince: "spec-v0.2.0" })).filter((r) => r.package === null).map((r) => `${r.code} ${r.path}`).sort())
-      .toEqual([`snapshot.deleted ${snap("parley.lens", "1.0.0")}`, `snapshot.modified ${snap("parley.error", "2.0.0")}`]);
+      .toEqual([`snapshot.deleted ${snap("parley-vous.lens", "1.0.0")}`, `snapshot.modified ${snap("parley-vous.error", "2.0.0")}`]);
   }, SLOW);
 
   test("RLC-27: a frozen-since reference at which every snapshot is unchanged changes nothing, and releases made since it still pass", () => {
@@ -602,7 +602,7 @@ describe("release eligibility: output and the real tree (flyingrobots/parley#145
     const prose = cli(["--phase", "publication", "--repo", dir, "--human"]);
     expect(prose.status).toBe(1);
     expect(() => JSON.parse(prose.stdout.split("\n")[0] ?? "")).toThrow();
-    expect(prose.stdout).toContain("parley.query@1.1.0");
+    expect(prose.stdout).toContain("parley-vous.query@1.1.0");
   }, SLOW);
 
   test("RLC-20: a usage error is one schema'd line on stderr and exit 2; --help describes the command", () => {

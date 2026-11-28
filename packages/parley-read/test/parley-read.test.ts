@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { defineTool, main, type HistoryTransform, type Run, type Sink, type ToolSpec } from "@flyingrobots/parley-emit";
@@ -53,7 +53,7 @@ function head(run: string, over: Record<string, unknown> = {}) {
   return {
     event: "receipt.head", t: 1795326412346, seq: 1, run, tool: "t", v: "0.0.1",
     argv: ["t", "count"], resolved: { command: "count" }, inputs: [],
-    ...over, _schema: { id: "parley.receipt.head", version: "2.0.0" },
+    ...over, _schema: { id: "parley-vous.receipt.head", version: "1.0.0" },
   };
 }
 
@@ -61,14 +61,14 @@ function step(run: string, seq: number, over: Record<string, unknown> = {}) {
   return {
     event: "receipt.step", t: 1795326412352, seq, run,
     decision: "read a.txt as UTF-8", because: "no BOM and no @charset",
-    ...over, _schema: { id: "parley.receipt.step", version: "1.0.0" },
+    ...over, _schema: { id: "parley-vous.receipt.step", version: "1.0.0" },
   };
 }
 
 function end(run: string, seq: number, receipt: string, over: Record<string, unknown> = {}) {
   return {
     event: "end", t: 1795326412400, seq, run, status: 0, receipt, redacted: false,
-    ...over, _schema: { id: "parley.end", version: "1.0.0" },
+    ...over, _schema: { id: "parley-vous.end", version: "1.0.0" },
   };
 }
 
@@ -79,7 +79,7 @@ function toolResult(run: string, seq: number, over: Record<string, unknown> = {}
 function sidecar(run: string, seq: number, source: number, path: string, bytes: number, digest: string) {
   return {
     event: "sidecar", t: 1795326412390, seq, run, source, path, bytes, sha256: digest,
-    _schema: { id: "parley.sidecar", version: "1.0.0" },
+    _schema: { id: "parley-vous.sidecar", version: "1.0.0" },
   };
 }
 
@@ -436,7 +436,7 @@ describe("RD-7 validation", () => {
     const load = loadReceipts({ cwd: dir, env });
     const [bundle] = load.bundles;
     expect(bundle!.records.map((r) => r.validation.state)).toEqual(["validated", "validated", "validated"]);
-    expect(byEvent(bundle!, "end")!.validation.schema).toEqual({ id: "parley.end", version: "1.0.0" });
+    expect(byEvent(bundle!, "end")!.validation.schema).toEqual({ id: "parley-vous.end", version: "1.0.0" });
     expect(load.counts.validated).toBe(3);
     expect(load.counts.invalid).toBe(0);
   });
@@ -444,11 +444,11 @@ describe("RD-7 validation", () => {
   test("a parley line of a version the reader does not ship is partial, never validated", () => {
     const { dir, env } = scratch();
     const path = join(repoReceipts(dir), `${RUN_A}.jsonl`);
-    writeReceipt(repoReceipts(dir), RUN_A, [head(RUN_A), { ...end(RUN_A, 2, path), _schema: { id: "parley.end", version: "9.9.9" } }]);
+    writeReceipt(repoReceipts(dir), RUN_A, [head(RUN_A), { ...end(RUN_A, 2, path), _schema: { id: "parley-vous.end", version: "9.9.9" } }]);
     const load = loadReceipts({ cwd: dir, env });
     const record = byEvent(load.bundles[0]!, "end")!;
     expect(record.validation.state).toBe("partial");
-    expect(record.validation.schema).toEqual({ id: "parley.end", version: "9.9.9" });
+    expect(record.validation.schema).toEqual({ id: "parley-vous.end", version: "9.9.9" });
     expect(load.counts.partial).toBe(1);
     expect(load.counts.validated).toBe(1);
     expect(load.bundles[0]!.defects.some((d) => d.code === "record.unknown_pair")).toBe(true);
@@ -621,6 +621,12 @@ describe("RD-10 shipped schemas", () => {
     const index = validator();
     for (const s of SCHEMAS) expect(index.has(s.id, s.version)).toBe(true);
   });
+
+  test("the copy holds only protocol messages: a snapshot released under another id is not a version of one (flyingrobots/parley-vous#212)", () => {
+    const top = new Set(readdirSync(SCHEMAS_DIR).filter((f) => f.endsWith(".schema.json")).map((f) => f.replace(/\.schema\.json$/, "")));
+    for (const s of SCHEMAS) expect([s.id, top.has(s.id)]).toEqual([s.id, true]);
+    for (const file of Object.keys(SCHEMA_SOURCE.files)) expect(file.replace(/^released\//, "").startsWith("parley-vous.")).toBe(true);
+  });
 });
 
 // ---- RD-11 a quarantined line is not evidence ---------------------------------------------
@@ -672,7 +678,7 @@ describe("RD-12 writer-produced receipts", () => {
       expect(seqs(b)).toEqual([...seqs(b)].sort((x, y) => x - y));
       for (const r of b.records) {
         const id = (r.record._schema as { id: string }).id;
-        expect(r.validation.state).toBe(id.startsWith("parley.") ? "validated" : "unvalidated");
+        expect(r.validation.state).toBe(id.startsWith("parley-vous.") ? "validated" : "unvalidated");
       }
       expect(b.defects).toEqual([]);
     }
@@ -821,7 +827,7 @@ describe("RD-14 a query without an asker, a view or a window is refused", () => 
     expect(codes(outcome)).toEqual(["query.budget_invalid"]);
   });
 
-  test("an asker that parley.query could not carry is refused", async () => {
+  test("an asker that parley-vous.query could not carry is refused", async () => {
     const { dir, env } = scratch();
     const relative = await queryReceipts({ asker: { tool: "t", cwd: "work" }, view: "everything", window: WIDE }, { cwd: dir, env });
     expect(codes(relative)).toEqual(["query.asker_invalid"]);
@@ -886,7 +892,7 @@ describe("RD-15 an accepted query is recorded and reads back", () => {
     expect(record.note).toBe("the golden case");
   });
 
-  test("the recorded query loads as validated against parley.query 1.1.0 in its own bundle", async () => {
+  test("the recorded query loads as validated against parley-vous.query 1.0.0 in its own bundle", async () => {
     const { dir, env } = scratch();
     datedReceipt(repoReceipts(dir), runId(1), T0 - DAY);
     const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "what-ran", window: WIDE }, { cwd: dir, env }));
@@ -899,7 +905,7 @@ describe("RD-15 an accepted query is recorded and reads back", () => {
     expect(own.defects).toEqual([]);
     const query = own.records.find((r) => r.event === "query")!;
     expect(query.validation.state).toBe("validated");
-    expect((query.validation as { schema: { id: string; version: string } }).schema).toEqual({ id: "parley.query", version: "1.1.0" });
+    expect((query.validation as { schema: { id: string; version: string } }).schema).toEqual({ id: "parley-vous.query", version: "1.0.0" });
     expect(load.counts.invalid).toBe(0);
     expect(load.quarantined).toEqual([]);
   });
@@ -1054,7 +1060,7 @@ describe("RD-16 the window, echoed verbatim, and the read's own records left out
       datedReceipt(receipts, runId(0), T0 - 2 * DAY);
       writeReceipt(receipts, runId(1), [
         { ...head(runId(1)), t: T0 - DAY },
-        { event: "error", t: T0 - DAY + 1, seq: 2, run: runId(1), code: "x.failed", problem: "it failed", _schema: { id: "parley.error", version: "2.0.0" } },
+        { event: "error", t: T0 - DAY + 1, seq: 2, run: runId(1), code: "x.failed", problem: "it failed", _schema: { id: "parley-vous.error", version: "1.0.0" } },
         { ...end(runId(1), 3, join(receipts, `${runId(1)}.jsonl`), { status: 2 }), t: T0 - DAY + 2 },
       ]);
     };
@@ -1085,10 +1091,10 @@ function richReceipt(dir: string, run: string, at: number, kind: "ok" | "failed"
   const path = join(dir, `${run}.jsonl`);
   const lines: object[] = [{ ...head(run), t: at }, { ...step(run, 2), t: at + 1 }];
   if (kind === "warned") {
-    lines.push({ event: "warning", t: at + 2, seq: 3, run, code: "input.encoding_guessed", problem: "no BOM; read as UTF-8", _schema: { id: "parley.warning", version: "1.0.0" } });
+    lines.push({ event: "warning", t: at + 2, seq: 3, run, code: "input.encoding_guessed", problem: "no BOM; read as UTF-8", _schema: { id: "parley-vous.warning", version: "1.0.0" } });
   }
   if (kind === "failed") {
-    lines.push({ event: "error", t: at + 2, seq: 3, run, code: "count.unreadable", problem: "it failed", _schema: { id: "parley.error", version: "2.0.0" } });
+    lines.push({ event: "error", t: at + 2, seq: 3, run, code: "count.unreadable", problem: "it failed", _schema: { id: "parley-vous.error", version: "1.0.0" } });
   }
   if (kind !== "failed") lines.push({ ...toolResult(run, 4), t: at + 3 });
   lines.push({ ...end(run, 5, path, { status: kind === "failed" ? 2 : 0 }), t: at + 4 });
@@ -1326,10 +1332,10 @@ describe("RD-40 under a change view a warning ranks with its run's failure", () 
     const path = join(dir, `${run}.jsonl`);
     const lines: object[] = [
       { ...head(run), t: at },
-      { event: "warning", t: at + 1, seq: 2, run, code: "graft.review_failed", problem: "graft is not answering", _schema: { id: "parley.warning", version: "1.0.0" } },
+      { event: "warning", t: at + 1, seq: 2, run, code: "graft.review_failed", problem: "graft is not answering", _schema: { id: "parley-vous.warning", version: "1.0.0" } },
     ];
     if (fate === "failed") {
-      lines.push({ event: "error", t: at + 2, seq: 3, run, code: "count.unreadable", problem: "it failed", _schema: { id: "parley.error", version: "2.0.0" } });
+      lines.push({ event: "error", t: at + 2, seq: 3, run, code: "count.unreadable", problem: "it failed", _schema: { id: "parley-vous.error", version: "1.0.0" } });
     } else {
       lines.push({ ...toolResult(run, 3), t: at + 2 });
     }
@@ -1508,7 +1514,7 @@ describe("RD-19 ranking reorders and never filters", () => {
 //
 // Spec §9: a result carries its own lens and reports what it excluded, at least as a count, so a
 // later reader "cannot mistake a digest for the whole" (flyingrobots/parley#50). The digest is the
-// `parley.lens` record the read emits through the writer, bounded by the query's budget, and the
+// `parley-vous.lens` record the read emits through the writer, bounded by the query's budget, and the
 // records the ranking placed beyond the bound are a count on that record and nowhere else.
 //
 // The windows below are **sealed** at T0 + 1 s: the seeded records are stamped at or before T0 and
@@ -1559,7 +1565,7 @@ describe("RD-20 the first response is a digest", () => {
     expect(payload).toEqual(answer.digest as unknown as typeof payload);
   });
 
-  test("the digest loads as validated against parley.lens 1.1.0 in its own bundle", async () => {
+  test("the digest loads as validated against parley-vous.lens 1.0.0 in its own bundle", async () => {
     const { dir, env } = scratch();
     seedDays(dir, 2);
     const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: SEALED }, { cwd: dir, env }));
@@ -1570,7 +1576,7 @@ describe("RD-20 the first response is a digest", () => {
     expect(own.defects).toEqual([]);
     const lens = own.records.find((r) => r.event === "lens")!;
     expect(lens.validation.state).toBe("validated");
-    expect((lens.validation as { schema: { id: string; version: string } }).schema).toEqual({ id: "parley.lens", version: "1.1.0" });
+    expect((lens.validation as { schema: { id: string; version: string } }).schema).toEqual({ id: "parley-vous.lens", version: "1.0.0" });
     expect(load.counts.invalid).toBe(0);
     expect(load.quarantined).toEqual([]);
   });
@@ -1804,11 +1810,11 @@ describe("RD-22 a digest never reads as complete", () => {
 
     const lens = lensRecord(dir, env, answer.run);
     expect(lens.validation.state).toBe("validated");
-    expect((lens.validation as { schema: { id: string; version: string } }).schema).toEqual({ id: "parley.lens", version: "1.1.0" });
+    expect((lens.validation as { schema: { id: string; version: string } }).schema).toEqual({ id: "parley-vous.lens", version: "1.0.0" });
     const { event, ...rest } = answer.digest;
     expect(lens.record).toEqual({
       event, t: lens.t!, seq: lens.seq, run: answer.run,
-      ...rest, _schema: { id: "parley.lens", version: "1.1.0" },
+      ...rest, _schema: { id: "parley-vous.lens", version: "1.0.0" },
     } as unknown as typeof lens.record);
     expect(answer.load.counts.invalid).toBe(0);
     expect(answer.load.counts.quarantined).toBe(0);
@@ -1820,7 +1826,7 @@ describe("RD-22 a digest never reads as complete", () => {
 // Spec §8: a copy of a run on the shared history stream may be a projection of the receipt copy,
 // and "a reader that finds the same record in more than one copy should then prefer the
 // least-projected one, because the receipt copy is the record and a projection is a view of it".
-// What makes a copy a projection is the `parley.history.transform` line the source carries for
+// What makes a copy a projection is the `parley-vous.history.transform` line the source carries for
 // that run, so the rule is about what a source says about a run and never about which file was
 // read first — the failure mode flyingrobots/parley#58 names.
 
@@ -1831,7 +1837,7 @@ const WHAT_RAN = sha("what-ran");
 function transformLine(run: string, seq: number, name: string, digest: string) {
   return {
     event: "history.transform", t: 1795326412344, seq, run, name, sha256: digest,
-    _schema: { id: "parley.history.transform", version: "1.0.0" },
+    _schema: { id: "parley-vous.history.transform", version: "1.0.0" },
   };
 }
 
@@ -2138,7 +2144,7 @@ describe("RD-23 the least-projected copy", () => {
     expect(opening.projected).toBe(true);
     expect(opening.validation.state).toBe("validated");
     expect((opening.validation as { schema: { id: string; version: string } }).schema)
-      .toEqual({ id: "parley.history.transform", version: "1.0.0" });
+      .toEqual({ id: "parley-vous.history.transform", version: "1.0.0" });
 
     // The receipt's step keeps the rows the stream copy dropped, and the result the stream never
     // carried is named as withheld rather than left as a gap of unknown cause.
@@ -2639,7 +2645,7 @@ describe("RD-80 a lens states each run it names once", () => {
       writeReceipt(receipts, runId(1), [
         { ...head(runId(1), { inv: "inv_one", argv: ["t", "count", "--deep"] }), t: T0 - 3 * DAY },
         { ...step(runId(1), 2), t: T0 - 3 * DAY + 1 },
-        { event: "error", t: T0 - 3 * DAY + 2, seq: 3, run: runId(1), code: "count.unreadable", problem: "it failed", _schema: { id: "parley.error", version: "2.0.0" } },
+        { event: "error", t: T0 - 3 * DAY + 2, seq: 3, run: runId(1), code: "count.unreadable", problem: "it failed", _schema: { id: "parley-vous.error", version: "1.0.0" } },
         { ...end(runId(1), 4, join(receipts, `${runId(1)}.jsonl`), { status: 2 }), t: T0 - 3 * DAY + 3 },
       ]);
       richReceipt(receipts, runId(2), T0 - 2 * DAY, "warned");
@@ -3291,7 +3297,7 @@ describe("RD-110 a fold never hides a record that differs", () => {
     // A decision record's own `session` is compared the same way under a view that states decisions.
     const stepped = (n: number, session: string) => runOf(n, "i", [["receipt.step", { decision: "d", because: "b", session }], result(1)]);
     expect(folds(stepped(1, "alice-login-1"), stepped(2, "bob-login-2"), "how-it-decided")).toBe(false);
-    // A read's own lens is a protocol line, and `parley.lens` defines a top-level `session`: the
+    // A read's own lens is a protocol line, and `parley-vous.lens` defines a top-level `session`: the
     // working period, which is identity and not result. Two reads made in different sessions
     // still fold. No writer in this repository stamps `session` on a lens line (the writers put it
     // on the bootstrap line alone), so these lens records are built by hand.
@@ -3362,8 +3368,8 @@ describe("RD-110 a fold never hides a record that differs", () => {
     const lens = own.records.find((r) => r.event === "lens")!;
     expect(query.record.fold).toBe(false);
     expect(lens.record.fold).toBe(false);
-    expect(query.validation).toEqual({ state: "validated", schema: { id: "parley.query", version: "1.1.0" } });
-    expect(lens.validation).toEqual({ state: "validated", schema: { id: "parley.lens", version: "1.1.0" } });
+    expect(query.validation).toEqual({ state: "validated", schema: { id: "parley-vous.query", version: "1.0.0" } });
+    expect(lens.validation).toEqual({ state: "validated", schema: { id: "parley-vous.lens", version: "1.0.0" } });
 
     // Without it, the same window folds and neither line carries the field.
     const folded = answered(await queryReceipts(request, { cwd: dir, env }));
@@ -3432,19 +3438,25 @@ describe("RD-110 a fold never hides a record that differs", () => {
     expect(digestOf(records, { records: 1000, bytes: all.bytes - 1 }).digested.digest.records.length).toBeLessThan(3);
   });
 
-  test("the reader validates the released 1.0.0 lines beside the 1.1.0 ones", () => {
+  // A schema released under a `parley.*` id is not a version of any `parley-vous.*` message (spec
+  // v0.3, History), so the reader holds one version of each of its own messages and validates a
+  // pre-rename line against nothing (flyingrobots/parley-vous#212).
+  test("the reader holds parley-vous.query and parley-vous.lens at 1.0.0, and no pre-rename pair", () => {
     const index = validator();
-    for (const id of ["parley.query", "parley.lens"]) {
-      expect([id, index.has(id, "1.0.0"), index.has(id, "1.1.0")]).toEqual([id, true, true]);
+    for (const id of ["parley-vous.query", "parley-vous.lens"]) {
+      expect([id, index.has(id, "1.0.0"), index.has(id, "1.1.0")]).toEqual([id, true, false]);
+    }
+    for (const [id, version] of [["parley.query", "1.0.0"], ["parley.query", "1.1.0"], ["parley.lens", "1.0.0"], ["parley.lens", "1.1.0"]] as const) {
+      expect([id, version, index.has(id, version)]).toEqual([id, version, false]);
     }
     const records = Array.from({ length: 3 }, (_, i) => runOf(i, "inv_same", [result(1)])).flat();
     const { digested, envelope } = digestOf(records);
     const line = JSON.parse(digestLine(digested.digest, envelope)) as Record<string, unknown> & { runs: Record<string, unknown>[] };
-    expect(line._schema).toEqual({ id: "parley.lens", version: "1.1.0" });
+    expect(line._schema).toEqual({ id: "parley-vous.lens", version: "1.0.0" });
     expect(index.validate(line).state).toBe("validated");
-    // A line a 0.1.x reader wrote: the 1.0.0 pair, a fold that names no runs.
-    const old = { ...line, runs: [{ ...line.runs[0]!, folded: { others: 2, records: 6 } }], _schema: { id: "parley.lens", version: "1.0.0" } };
-    expect(index.validate(old)).toEqual({ state: "validated", schema: { id: "parley.lens", version: "1.0.0" } });
+    // A line a pre-rename reader wrote is outside the reserved prefix, so it is a tool's, not protocol evidence.
+    const old = { ...line, _schema: { id: "parley.lens", version: "1.1.0" } };
+    expect(index.validate(old)).toEqual({ state: "unvalidated", schema: { id: "parley.lens", version: "1.1.0" }, why: "tool_owned" });
     const withFold = (folded: unknown) => ({ ...line, runs: [{ ...line.runs[0]!, folded }] });
     expect(index.validate(withFold({ others: 2, records: 6, stands_for: [] })).state).toBe("invalid");
     expect(index.validate(withFold({ others: 2, records: 6, stands_for: "all" })).state).toBe("invalid");
@@ -3531,12 +3543,12 @@ describe("RD-110 a fold never hides a record that differs", () => {
 });
 
 describe("RD-112 a fold compares what the window holds, and a run only partly inside it says so", () => {
-  // The documented behaviour, pinned at both edges of a window (parley.lens 1.1.0, runs[].folded):
+  // The documented behaviour, pinned at both edges of a window (parley-vous.lens 1.0.0, runs[].folded):
   // a run's result records are compared as the window holds them. Two runs of one `inv` whose
   // records in the window agree fold, even when their receipts differ outside it, and the
   // section of the run that stands for the other says the window did not hold that run whole.
   const HOUR = 3_600_000;
-  const inputsLine = (run: string, seq: number, t: number, inv: string) => ({ event: "receipt.inputs", t, seq, run, inputs: [{ path: "a.txt", sha256: "a".repeat(64) }], inv, _schema: { id: "parley.receipt.inputs", version: "1.0.0" } });
+  const inputsLine = (run: string, seq: number, t: number, inv: string) => ({ event: "receipt.inputs", t, seq, run, inputs: [{ path: "a.txt", sha256: "a".repeat(64) }], inv, _schema: { id: "parley-vous.receipt.inputs", version: "1.0.0" } });
   const read = async (dir: string, env: Record<string, string>, window: { from: number; to: number }, fold?: boolean) => {
     const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window, budget: { records: 100 }, ...(fold === undefined ? {} : { fold }) }, { cwd: dir, env }));
     const lens = lensRecord(dir, env, answer.run);
@@ -3591,7 +3603,7 @@ describe("RD-112 a fold compares what the window holds, and a run only partly in
   test("two runs the window shows to have failed fold across its closing edge, and the section does not say the end is outside", async () => {
     const { dir, env } = scratch();
     const receipts = repoReceipts(dir);
-    const errorLine = (run: string, seq: number, t: number) => ({ event: "error", t, seq, run, code: "count.unreadable", problem: "it failed", _schema: { id: "parley.error", version: "2.0.0" } });
+    const errorLine = (run: string, seq: number, t: number) => ({ event: "error", t, seq, run, code: "count.unreadable", problem: "it failed", _schema: { id: "parley-vous.error", version: "1.0.0" } });
     // Both fail at once and answer 1; A goes on to answer 2 before it ends, outside the window.
     const a = join(receipts, `${runId(1)}.jsonl`), b = join(receipts, `${runId(2)}.jsonl`);
     writeReceipt(receipts, runId(1), [{ ...head(runId(1), { inv: "inv_edge" }), t: T0 }, errorLine(runId(1), 2, T0 + 1), { ...toolResult(runId(1), 3, { value: 1 }), t: T0 + 2 }, { ...toolResult(runId(1), 4, { value: 2 }), t: T0 + 5 * HOUR }, { ...end(runId(1), 5, a, { status: 2 }), t: T0 + 5 * HOUR + 1 }]);
@@ -3610,7 +3622,7 @@ describe("RD-112 a fold compares what the window holds, and a run only partly in
   test("a run redacted only after the window closes folds: the window shows nothing redacted", async () => {
     const { dir, env } = scratch();
     const receipts = repoReceipts(dir);
-    const redaction = (run: string, seq: number, t: number, inSeq: number) => ({ event: "redaction", t, seq, run, in: inSeq, at: "/note", _schema: { id: "parley.redaction", version: "1.0.0" } });
+    const redaction = (run: string, seq: number, t: number, inSeq: number) => ({ event: "redaction", t, seq, run, in: inSeq, at: "/note", _schema: { id: "parley-vous.redaction", version: "1.0.0" } });
     // A's head carries no `redacted`; five hours on a secret surfaces, and its end says redacted.
     const a = join(receipts, `${runId(1)}.jsonl`), b = join(receipts, `${runId(2)}.jsonl`);
     writeReceipt(receipts, runId(1), [{ ...head(runId(1), { inv: "inv_edge" }), t: T0 }, { ...toolResult(runId(1), 2, { value: 1 }), t: T0 + 1 }, { ...toolResult(runId(1), 3, { value: 1, note: "[redacted]" }), t: T0 + 5 * HOUR }, redaction(runId(1), 4, T0 + 5 * HOUR, 3), { ...end(runId(1), 5, a, { redacted: true }), t: T0 + 5 * HOUR + 1 }]);

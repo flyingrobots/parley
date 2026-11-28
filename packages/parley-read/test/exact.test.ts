@@ -28,11 +28,11 @@ function scratch() {
 }
 
 const headLine = (run: string, at: number, resolved = `{"command":"count"}`) =>
-  `{"event":"receipt.head","t":${at},"seq":1,"run":"${run}","tool":"t","v":"0.0.1","argv":["t","count"],"resolved":${resolved},"inputs":[],"inv":"inv_same","_schema":{"id":"parley.receipt.head","version":"2.0.0"}}`;
+  `{"event":"receipt.head","t":${at},"seq":1,"run":"${run}","tool":"t","v":"0.0.1","argv":["t","count"],"resolved":${resolved},"inputs":[],"inv":"inv_same","_schema":{"id":"parley-vous.receipt.head","version":"1.0.0"}}`;
 const resultLine = (run: string, at: number, valueText: string, seq: number | string = 2) =>
   `{"event":"result","t":${at},"seq":${seq},"run":"${run}","value":${valueText},"_schema":{"id":"t.count","version":"1.0.0"}}`;
 const endLine = (run: string, at: number, path: string, seq = 3, status = "0") =>
-  `{"event":"end","t":${at},"seq":${seq},"run":"${run}","status":${status},"receipt":${JSON.stringify(path)},"redacted":false,"_schema":{"id":"parley.end","version":"1.0.0"}}`;
+  `{"event":"end","t":${at},"seq":${seq},"run":"${run}","status":${status},"receipt":${JSON.stringify(path)},"redacted":false,"_schema":{"id":"parley-vous.end","version":"1.0.0"}}`;
 
 function writeLines(receipts: string, run: string, lines: readonly string[]): string {
   mkdirSync(receipts, { recursive: true });
@@ -260,7 +260,7 @@ describe("RD-120 an integer beyond a double's range is loaded exactly and compar
     const path = join(receipts, `${run}.jsonl`);
     writeLines(receipts, run, [
       headLine(run, T0),
-      `{"event":"sidecar","t":${T0 + 2},"seq":3,"run":"${run}","source":2,"path":"${run}/2.json","bytes":${Buffer.byteLength(stored)},"sha256":"${sha(stored)}","_schema":{"id":"parley.sidecar","version":"1.0.0"}}`,
+      `{"event":"sidecar","t":${T0 + 2},"seq":3,"run":"${run}","source":2,"path":"${run}/2.json","bytes":${Buffer.byteLength(stored)},"sha256":"${sha(stored)}","_schema":{"id":"parley-vous.sidecar","version":"1.0.0"}}`,
       endLine(run, T0 + 3, path, 4),
     ]);
     const bundle = only(dir, env);
@@ -280,7 +280,7 @@ describe("RD-120 an integer beyond a double's range is loaded exactly and compar
     writeLines(receipts, run, [
       headLine(run, T0),
       resultLine(run, T0 + 2, "9007199254740992"),
-      `{"event":"sidecar","t":${T0 + 2},"seq":3,"run":"${run}","source":2,"path":"${run}/2.json","bytes":${Buffer.byteLength(stored)},"sha256":"${sha(stored)}","_schema":{"id":"parley.sidecar","version":"1.0.0"}}`,
+      `{"event":"sidecar","t":${T0 + 2},"seq":3,"run":"${run}","source":2,"path":"${run}/2.json","bytes":${Buffer.byteLength(stored)},"sha256":"${sha(stored)}","_schema":{"id":"parley-vous.sidecar","version":"1.0.0"}}`,
       endLine(run, T0 + 3, path, 4),
     ]);
     expect(coded(only(dir, env).defects, "copies.disagree").length).toBe(1);
@@ -418,7 +418,7 @@ describe("RD-121 a record holding such an integer is validated exactly: invalid 
   });
 
   test("an unrelated integer beyond the range never erases an ordinary failure beside it", () => {
-    const line = (run: string, path: string, body: string) => `{"event":"end","t":${T0 + 3},"seq":3,"run":"${run}",${body}"redacted":false,${SIDE},"_schema":{"id":"parley.end","version":"1.0.0"}}`.replace("PATH", JSON.stringify(path));
+    const line = (run: string, path: string, body: string) => `{"event":"end","t":${T0 + 3},"seq":3,"run":"${run}",${body}"redacted":false,${SIDE},"_schema":{"id":"parley-vous.end","version":"1.0.0"}}`.replace("PATH", JSON.stringify(path));
     // An ordinary status over the maximum.
     expect(errors(ended((r, p) => line(r, p, `"status":256,"receipt":PATH,`)).end)).toBe("/status must be <= 255");
     // A missing required member.
@@ -431,7 +431,7 @@ describe("RD-121 a record holding such an integer is validated exactly: invalid 
     expect(errors(ended((r, p) => line(r, p, `"status":256,`)).end)).toBe("/ must have required property 'receipt'; /status must be <= 255");
     // And with nothing wrong beside it, the record is validated: every constraint that applies was decided.
     const sound = ended((r, p) => line(r, p, `"status":0,"receipt":PATH,`));
-    expect(sound.end.validation).toEqual({ state: "validated", schema: { id: "parley.end", version: "1.0.0" } });
+    expect(sound.end.validation).toEqual({ state: "validated", schema: { id: "parley-vous.end", version: "1.0.0" } });
     expect(exactJson(sound.end.record.note)).toBe(`{"id":9007199254740993}`);
     expect(sound.bundle.defects).toEqual([]);
   });
@@ -444,7 +444,7 @@ describe("RD-121 a record holding such an integer is validated exactly: invalid 
     const bundle = only(dir, env);
     const head = bundle.records.find((r) => r.event === "receipt.head")!;
     expect(exactJson(head.record.t)).toBe("9007199254740993");
-    // parley.receipt.head says of t: an integer, at least 0. Both are decided exactly for this value.
+    // parley-vous.receipt.head says of t: an integer, at least 0. Both are decided exactly for this value.
     expect(head.validation.state).toBe("validated");
     // What validation does not conclude: that the reader can use it. It cannot place the record in time.
     expect(head.t).toBeNull();
@@ -458,10 +458,10 @@ describe("RD-121 a record holding such an integer is validated exactly: invalid 
 
   /** The state of one record whose `value` is the given text, under a caller's schema for `value`. */
   function state(valueText: string, value: unknown): string {
-    const check = validator([{ id: "parley.test.big", version: "1.0.0", schema: { type: "object", required: ["value"], properties: { value } } }]);
+    const check = validator([{ id: "parley-vous.test.big", version: "1.0.0", schema: { type: "object", required: ["value"], properties: { value } } }]);
     const { receipts } = scratch();
     const run = runId(1);
-    const path = writeLines(receipts, run, [`{"event":"result","t":${T0},"seq":2,"run":"${run}","value":${valueText},"_schema":{"id":"parley.test.big","version":"1.0.0"}}`]);
+    const path = writeLines(receipts, run, [`{"event":"result","t":${T0},"seq":2,"run":"${run}","value":${valueText},"_schema":{"id":"parley-vous.test.big","version":"1.0.0"}}`]);
     const read = readReceiptFile(path, { validate: check });
     const record = read.bundles[0]!.records[0]!;
     const defects = read.bundles[0]!.defects.map((d) => d.code).join(",");
@@ -666,7 +666,7 @@ describe("RD-122 a number the reader cannot hold exactly is held back whole and 
     const path = join(receipts, `${run}.jsonl`);
     writeLines(receipts, run, [
       headLine(run, T0),
-      `{"event":"sidecar","t":${T0 + 2},"seq":3,"run":"${run}","source":2,"path":"${run}/2.json","bytes":${Buffer.byteLength(stored)},"sha256":"${sha(stored)}","_schema":{"id":"parley.sidecar","version":"1.0.0"}}`,
+      `{"event":"sidecar","t":${T0 + 2},"seq":3,"run":"${run}","source":2,"path":"${run}/2.json","bytes":${Buffer.byteLength(stored)},"sha256":"${sha(stored)}","_schema":{"id":"parley-vous.sidecar","version":"1.0.0"}}`,
       endLine(run, T0 + 3, path, 4),
     ]);
     const bundle = only(dir, env);
@@ -735,7 +735,7 @@ describe("RD-123 no emitting or measuring path throws on such an integer, and no
     }
   });
 
-  /** The `parley.lens` line a read wrote, as text, from the read's own receipt. */
+  /** The `parley-vous.lens` line a read wrote, as text, from the read's own receipt. */
   const lensLine = (answer: QueryAnswer) => readFileSync(answer.receipt, "utf8").split("\n").find((l) => l.includes(`"event":"lens"`))!;
 
   test("a head whose resolved holds such an integer: the lens line that was written carries it, digit for digit", async () => {
@@ -816,16 +816,16 @@ describe("RD-123 no emitting or measuring path throws on such an integer, and no
     expect(exactJson((head.record.resolved as { limit: unknown }).limit)).toBe("9007199254740993");
   });
 
-  test("the lens line that holds such an integer is validated against parley.lens 1.1.0, by exact evaluation", async () => {
+  test("the lens line that holds such an integer is validated against parley-vous.lens 1.0.0, by exact evaluation", async () => {
     const { dir, receipts, env } = scratch();
     receipt(receipts, 1, "1", `{"command":"count","limit":9007199254740993}`);
     const answer = answered(await queryReceipts({ asker: { tool: "t" }, view: "everything", window: WINDOW }, { cwd: dir, env }));
     const own = loadReceipts({ cwd: dir, env }).bundles.find((b) => b.run === answer.run)!;
     const lens = own.records.find((x) => x.event === "lens")!;
     // The loaded lens holds the integer as a bigint, so this verdict is the exact evaluator's:
-    // parley.lens says of runs[].resolved only that it is an object, and that was decided.
+    // parley-vous.lens says of runs[].resolved only that it is an object, and that was decided.
     expect(exactJson((lens.record.runs as { resolved: unknown }[])[0]!.resolved)).toBe(`{"command":"count","limit":9007199254740993}`);
-    expect(lens.validation).toEqual({ state: "validated", schema: { id: "parley.lens", version: "1.1.0" } });
+    expect(lens.validation).toEqual({ state: "validated", schema: { id: "parley-vous.lens", version: "1.0.0" } });
     expect(own.defects).toEqual([]);
     // The same line with a section the schema refuses is still refused, integer or not.
     const line = lensLine(answer);
@@ -902,7 +902,7 @@ describe("RD-124 the shared numeric corpus through the reader (conformance/numbe
       writeFileSync(join(receipts, run, "3.json"), stored);
       writeLines(receipts, run, [
         headLine(run, T0), resultLine(run, T0 + 2, c.text),
-        `{"event":"sidecar","t":${T0 + 2},"seq":4,"run":"${run}","source":3,"path":"${run}/3.json","bytes":${Buffer.byteLength(stored)},"sha256":"${sha(stored)}","_schema":{"id":"parley.sidecar","version":"1.0.0"}}`,
+        `{"event":"sidecar","t":${T0 + 2},"seq":4,"run":"${run}","source":3,"path":"${run}/3.json","bytes":${Buffer.byteLength(stored)},"sha256":"${sha(stored)}","_schema":{"id":"parley-vous.sidecar","version":"1.0.0"}}`,
         endLine(run, T0 + 3, path, 5),
       ]);
       const bundle = only(dir, env);
@@ -944,7 +944,7 @@ describe("RD-124 the shared numeric corpus through the reader (conformance/numbe
       writeFileSync(join(side.receipts, run, "2.json"), stored);
       writeLines(side.receipts, run, [
         headLine(run, T0),
-        `{"event":"sidecar","t":${T0 + 2},"seq":3,"run":"${run}","source":2,"path":"${run}/2.json","bytes":${Buffer.byteLength(stored)},"sha256":"${sha(stored)}","_schema":{"id":"parley.sidecar","version":"1.0.0"}}`,
+        `{"event":"sidecar","t":${T0 + 2},"seq":3,"run":"${run}","source":2,"path":"${run}/2.json","bytes":${Buffer.byteLength(stored)},"sha256":"${sha(stored)}","_schema":{"id":"parley-vous.sidecar","version":"1.0.0"}}`,
         endLine(run, T0 + 3, join(side.receipts, `${run}.jsonl`), 4),
       ]);
       const bundle = only(side.dir, side.env);

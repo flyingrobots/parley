@@ -33,7 +33,7 @@ export const edit = (dir: string, path: string, from: string | RegExp, to: strin
 export function schemaDoc(id: string, version: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     $schema: "https://json-schema.org/draft/2020-12/schema",
-    $id: `https://flyingrobots.dev/parley/schemas/${id}/${version}`,
+    $id: `https://flyingrobots.dev/parley-vous/schemas/${id}/${version}`,
     title: id,
     type: "object",
     required: ["event", "_schema"],
@@ -60,7 +60,7 @@ export const CHANGELOG_RELEASED = [
   "## [Unreleased]", "",
   "## [0.2.0] — 2026-01-01", "",
   "### Added", "",
-  "- `parley.error` 2.0.0, `parley.query` 1.0.0 and `parley.lens` 1.0.0.", "",
+  "- `parley-vous.error` 2.0.0, `parley-vous.query` 1.0.0 and `parley-vous.lens` 1.0.0.", "",
 ].join("\n");
 
 /**
@@ -70,18 +70,18 @@ export const CHANGELOG_RELEASED = [
 export function buildReleased(dir: string): void {
   mkdirSync(dir, { recursive: true });
   git(dir, "init", "-q", "-b", "main");
-  for (const [id, version] of [["parley.error", "2.0.0"], ["parley.query", "1.0.0"], ["parley.lens", "1.0.0"]] as const) {
+  for (const [id, version] of [["parley-vous.error", "2.0.0"], ["parley-vous.query", "1.0.0"], ["parley-vous.lens", "1.0.0"]] as const) {
     put(dir, top(id), text(schemaDoc(id, version)));
     put(dir, snap(id, version), text(schemaDoc(id, version)));
   }
   put(dir, "CHANGELOG.md", CHANGELOG_RELEASED);
   const manifest = (name: string, version: string) => text({ name, version, type: "module", files: ["src"] });
   put(dir, "packages/parley-emit/package.json", manifest(EMIT, "0.4.0"));
-  put(dir, "packages/parley-emit/src/run.ts", 'export const SCHEMA_IDS = {\n  error: { id: "parley.error", version: "2.0.0" },\n} as const;\n');
+  put(dir, "packages/parley-emit/src/run.ts", 'export const SCHEMA_IDS = {\n  error: { id: "parley-vous.error", version: "2.0.0" },\n} as const;\n');
   put(dir, "packages/parley-emit/scripts/sync-schemas.ts", readFileSync(join(REPO, "packages/parley-emit/scripts/sync-schemas.ts"), "utf8"));
   put(dir, "packages/parley-read/package.json", manifest(READ, "0.2.0"));
-  put(dir, "packages/parley-read/src/query.ts", 'export const QUERY_SCHEMA = { id: "parley.query", version: "1.0.0" } as const;\n');
-  put(dir, "packages/parley-read/src/digest.ts", 'export const LENS_SCHEMA = { id: "parley.lens", version: "1.0.0" } as const;\n');
+  put(dir, "packages/parley-read/src/query.ts", 'export const QUERY_SCHEMA = { id: "parley-vous.query", version: "1.0.0" } as const;\n');
+  put(dir, "packages/parley-read/src/digest.ts", 'export const LENS_SCHEMA = { id: "parley-vous.lens", version: "1.0.0" } as const;\n');
   put(dir, "packages/parley-read/scripts/sync-schemas.ts", readFileSync(join(REPO, "packages/parley-read/scripts/sync-schemas.ts"), "utf8"));
   put(dir, "packages/parley-emit-py/package.json", text({ name: PY, version: "0.3.0", private: true }));
   put(dir, "packages/parley-emit-py/parley_emit.py", [
@@ -89,7 +89,7 @@ export function buildReleased(dir: string): void {
     "from typing import Any, Dict", "",
     '__version__ = "0.3.0"', "",
     "SCHEMA_IDS: Dict[str, Dict[str, str]] = {",
-    '    "error": {"id": "parley.error", "version": "2.0.0"},',
+    '    "error": {"id": "parley-vous.error", "version": "2.0.0"},',
     "}",
     '# A tool-owned identity, which the rule does not govern.',
     'VENDOR_SCHEMA = {"id": "parley.tooling.vendor_info", "version": "1.0.0"}',
@@ -107,16 +107,16 @@ export function buildReleased(dir: string): void {
 }
 
 export const FOLD = { fold: { type: "boolean" } };
-export const CHANGELOG_DRAFTS = CHANGELOG_RELEASED.replace("## [Unreleased]\n", "## [Unreleased]\n\n### Added\n\n- `parley.query` 1.1.0, a draft.\n- `parley.lens` 1.1.0, a draft.\n");
+export const CHANGELOG_DRAFTS = CHANGELOG_RELEASED.replace("## [Unreleased]\n", "## [Unreleased]\n\n### Added\n\n- `parley-vous.query` 1.1.0, a draft.\n- `parley-vous.lens` 1.1.0, a draft.\n");
 
-/** On top of the released tree: `parley.query` and `parley.lens` move to draft 1.1.0, as on main on 2026-11-24. */
+/** On top of the released tree: `parley-vous.query` and `parley-vous.lens` move to draft 1.1.0, as on main on 2026-11-24. */
 export function addDrafts(dir: string): void {
-  put(dir, top("parley.query"), text(schemaDoc("parley.query", "1.1.0", FOLD)));
-  put(dir, top("parley.lens"), text(schemaDoc("parley.lens", "1.1.0", FOLD)));
+  put(dir, top("parley-vous.query"), text(schemaDoc("parley-vous.query", "1.1.0", FOLD)));
+  put(dir, top("parley-vous.lens"), text(schemaDoc("parley-vous.lens", "1.1.0", FOLD)));
   put(dir, "CHANGELOG.md", CHANGELOG_DRAFTS);
   edit(dir, "packages/parley-read/src/query.ts", '"1.0.0"', '"1.1.0"');
   edit(dir, "packages/parley-read/src/digest.ts", '"1.0.0"', '"1.1.0"');
-  commit(dir, "drafts: parley.query 1.1.0 and parley.lens 1.1.0");
+  commit(dir, "drafts: parley-vous.query 1.1.0 and parley-vous.lens 1.1.0");
   sync(dir);
   commit(dir, "package copies synced from the drafts");
   acceptOnMain(dir);
@@ -125,7 +125,7 @@ export function addDrafts(dir: string): void {
 /** The release pull request for those drafts, on a branch: commit S snapshots and dates them, commit P re-syncs from S. */
 export function releaseDrafts(dir: string): { s: string; p: string } {
   git(dir, "checkout", "-q", "-b", "release");
-  for (const id of ["parley.query", "parley.lens"]) put(dir, snap(id, "1.1.0"), get(dir, top(id)));
+  for (const id of ["parley-vous.query", "parley-vous.lens"]) put(dir, snap(id, "1.1.0"), get(dir, top(id)));
   put(dir, "CHANGELOG.md", CHANGELOG_DRAFTS.replace("## [Unreleased]\n\n### Added\n", "## [Unreleased]\n\n## [0.2.1] — 2026-11-24\n\n### Added\n"));
   const s = commit(dir, "S: release 0.2.1 of the schemas");
   sync(dir);

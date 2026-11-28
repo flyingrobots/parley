@@ -42,19 +42,19 @@ function head(run: string) {
   return {
     event: "receipt.head", t: T0, seq: 1, run, tool: "t", v: "0.0.1",
     argv: ["t", "count"], resolved: { command: "count" }, inputs: [],
-    _schema: { id: "parley.receipt.head", version: "2.0.0" },
+    _schema: { id: "parley-vous.receipt.head", version: "1.0.0" },
   };
 }
 
 function step(run: string, seq: number, decision = "read a.txt as UTF-8") {
   return {
     event: "receipt.step", t: T0 + seq, seq, run, decision, because: "no BOM and no @charset",
-    _schema: { id: "parley.receipt.step", version: "1.0.0" },
+    _schema: { id: "parley-vous.receipt.step", version: "1.0.0" },
   };
 }
 
 function end(run: string, seq: number, receipt: string, status = 0) {
-  return { event: "end", t: T0 + 100, seq, run, status, receipt, redacted: false, _schema: { id: "parley.end", version: "1.0.0" } };
+  return { event: "end", t: T0 + 100, seq, run, status, receipt, redacted: false, _schema: { id: "parley-vous.end", version: "1.0.0" } };
 }
 
 function toolResult(run: string, seq: number, over: Record<string, unknown> = {}) {
@@ -85,7 +85,7 @@ function withSidecar(dir: string, run = RUN_A) {
   const bytes = Buffer.byteLength(stored, "utf8");
   writeReceipt(dir, run, [
     head(run),
-    { event: "sidecar", t: T0 + 60, seq: 3, run, source: 2, path: rel, bytes, sha256: sha(stored), _schema: { id: "parley.sidecar", version: "1.0.0" } },
+    { event: "sidecar", t: T0 + 60, seq: 3, run, source: 2, path: rel, bytes, sha256: sha(stored), _schema: { id: "parley-vous.sidecar", version: "1.0.0" } },
     end(run, 4, receiptPath),
   ]);
   return { storedPath, stored, bytes };
@@ -331,7 +331,7 @@ describe("RD-33 a drill-down is a recorded read", () => {
     const q = queries[0]!;
     expect(q.seq).toBe(answer.query.seq);
     expect(q.validation.state).toBe("validated");
-    expect((q.validation as { schema: { id: string; version: string } }).schema).toEqual({ id: "parley.query", version: "1.1.0" });
+    expect((q.validation as { schema: { id: string; version: string } }).schema).toEqual({ id: "parley-vous.query", version: "1.0.0" });
     const record = q.record as Record<string, unknown>;
     expect(record.records).toEqual(ids);
     expect(record.view).toBe("how-it-decided");

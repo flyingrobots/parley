@@ -82,13 +82,13 @@ describe("schemas/", () => {
   }
 
   test("the receipt head names its tool and version (§5)", () => {
-    const s = load("parley.receipt.head.schema.json");
+    const s = load("parley-vous.receipt.head.schema.json");
     expect(s.required).toContain("tool");
     expect(s.required).toContain("v");
   });
 
   test("the error code is a dotted identifier and the problem is non-empty (§6)", () => {
-    const s = load("parley.error.schema.json");
+    const s = load("parley-vous.error.schema.json");
     expect(s.properties.code.pattern).toBeDefined();
     expect(s.properties.problem.minLength).toBe(1);
   });
@@ -97,12 +97,12 @@ describe("schemas/", () => {
     const ajv = new Ajv2020({ strict: true, allErrors: true });
     addFormats(ajv);
     const validate = (f: string) => ajv.compile(load(f));
-    const error = validate("parley.error.schema.json");
-    const head = validate("parley.receipt.head.schema.json");
-    const boot = validate("parley.run.bootstrap.schema.json");
-    const okError = { event: "error", t: 1, seq: 4, run: "r", code: "a.b", problem: "p", _schema: { id: "parley.error", version: "2.0.0" } };
-    const okHead = { event: "receipt.head", t: 1, seq: 1, run: "r", tool: "x", v: "1", inv: "i", argv: [], resolved: {}, inputs: [], _schema: { id: "parley.receipt.head", version: "2.0.0" } };
-    const okBoot = { event: "run", t: 1, seq: 0, run: "r", tool: "x", v: "1", inv: "i", paths: { receipt: "/p/r.jsonl" }, _schema: { id: "parley.run.bootstrap", version: "1.1.1" } };
+    const error = validate("parley-vous.error.schema.json");
+    const head = validate("parley-vous.receipt.head.schema.json");
+    const boot = validate("parley-vous.run.bootstrap.schema.json");
+    const okError = { event: "error", t: 1, seq: 4, run: "r", code: "a.b", problem: "p", _schema: { id: "parley-vous.error", version: "1.0.0" } };
+    const okHead = { event: "receipt.head", t: 1, seq: 1, run: "r", tool: "x", v: "1", inv: "i", argv: [], resolved: {}, inputs: [], _schema: { id: "parley-vous.receipt.head", version: "1.0.0" } };
+    const okBoot = { event: "run", t: 1, seq: 0, run: "r", tool: "x", v: "1", inv: "i", paths: { receipt: "/p/r.jsonl" }, _schema: { id: "parley-vous.run.bootstrap", version: "1.0.0" } };
 
     test("baselines validate", () => {
       expect(error(okError)).toBe(true);
@@ -136,8 +136,8 @@ describe("schemas/", () => {
       expect(error({ ...okError, code: "a.b." })).toBe(false);
     });
     test("another version of the same id does not validate against this schema", () => {
-      expect(error({ ...okError, _schema: { id: "parley.error", version: "2.1.0" } })).toBe(false);
-      expect(error({ ...okError, _schema: { id: "parley.error", version: "1.0.0" } })).toBe(false);
+      expect(error({ ...okError, _schema: { id: "parley-vous.error", version: "1.1.0" } })).toBe(false);
+      expect(error({ ...okError, _schema: { id: "parley-vous.error", version: "2.0.0" } })).toBe(false);
     });
     test("unknown fields are still accepted at the exact version", () => expect(error({ ...okError, extra: 1 })).toBe(true));
     test("receipt head without tool or v", () => {
@@ -155,28 +155,28 @@ describe("schemas/", () => {
       expect(head({ ...okHead, inputs: [{ role: "tree" }] })).toBe(false);
     });
     test("each new schema's own constraints reject what the spec forbids", () => {
-      const end = validate("parley.end.schema.json"), side = validate("parley.sidecar.schema.json"), start = validate("parley.startup.failed.schema.json"), warn = validate("parley.warning.schema.json"), red = validate("parley.redaction.schema.json");
-      const okEnd = { event: "end", t: 1, seq: 9, run: "r", status: 0, receipt: "/w/r.jsonl", redacted: false, _schema: { id: "parley.end", version: "1.0.0" } };
+      const end = validate("parley-vous.end.schema.json"), side = validate("parley-vous.sidecar.schema.json"), start = validate("parley-vous.startup.failed.schema.json"), warn = validate("parley-vous.warning.schema.json"), red = validate("parley-vous.redaction.schema.json");
+      const okEnd = { event: "end", t: 1, seq: 9, run: "r", status: 0, receipt: "/w/r.jsonl", redacted: false, _schema: { id: "parley-vous.end", version: "1.0.0" } };
       expect(end(okEnd)).toBe(true);
       for (const status of [-1, 256, 3, "0"]) expect(end({ ...okEnd, status })).toBe(false);
       const { redacted: _r, ...noRedacted } = okEnd; expect(end(noRedacted)).toBe(false);
       const { receipt: _p, ...noReceipt } = okEnd; expect(end(noReceipt)).toBe(false);
       expect(end({ ...okEnd, receipt: "rel/r.jsonl" })).toBe(false);
-      const okSide = { event: "sidecar", t: 1, seq: 8, run: "r", source: 7, path: "r/7.json", bytes: 10, sha256: "a".repeat(64), _schema: { id: "parley.sidecar", version: "1.0.0" } };
+      const okSide = { event: "sidecar", t: 1, seq: 8, run: "r", source: 7, path: "r/7.json", bytes: 10, sha256: "a".repeat(64), _schema: { id: "parley-vous.sidecar", version: "1.0.0" } };
       expect(side(okSide)).toBe(true);
       expect(side({ ...okSide, sha256: "zz" })).toBe(false);
       expect(side({ ...okSide, source: 0 })).toBe(false);
       expect(side({ ...okSide, path: "/abs/7.json" })).toBe(false);
       expect(side({ ...okSide, path: "../escape.json" })).toBe(false);
       expect(side({ ...okSide, bytes: -1 })).toBe(false);
-      const okStart = { event: "startup.failed", t: 1, seq: 0, run: "r", tool: "x", v: "1", code: "startup.receipt_unwritable", problem: "p", _schema: { id: "parley.startup.failed", version: "1.0.0" } };
+      const okStart = { event: "startup.failed", t: 1, seq: 0, run: "r", tool: "x", v: "1", code: "startup.receipt_unwritable", problem: "p", _schema: { id: "parley-vous.startup.failed", version: "1.0.0" } };
       expect(start(okStart)).toBe(true);
       expect(start({ ...okStart, code: "args.unparseable" })).toBe(false);
-      const okWarn = { event: "warning", t: 1, seq: 3, run: "r", code: "a.b", problem: "p", _schema: { id: "parley.warning", version: "1.0.0" } };
+      const okWarn = { event: "warning", t: 1, seq: 3, run: "r", code: "a.b", problem: "p", _schema: { id: "parley-vous.warning", version: "1.0.0" } };
       expect(warn(okWarn)).toBe(true);
       expect(warn({ ...okWarn, code: "Something went wrong" })).toBe(false);
       expect(warn({ ...okWarn, problem: "" })).toBe(false);
-      const okRed = { event: "redaction", t: 1, seq: 6, run: "r", in: 4, at: "/detail/url", _schema: { id: "parley.redaction", version: "1.0.0" } };
+      const okRed = { event: "redaction", t: 1, seq: 6, run: "r", in: 4, at: "/detail/url", _schema: { id: "parley-vous.redaction", version: "1.0.0" } };
       expect(red(okRed)).toBe(true);
       expect(red({ ...okRed, in: 0 })).toBe(false);
       expect(red({ ...okRed, at: "token" })).toBe(false);
@@ -187,21 +187,21 @@ describe("schemas/", () => {
       expect(head({ ...okHead, redacted: { sources: ["netrc"] } })).toBe(true);
       expect(head({ ...okHead, inputs: [{ path: "x", sha256: "a".repeat(64), error: "input.unreadable" }] })).toBe(false);
       expect(head({ ...okHead, redacted: { sources: [""] } })).toBe(false);
-      const inputs = validate("parley.receipt.inputs.schema.json");
-      const okInputs = { event: "receipt.inputs", t: 1, seq: 5, run: "r", inputs: [{ path: "x", sha256: "a".repeat(64) }], _schema: { id: "parley.receipt.inputs", version: "1.0.0" } };
+      const inputs = validate("parley-vous.receipt.inputs.schema.json");
+      const okInputs = { event: "receipt.inputs", t: 1, seq: 5, run: "r", inputs: [{ path: "x", sha256: "a".repeat(64) }], _schema: { id: "parley-vous.receipt.inputs", version: "1.0.0" } };
       expect(inputs(okInputs)).toBe(true);
       expect(inputs({ ...okInputs, inputs: [{ path: "x", sha256: "a".repeat(64), error: "input.unreadable" }] })).toBe(false);
       expect(inputs({ ...okInputs, inputs: [{ path: "x", sha256: "zz" }] })).toBe(false);
     });
     test("the query record carries asker, view and budget, and the view is a closed set (§9)", () => {
-      const query = validate("parley.query.schema.json");
+      const query = validate("parley-vous.query.schema.json");
       const okQuery = {
         event: "query", t: 1, seq: 1, run: "r",
         asker: { tool: "claude-code", cwd: "/w", task: "owner/repo#1" },
         view: "what-failed",
         budget: { records: 20 },
         window: { from: 0, to: 2 },
-        _schema: { id: "parley.query", version: "1.1.0" },
+        _schema: { id: "parley-vous.query", version: "1.0.0" },
       };
       expect(query(okQuery)).toBe(true);
       for (const k of ["asker", "view", "budget", "window"]) {
@@ -228,7 +228,7 @@ describe("schemas/", () => {
     test("a drill-down query names the records it opens by (run, seq), at least one (flyingrobots/parley#51)", () => {
       // The case above compiled this schema on the shared validator; take that one rather than
       // registering its $id a second time.
-      const query = ajv.getSchema(String(load("parley.query.schema.json").$id)) ?? validate("parley.query.schema.json");
+      const query = ajv.getSchema(String(load("parley-vous.query.schema.json").$id)) ?? validate("parley-vous.query.schema.json");
       const okOpen = {
         event: "query", t: 1, seq: 1, run: "r",
         asker: { tool: "claude-code" },
@@ -236,7 +236,7 @@ describe("schemas/", () => {
         budget: { records: 2 },
         window: { from: 0, to: 2 },
         records: [{ run: "a", seq: 0 }, { run: "b", seq: 7 }],
-        _schema: { id: "parley.query", version: "1.1.0" },
+        _schema: { id: "parley-vous.query", version: "1.0.0" },
       };
       expect(query(okOpen)).toBe(true);
       expect(query({ ...okOpen, records: [] })).toBe(false);
@@ -247,7 +247,7 @@ describe("schemas/", () => {
       expect(query({ ...okOpen, records: { run: "a", seq: 1 } })).toBe(false);
     });
     test("a lens names its query, its budget, its loss bound and its records (§9)", () => {
-      const lens = validate("parley.lens.schema.json");
+      const lens = validate("parley-vous.lens.schema.json");
       const okLens = {
         event: "lens", t: 1, seq: 2, run: "r",
         query: { run: "r", seq: 1 },
@@ -257,7 +257,7 @@ describe("schemas/", () => {
         window: { from: 0, to: 2 },
         loss: { bound: "count-only", excluded: 184 },
         records: [{ run: "q", seq: 4 }],
-        _schema: { id: "parley.lens", version: "1.1.0" },
+        _schema: { id: "parley-vous.lens", version: "1.0.0" },
       };
       expect(lens(okLens)).toBe(true);
       for (const k of ["query", "asker", "view", "budget", "window", "loss", "records"]) {
@@ -329,8 +329,8 @@ describe("schemas/", () => {
       expect(lens({ ...okLens, runs: [{ ...section, dropped: ["run"] }] })).toBe(false);
     });
     test("a page with has_more needs a cursor; the last page does not (§7.2)", () => {
-      const page = validate("parley.page.schema.json");
-      const okPage = { event: "page", t: 1, seq: 7, run: "r", has_more: false, _schema: { id: "parley.page", version: "1.0.0" } };
+      const page = validate("parley-vous.page.schema.json");
+      const okPage = { event: "page", t: 1, seq: 7, run: "r", has_more: false, _schema: { id: "parley-vous.page", version: "1.0.0" } };
       expect(page(okPage)).toBe(true);
       expect(page({ ...okPage, has_more: true })).toBe(false);
       expect(page({ ...okPage, has_more: true, cursor: "abc" })).toBe(true);
@@ -356,18 +356,18 @@ describe("schemas/", () => {
 
   test("the loader resolves a released snapshot by its exact pair and rejects a collision", () => {
     const dir = mkdtempSync(join(tmpdir(), "parley-schemas-"));
-    const draft = load("parley.error.schema.json");
-    writeFileSync(join(dir, "parley.error.schema.json"), JSON.stringify(draft));
-    mkdirSync(join(dir, "released", "parley.error"), { recursive: true });
+    const draft = load("parley-vous.error.schema.json");
+    writeFileSync(join(dir, "parley-vous.error.schema.json"), JSON.stringify(draft));
+    mkdirSync(join(dir, "released", "parley-vous.error"), { recursive: true });
     const snap = structuredClone(draft);
-    snap.$id = "https://flyingrobots.dev/parley/schemas/parley.error/1.9.0";
-    snap.properties._schema.properties.version.const = "1.9.0";
-    writeFileSync(join(dir, "released", "parley.error", "1.9.0.schema.json"), JSON.stringify(snap));
-    expect([...loadSchemas(dir).byKey.keys()].sort()).toEqual(["parley.error@1.9.0", "parley.error@2.0.0"]);
+    snap.$id = "https://flyingrobots.dev/parley-vous/schemas/parley-vous.error/0.9.0";
+    snap.properties._schema.properties.version.const = "0.9.0";
+    writeFileSync(join(dir, "released", "parley-vous.error", "0.9.0.schema.json"), JSON.stringify(snap));
+    expect([...loadSchemas(dir).byKey.keys()].sort()).toEqual(["parley-vous.error@0.9.0", "parley-vous.error@1.0.0"]);
     const changed = structuredClone(draft);
     changed.description = `${changed.description} (changed)`;
-    writeFileSync(join(dir, "released", "parley.error", "2.0.0.schema.json"), JSON.stringify(changed));
-    expect(() => loadSchemas(dir)).toThrow(/parley.error@2.0.0/);
+    writeFileSync(join(dir, "released", "parley-vous.error", "1.0.0.schema.json"), JSON.stringify(changed));
+    expect(() => loadSchemas(dir)).toThrow(/parley-vous.error@1.0.0/);
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -375,21 +375,21 @@ describe("schemas/", () => {
   // carry a released pair only with the snapshot's exact bytes; any other change needs a version.
   test("a top-level file may carry a released pair with the snapshot's exact bytes", () => {
     const dir = mkdtempSync(join(tmpdir(), "parley-schemas-"));
-    const text = readFileSync("schemas/parley.error.schema.json", "utf8");
-    writeFileSync(join(dir, "parley.error.schema.json"), text);
-    mkdirSync(join(dir, "released", "parley.error"), { recursive: true });
-    writeFileSync(join(dir, "released", "parley.error", "2.0.0.schema.json"), text);
-    expect([...loadSchemas(dir).byKey.keys()]).toEqual(["parley.error@2.0.0"]);
+    const text = readFileSync("schemas/parley-vous.error.schema.json", "utf8");
+    writeFileSync(join(dir, "parley-vous.error.schema.json"), text);
+    mkdirSync(join(dir, "released", "parley-vous.error"), { recursive: true });
+    writeFileSync(join(dir, "released", "parley-vous.error", "1.0.0.schema.json"), text);
+    expect([...loadSchemas(dir).byKey.keys()]).toEqual(["parley-vous.error@1.0.0"]);
     rmSync(dir, { recursive: true, force: true });
   });
 
   test("a top-level file that changes a released pair is refused", () => {
     const dir = mkdtempSync(join(tmpdir(), "parley-schemas-"));
-    const text = readFileSync("schemas/parley.error.schema.json", "utf8");
-    mkdirSync(join(dir, "released", "parley.error"), { recursive: true });
-    writeFileSync(join(dir, "released", "parley.error", "2.0.0.schema.json"), text);
-    writeFileSync(join(dir, "parley.error.schema.json"), text.replace("\n}", " \n}"));
-    expect(() => loadSchemas(dir)).toThrow(/parley.error@2.0.0.*immutable/);
+    const text = readFileSync("schemas/parley-vous.error.schema.json", "utf8");
+    mkdirSync(join(dir, "released", "parley-vous.error"), { recursive: true });
+    writeFileSync(join(dir, "released", "parley-vous.error", "1.0.0.schema.json"), text);
+    writeFileSync(join(dir, "parley-vous.error.schema.json"), text.replace("\n}", " \n}"));
+    expect(() => loadSchemas(dir)).toThrow(/parley-vous.error@1.0.0.*immutable/);
     rmSync(dir, { recursive: true, force: true });
   });
 

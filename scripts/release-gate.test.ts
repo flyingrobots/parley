@@ -23,7 +23,7 @@ const PACKAGES = [
   { dir: "parley-read", name: READ, version: "0.2.0", previous: "parley-read-v0.1.1", file: "flyingrobots-parley-read-0.2.0.tgz" },
   { dir: "parley-emit-py", name: PY, version: "0.3.0", previous: "parley-emit-py-v0.2.0", file: "parley_emit.py" },
 ] as const;
-const BLOCKED = ["parley.lens@1.1.0", "parley.query@1.1.0"];
+const BLOCKED = ["parley-vous.lens@1.1.0", "parley-vous.query@1.1.0"];
 
 /**
  * `drafts` is the default branch as it is on 2026-11-24: every package carries the two drafts, each
@@ -95,13 +95,13 @@ describe("the release gate (flyingrobots/parley#147)", () => {
       expect(r.stderr).toBe("");
       const last = parse(r.stdout).pop();
       expect(last).toMatchObject({ event: "gate.result", passed: false, _schema: { id: "parley.tooling.release_gate" } });
-      expect(r.stdout).toContain('"id":"parley.query","version":"1.1.0"');
-      expect(r.stdout).toContain('"id":"parley.lens","version":"1.1.0"');
+      expect(r.stdout).toContain('"id":"parley-vous.query","version":"1.1.0"');
+      expect(r.stdout).toContain('"id":"parley-vous.lens","version":"1.1.0"');
     }
     const prose = cli(["parley-read", "--repo", dir, "--human"]);
     expect(prose.status).toBe(1);
-    expect(prose.stdout).toContain("parley.query@1.1.0");
-    expect(prose.stdout).toContain("parley.lens@1.1.0");
+    expect(prose.stdout).toContain("parley-vous.query@1.1.0");
+    expect(prose.stdout).toContain("parley-vous.lens@1.1.0");
     expect(() => JSON.parse(prose.stdout.split("\n")[0] ?? "")).toThrow();
   }, 2 * SLOW);
 
@@ -146,14 +146,14 @@ describe("the release gate (flyingrobots/parley#147)", () => {
       gate: { phase: "publication", passed: true, frozen_since: "parley-read-v0.1.1", frozen_since_commit: git(dir, "rev-parse", "parley-read-v0.1.1"), refusals: [] },
       consumer: null,
     });
-    expect(r.schemas.map((s) => `${s.id}@${s.version}`).sort()).toEqual(["parley.error@2.0.0", "parley.lens@1.0.0", "parley.lens@1.1.0", "parley.query@1.0.0", "parley.query@1.1.0"]);
+    expect(r.schemas.map((s) => `${s.id}@${s.version}`).sort()).toEqual(["parley-vous.error@2.0.0", "parley-vous.lens@1.0.0", "parley-vous.lens@1.1.0", "parley-vous.query@1.0.0", "parley-vous.query@1.1.0"]);
     for (const s of r.schemas) {
       expect(s.snapshot).toBe(snap(s.id, s.version));
       expect(s.snapshot_sha256, `${s.id}@${s.version}`).toBe(sha("sha256", join(dir, snap(s.id, s.version))));
     }
-    expect(r.schemas.filter((s) => s.declared).map((s) => `${s.id}@${s.version}`).sort()).toEqual(["parley.lens@1.1.0", "parley.query@1.1.0"]);
-    expect(r.schemas.find((s) => s.id === "parley.query" && s.version === "1.1.0")?.released_in).toBe("0.2.1");
-    expect(r.schemas.find((s) => s.id === "parley.query" && s.version === "1.0.0")?.released_in).toBe("0.2.0");
+    expect(r.schemas.filter((s) => s.declared).map((s) => `${s.id}@${s.version}`).sort()).toEqual(["parley-vous.lens@1.1.0", "parley-vous.query@1.1.0"]);
+    expect(r.schemas.find((s) => s.id === "parley-vous.query" && s.version === "1.1.0")?.released_in).toBe("0.2.1");
+    expect(r.schemas.find((s) => s.id === "parley-vous.query" && s.version === "1.0.0")?.released_in).toBe("0.2.0");
     // Each file of the tarball by digest, so a repacked tarball can be compared file by file.
     expect(r.artifact!.files.map((f) => f.path)).toContain("package.json");
     expect(r.artifact!.files.find((f) => f.path === "src/schemas.ts")?.sha256).toBe(sha("sha256", join(dir, "packages/parley-read/src/schemas.ts")));
@@ -163,7 +163,7 @@ describe("the release gate (flyingrobots/parley#147)", () => {
     // A draft has no snapshot digest to report, and the report says the gate refused.
     const draft = gate({ package: "parley-read", repo: fixture("drafts") }).report;
     expect(draft.gate.passed).toBe(false);
-    expect(draft.schemas.find((s) => s.id === "parley.query" && s.version === "1.1.0")).toMatchObject({ snapshot_sha256: null, released_in: null });
+    expect(draft.schemas.find((s) => s.id === "parley-vous.query" && s.version === "1.1.0")).toMatchObject({ snapshot_sha256: null, released_in: null });
     expect(draft.gate.refusals.filter((x) => x.code === "schema.unreleased").map((x) => `${x.id}@${x.version}`).sort()).toEqual(BLOCKED);
   }, SLOW);
 
@@ -198,9 +198,9 @@ describe("the release gate (flyingrobots/parley#147)", () => {
     // The gap of flyingrobots/parley#153, closed where a release is made: a released snapshot, its
     // top-level file and every copy edited and merged after the previous release.
     const edited = fixture("released");
-    const changed = text({ ...schemaDoc("parley.error", "2.0.0"), description: "a released version, edited in place" });
-    put(edited, top("parley.error"), changed);
-    put(edited, snap("parley.error", "2.0.0"), changed);
+    const changed = text({ ...schemaDoc("parley-vous.error", "2.0.0"), description: "a released version, edited in place" });
+    put(edited, top("parley-vous.error"), changed);
+    put(edited, snap("parley-vous.error", "2.0.0"), changed);
     commit(edited, "S': edit a released schema and its snapshot together");
     sync(edited);
     commit(edited, "P': every package copy re-synced from the edit");
@@ -208,7 +208,7 @@ describe("the release gate (flyingrobots/parley#147)", () => {
     for (const p of PACKAGES) {
       const bad = gate({ package: p.dir, repo: edited });
       expect(bad.passed, p.dir).toBe(false);
-      expect(bad.report.gate.refusals.map((x) => `${x.code} ${x.path}`), p.dir).toEqual([`snapshot.modified ${snap("parley.error", "2.0.0")}`]);
+      expect(bad.report.gate.refusals.map((x) => `${x.code} ${x.path}`), p.dir).toEqual([`snapshot.modified ${snap("parley-vous.error", "2.0.0")}`]);
     }
   }, 2 * SLOW);
 
@@ -373,8 +373,8 @@ describe("the workflows' own steps, run here (flyingrobots/parley#147)", () => {
       expect(readFileSync(env.GITHUB_OUTPUT, "utf8"), file).toBe("");
       const summary = readFileSync(env.GITHUB_STEP_SUMMARY, "utf8");
       expect(summary, file).toContain('"passed": false');
-      expect(summary, file).toContain("parley.query@1.1.0 has no snapshot");
-      expect(summary, file).toContain("parley.lens@1.1.0 has no snapshot");
+      expect(summary, file).toContain("parley-vous.query@1.1.0 has no snapshot");
+      expect(summary, file).toContain("parley-vous.lens@1.1.0 has no snapshot");
       expect(JSON.parse(readFileSync(join(temp, "release/release-report.json"), "utf8")).gate.passed, file).toBe(false);
     }
   }, 2 * SLOW);

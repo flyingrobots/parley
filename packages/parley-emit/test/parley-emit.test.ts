@@ -772,7 +772,7 @@ describe("PE-10 discovery", () => {
     expect(out[0]!.event).toBe("run"); expect(out.at(-1)!.event).toBe("end");
     expect(out.filter((o) => o.event === "command").map((o) => o.name)).toEqual(["count"]);
     const ids = out.filter((o) => o.event === "schema").map((o) => `${o.id}@${o.version}`);
-    expect(ids).toContain("t.count@1.0.0"); expect(ids).toContain("parley.error@2.0.0"); expect(ids).toContain("parley.run.bootstrap@1.1.1");
+    expect(ids).toContain("t.count@1.0.0"); expect(ids).toContain("parley-vous.error@1.0.0"); expect(ids).toContain("parley-vous.run.bootstrap@1.0.0");
     expect(check(dir, s).violations).toEqual([]);
   });
 
@@ -784,20 +784,20 @@ describe("PE-10 discovery", () => {
     const out = s.stdout.objs;
     expect(out.filter((o) => o.event === "command").length).toBe(1);
     const ids = out.filter((o) => o.event === "schema").map((o) => `${o.id}@${o.version}`);
-    expect(ids).toEqual(["t.count@1.0.0", "parley.error@2.0.0", "parley.startup.failed@1.0.0"]);
+    expect(ids).toEqual(["t.count@1.0.0", "parley-vous.error@1.0.0", "parley-vous.startup.failed@1.0.0"]);
     expect(check(dir, s).violations).toEqual([]);
   });
 
-  test("--help lists parley.startup.failed beside parley.error when the command declares no errors", async () => {
+  test("--help lists parley-vous.startup.failed beside parley-vous.error when the command declares no errors", async () => {
     // flyingrobots/parley#92: every command can produce a startup failure, so §4.2's "every error
     // type it can produce" includes it, in the command line's emits and as a schema line.
     const { dir, env } = scratch();
     const s = streams();
     expect(await main(tool(), ["t", "count", "--help"], async () => {}, { cwd: dir, env, ...s })).toBe(0);
     const command = s.stdout.objs.find((o) => o.event === "command") as { emits: { id: string; version: string }[] };
-    expect(command.emits).toEqual([{ id: "t.count", version: "1.0.0" }, { id: "parley.error", version: "2.0.0" }, { id: "parley.startup.failed", version: "1.0.0" }]);
+    expect(command.emits).toEqual([{ id: "t.count", version: "1.0.0" }, { id: "parley-vous.error", version: "1.0.0" }, { id: "parley-vous.startup.failed", version: "1.0.0" }]);
     const ids = s.stdout.objs.filter((o) => o.event === "schema").map((o) => `${o.id}@${o.version}`);
-    expect(ids).toEqual(["t.count@1.0.0", "parley.error@2.0.0", "parley.startup.failed@1.0.0"]);
+    expect(ids).toEqual(["t.count@1.0.0", "parley-vous.error@1.0.0", "parley-vous.startup.failed@1.0.0"]);
     expect(check(dir, s).violations).toEqual([]);
   });
 
@@ -810,7 +810,7 @@ describe("PE-10 discovery", () => {
     expect(await main(spec, ["t", "count", "--help"], async () => {}, { cwd: dir, env: { ...env, T_TOKEN: "object" }, ...s })).toBe(0);
     const docs = new Map(s.stdout.objs.filter((o) => o.event === "schema").map((o) => [o.id as string, o.schema]));
     expect(docs.get("t.count")).toEqual(RESULT);
-    expect(docs.get("parley.error")).toEqual(SCHEMAS.find((x) => x.id === "parley.error" && x.version === "2.0.0")!.schema);
+    expect(docs.get("parley-vous.error")).toEqual(SCHEMAS.find((x) => x.id === "parley-vous.error" && x.version === "1.0.0")!.schema);
     expect((s.stdout.objs.find((o) => o.event === "command") as { intent: string }).intent).toBe("Count each [redacted] under the working directory");
     const c = check(dir, s);
     const schemaSeqs = new Set(c.receiptLines.filter((o) => o.event === "schema").map((o) => o.seq));
@@ -943,7 +943,7 @@ describe("PE-14 secrets never reach a stream (F-1, F-2, F-3)", () => {
     const status = await main(tool(), ["t", "count", "--token", "zone-x9"], async (run) => { run.result({ event: "result", value: 1, note: "zone-x9 is in" }, { id: "t.count", version: "1.0.0" }); }, { cwd: zone, env, ...s });
     expect(status).toBe(0);
     const boot = s.stdout.objs[0] as { paths: { receipt: string }; event: string; _schema: { id: string } };
-    expect(boot.event).toBe("run"); expect(boot._schema.id).toBe("parley.run.bootstrap");
+    expect(boot.event).toBe("run"); expect(boot._schema.id).toBe("parley-vous.run.bootstrap");
     expect(boot.paths.receipt.startsWith(join(state, "parley"))).toBe(true);
     const all = s.stdout.text + s.stderr.text + readFileSync(boot.paths.receipt, "utf8");
     expect(all.includes("zone-x9")).toBe(false);
@@ -966,7 +966,7 @@ describe("PE-14 secrets never reach a stream (F-1, F-2, F-3)", () => {
   test("a secret that collides with an envelope word redacts payload values only", async () => {
     const { dir, env } = scratch();
     const r = await runCount(dir, env, ["count", "--token", "run"], (run) => { run.step("a run of the mill", "because a run is a run", { word: "run" }); run.result({ event: "result", value: 1 }, { id: "t.count", version: "1.0.0" }); });
-    for (const o of [...r.stdout.objs, ...r.receiptLines]) { expect(typeof o.event).toBe("string"); expect(o.run).toBe(r.stdout.objs[0]!.run); expect((o._schema as { id: string }).id.startsWith("parley.") || (o._schema as { id: string }).id === "t.count").toBe(true); }
+    for (const o of [...r.stdout.objs, ...r.receiptLines]) { expect(typeof o.event).toBe("string"); expect(o.run).toBe(r.stdout.objs[0]!.run); expect((o._schema as { id: string }).id.startsWith("parley-vous.") || (o._schema as { id: string }).id === "t.count").toBe(true); }
     expect(r.stdout.objs[0]!.event).toBe("run");
     const step = r.receiptLines.find((o) => o.event === "receipt.step") as { decision: string; detail: { word: string } };
     expect(step.decision).toBe("a [redacted] of the mill"); expect(step.detail.word).toBe("[redacted]");
@@ -1059,12 +1059,12 @@ describe("PE-16 retention and in-flight runs (F-5)", () => {
     const rdir = join(dir, ".parley", "receipts");
     const id = ulid(5);
     const stale = join(rdir, `${id}.jsonl`);
-    writeFileSync(stale, JSON.stringify({ event: "receipt.head", t: 1, seq: 1, run: id, tool: "t", v: "0.0.1", argv: [], resolved: {}, inputs: [], _schema: { id: "parley.receipt.head", version: "2.0.0" } }) + "\n");
+    writeFileSync(stale, JSON.stringify({ event: "receipt.head", t: 1, seq: 1, run: id, tool: "t", v: "0.0.1", argv: [], resolved: {}, inputs: [], _schema: { id: "parley-vous.receipt.head", version: "1.0.0" } }) + "\n");
     const twoDays = (Date.now() - 2 * 86_400_000) / 1000;
     utimesSync(stale, twoDays, twoDays);
     await runCount(dir, env, ["count"], (run) => {
       retain(run, run.receiptDir, 1, false, Date.now(), () => {
-        appendFileSync(stale, JSON.stringify({ event: "receipt.step", t: 2, seq: 2, run: id, decision: "resumed", because: "its owner woke", _schema: { id: "parley.receipt.step", version: "1.0.0" } }) + "\n");
+        appendFileSync(stale, JSON.stringify({ event: "receipt.step", t: 2, seq: 2, run: id, decision: "resumed", because: "its owner woke", _schema: { id: "parley-vous.receipt.step", version: "1.0.0" } }) + "\n");
       });
     });
     expect(existsSync(stale)).toBe(true);
@@ -1077,8 +1077,8 @@ describe("PE-16 retention and in-flight runs (F-5)", () => {
   function plant(rdir: string, n: number, ended: boolean, mtimeMs: number): string {
     const id = ulid(n);
     const p = join(rdir, `${id}.jsonl`);
-    const head = { event: "receipt.head", t: 1, seq: 1, run: id, tool: "t", v: "0.0.1", argv: [], resolved: {}, inputs: [], _schema: { id: "parley.receipt.head", version: "2.0.0" } };
-    const end = { event: "end", t: 2, seq: 2, run: id, status: 0, receipt: p, redacted: false, _schema: { id: "parley.end", version: "1.0.0" } };
+    const head = { event: "receipt.head", t: 1, seq: 1, run: id, tool: "t", v: "0.0.1", argv: [], resolved: {}, inputs: [], _schema: { id: "parley-vous.receipt.head", version: "1.0.0" } };
+    const end = { event: "end", t: 2, seq: 2, run: id, status: 0, receipt: p, redacted: false, _schema: { id: "parley-vous.end", version: "1.0.0" } };
     writeFileSync(p, JSON.stringify(head) + "\n" + (ended ? JSON.stringify(end) + "\n" : ""));
     utimesSync(p, mtimeMs / 1000, mtimeMs / 1000);
     return p;
@@ -1786,7 +1786,7 @@ describe("PE-22 the retention window", () => {
 // The writer enforces the contract around it, so nothing it does can put an invalid line or a
 // changed envelope on the shared timeline, and a run without one is unchanged in every byte.
 
-const TRANSFORM_PAIR = { id: "parley.history.transform", version: "1.0.0" } as const;
+const TRANSFORM_PAIR = { id: "parley-vous.history.transform", version: "1.0.0" } as const;
 const draftOf = (id: string) => JSON.parse(readFileSync(join(SCHEMAS_DIR, `${id}.schema.json`), "utf8")) as object;
 const digestOfSource = (fn: HistoryTransform) => createHash("sha256").update(fn.toString()).digest("hex");
 const warningsOf = (r: { stderr: Capture }, code: string) => r.stderr.objs.filter((o) => o.event === "warning" && o.code === code);
@@ -1912,7 +1912,7 @@ describe("PE-23 the history sink's transform", () => {
     expect(open.sha256).toBe(digestOfSource(dropNothing));
     expect(open.run).toBe(r.receiptLines[0]!.run);
     const ajv = new Ajv2020({ strict: false, allErrors: true }); addFormats(ajv);
-    const validate = ajv.compile(draftOf("parley.history.transform"));
+    const validate = ajv.compile(draftOf("parley-vous.history.transform"));
     expect(validate(open), JSON.stringify(validate.errors)).toBe(true);
     // The receipt never carries the line, and the seq it takes is accounted for there.
     expect(r.receiptLines.some((o) => o.event === "history.transform")).toBe(false);
@@ -2056,11 +2056,11 @@ describe("PE-23 the history sink's transform", () => {
   test("the re-validation checker covers every shipped schema", async () => {
     const ajv = new Ajv2020({ strict: false, allErrors: true }); addFormats(ajv);
     const samples: Record<string, unknown>[] = [
-      { event: "warning", t: 1, seq: 3, run: "r", code: "a.b", problem: "p", _schema: { id: "parley.warning", version: "1.0.0" } },
-      { event: "redaction", t: 1, seq: 6, run: "r", in: 4, at: "/detail/url", _schema: { id: "parley.redaction", version: "1.0.0" } },
-      { event: "end", t: 1, seq: 9, run: "r", status: 0, receipt: "/w/r.jsonl", redacted: false, _schema: { id: "parley.end", version: "1.0.0" } },
-      { event: "page", t: 1, seq: 7, run: "r", has_more: true, cursor: "c", _schema: { id: "parley.page", version: "1.0.0" } },
-      { event: "receipt.step", t: 1, seq: 2, run: "r", decision: "d", because: "b", _schema: { id: "parley.receipt.step", version: "1.0.0" } },
+      { event: "warning", t: 1, seq: 3, run: "r", code: "a.b", problem: "p", _schema: { id: "parley-vous.warning", version: "1.0.0" } },
+      { event: "redaction", t: 1, seq: 6, run: "r", in: 4, at: "/detail/url", _schema: { id: "parley-vous.redaction", version: "1.0.0" } },
+      { event: "end", t: 1, seq: 9, run: "r", status: 0, receipt: "/w/r.jsonl", redacted: false, _schema: { id: "parley-vous.end", version: "1.0.0" } },
+      { event: "page", t: 1, seq: 7, run: "r", has_more: true, cursor: "c", _schema: { id: "parley-vous.page", version: "1.0.0" } },
+      { event: "receipt.step", t: 1, seq: 2, run: "r", decision: "d", because: "b", _schema: { id: "parley-vous.receipt.step", version: "1.0.0" } },
     ];
     for (const sample of samples) {
       const pair = sample._schema as { id: string; version: string };
@@ -2143,7 +2143,7 @@ const PLANTED = SAMPLES["github.token"]!.yes;
 const stepRecord = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
   event: "receipt.step", t: 1795390370294, seq: 5, run: "01M82SNWFCYTA4NZ7K43TESPAT",
   decision: "counted the things", because: "only regular files count",
-  _schema: { id: "parley.receipt.step", version: "1.0.0" }, ...over,
+  _schema: { id: "parley-vous.receipt.step", version: "1.0.0" }, ...over,
 });
 
 describe("PE-25 refuseSuspectedSecrets", () => {
@@ -2557,8 +2557,8 @@ describe("PE-29 a record redaction made invalid is never published (flyingrobots
     expect(r.status).toBe(4);
     const cs = conflicts(r);
     expect(cs.map((c) => c.detail)).toEqual([
-      { schema: { id: "parley.error", version: "2.0.0" }, at: ["/code"], redacted: ["/code"] },
-      { schema: { id: "parley.error", version: "2.0.0" }, at: ["/retryable"], redacted: ["/retryable"] },
+      { schema: { id: "parley-vous.error", version: "1.0.0" }, at: ["/code"], redacted: ["/code"] },
+      { schema: { id: "parley-vous.error", version: "1.0.0" }, at: ["/retryable"], redacted: ["/retryable"] },
     ]);
     expect(r.stderr.objs.map((o) => o.code)).toEqual(["redaction.schema_conflict", "redaction.schema_conflict"]);
     expectGapless(r);
@@ -2951,7 +2951,7 @@ describe("PE-32 the protocol's own tokens and field names in a writer-built reco
   const invalid = (o: Record<string, unknown>): string | null => {
     const stamp = o._schema as { id: string; version: string };
     const file = join(RELEASED, stamp.id, `${stamp.version}.schema.json`);
-    if (!existsSync(file)) { expect(stamp.id.startsWith("parley.")).toBe(false); return null; }
+    if (!existsSync(file)) { expect(stamp.id.startsWith("parley-vous.")).toBe(false); return null; }
     const key = `${stamp.id}@${stamp.version}`;
     if (!validators.has(key)) validators.set(key, ajv.compile(JSON.parse(readFileSync(file, "utf8")) as object));
     const v = validators.get(key)!;
@@ -3110,7 +3110,7 @@ describe("PE-34 a record the writer raises on its own account is writer-built, a
   const invalid = (o: Record<string, unknown>): string | null => {
     const stamp = o._schema as { id: string; version: string };
     const file = join(RELEASED, stamp.id, `${stamp.version}.schema.json`);
-    if (!existsSync(file)) { expect(stamp.id.startsWith("parley.")).toBe(false); return null; }
+    if (!existsSync(file)) { expect(stamp.id.startsWith("parley-vous.")).toBe(false); return null; }
     const key = `${stamp.id}@${stamp.version}`;
     if (!validators.has(key)) validators.set(key, ajv.compile(JSON.parse(readFileSync(file, "utf8")) as object));
     const v = validators.get(key)!;
@@ -3149,7 +3149,7 @@ describe("PE-34 a record the writer raises on its own account is writer-built, a
     expect(carrying(r, secret)).toEqual([]);
   };
 
-  // The field names of parley.error, parley.warning and parley.receipt.step, the names inside the
+  // The field names of parley-vous.error, parley-vous.warning and parley-vous.receipt.step, the names inside the
   // writer's own `detail`, its own code, the exception's message, and one control.
   const CONTROL = "zq7kx9control";
   const SECRETS = ["code", "problem", "remedy", "decision", "because", "detail", "event", "status", "uncaught.exception", "boom", "stack", "method", "text", CONTROL];

@@ -72,4 +72,6 @@ it as its `gate` job before anything public is created.
   deprecation notice. Publishing either is the owner's
   ([docs/workflows/release-review](docs/workflows/release-review/README.md#telling-users-of-a-published-version)).
 - Do not tag or publish a package as stable while `bun run release-gate -- <package>` refuses
-  it, and do not edit, delete or re-point a file under `schemas/released/`.
+  it, and do not edit, delete or re-point a file under `schemas/released/`. The one exception ever made
+  is the reinvention as Parley-vous, recorded in
+  [docs/workflows/release-review](docs/workflows/release-review/README.md#the-one-time-reinvention-as-parley-vous).

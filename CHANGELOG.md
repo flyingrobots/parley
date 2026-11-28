@@ -9,6 +9,12 @@ the entry under it names each schema version it releases, and those are separate
 
 ### Added
 
+- The owner's one-time decision to rename Parley to Parley-vous, recorded in
+  [docs/workflows/release-review](docs/workflows/release-review/README.md#the-one-time-reinvention-as-parley-vous):
+  the project, protocol, message ids, schema `$id`s, runtime paths and packages are renamed, the
+  released `parley.*` snapshots are deleted, and every message restarts at `1.0.0`. `AGENTS.md`
+  names it as the only exception to the `schemas/released/` rule. No spec text, schema or package
+  changes yet (flyingrobots/parley-vous#210).
 - Two additions to the release-review page
   ([docs/workflows/release-review](docs/workflows/release-review/README.md)). A release that
   fixes a privacy defect of a published version is announced in a GitHub security advisory,

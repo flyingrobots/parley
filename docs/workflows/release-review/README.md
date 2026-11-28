@@ -59,6 +59,28 @@ When the follow-up is fixed and released, delete the row. Git history keeps it.
 | --- | --- | --- | --- | --- | --- | --- |
 | `@flyingrobots/parley-read` 0.2.0 | The `parley.lens` 1.1.0 description of a fold: runs fold only when their result records are equal. And the reader's own purpose: a returned record is the record the receipt holds. | Run against 0.2.0 installed from npm into a clean directory: two receipts in `.parley/receipts`, each a `receipt.head` with the same `inv`, one `result` record and an `end` of status 0, the results written as literal text `"value":9007199254740992` and `"value":9007199254740993`; then `queryReceipts` with `view: "everything"` over a window holding both. It returned one folded section and the value `9007199254740992` for the run whose receipt says `9007199254740993`. With `fold: false` in the query it returned two sections, both saying `9007199254740992`. The cause is that the reader parses numbers as doubles. Two integers outside −(2^53)+1 to (2^53)−1 collide only when they parse to the same double. How many tools emit such integers was not measured. | Stated as a known exception in the 0.2.1 changelog entry, the reader's changelog and its README. | Shipped on 2026-11-24 by an agent under the owner's delegation, which ruled the finding a follow-up without asking. The owner recorded it as a disclosed exception the same day (flyingrobots/parley#148). The rule above exists because of this row. | flyingrobots/parley#159 | The next release of `@flyingrobots/parley-read`, which it blocks. |
 
+## The one-time reinvention as Parley-vous
+
+The owner made one exception to the rule that a file under `schemas/released/` is never edited,
+deleted or re-pointed (`AGENTS.md`, Hard don'ts). It is the only one, and it does not set a
+precedent.
+
+On 2026-11-27 the owner decided to rename the project, the protocol, every message id, every
+schema `$id`, the runtime paths and the packages from Parley to Parley-vous (`parley-vous`, or
+`parley_vous` where a name cannot hold a hyphen); to delete the 19 released snapshots under
+`schemas/released/parley.*`; and to reset every message to version `1.0.0`. In the owner's words:
+
+> NOTHING uses this right now, and it buys us CONSISTENT BRANDING from top to bottom across the
+> entire stack.
+>
+> rules are made to be broken. this is the exception: we are reinventing ourselves tonight. the
+> one and only time we will do so. reset all versions.
+
+The rename is carried out by flyingrobots/parley-vous#211 (the spec), #212 (the message ids and
+schemas), #213 (deleting the old snapshots) and #214 (runtime paths and tooling ids), and the
+package tasks that follow them. Once they land, the rule holds again without exception, for the
+`parley-vous.*` snapshots as for any other.
+
 ## Ruled outside the contract
 
 A finding the owner rules is not a violation needs no exception and no deadline. It is recorded

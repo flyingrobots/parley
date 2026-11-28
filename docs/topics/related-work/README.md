@@ -2,7 +2,7 @@
 
 What parley borrows, where it differs, and what is actually its own. Each neighbour below was
 checked to exist on 2026-11-22; the descriptions are limited to what their own front pages say.
-Read this before claiming novelty for any part of the [specification](../../../spec/parley-v0.2.md).
+Read this before claiming novelty for any part of the [specification](../../../spec/parley-vous-v0.3.md).
 
 ## Specifications for agent-facing command lines
 

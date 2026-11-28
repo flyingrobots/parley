@@ -1,6 +1,6 @@
 # The output contract
 
-Why the [specification](../../../spec/parley-v0.2.md) takes the shape it does. Each rule here came
+Why the [specification](../../../spec/parley-vous-v0.3.md) takes the shape it does. Each rule here came
 from something that actually went wrong.
 
 ## Why JSON Lines rather than one JSON document

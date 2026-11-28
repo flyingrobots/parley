@@ -1,11 +1,13 @@
-# parley v0.2 — specification
+# Parley-vous v0.3 — specification
 
-**Status:** implemented. Two conforming writers ([`@flyingrobots/parley-emit`](../packages/parley-emit/README.md)
-in TypeScript and [`parley_emit.py`](../packages/parley-emit-py/README.md) in Python) and one reader
-([`@flyingrobots/parley-read`](../packages/parley-read/README.md)) implement it and are tested against it;
-§8 and §9 remain informative. Its schemas were first released with spec `0.2.0`, and each later
-release is a dated heading in `CHANGELOG.md` that names the schema versions it publishes.
-**Spec version:** `0.2.1`, versioned independently of any implementation.
+**Status:** implemented under the protocol's former name (see [History](#history)). Two
+conforming writers ([`@flyingrobots/parley-emit`](../packages/parley-emit/README.md) in TypeScript
+and [`parley_emit.py`](../packages/parley-emit-py/README.md) in Python) and one reader
+([`@flyingrobots/parley-read`](../packages/parley-read/README.md)) implement spec `0.2.1` and are
+tested against it. They are being renamed to the npm package `parley-vous` and the PyPI package
+`parley-vous`, which will implement this version. §8 and §9 remain informative. Each release of the
+schemas is a dated heading in `CHANGELOG.md` that names the schema versions it publishes.
+**Spec version:** `0.3.0`, versioned independently of any implementation.
 **Normative terms:** **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT** and **MAY** are to be
 interpreted as described in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119) and
 [RFC 8174](https://www.rfc-editor.org/rfc/rfc8174) when, and only when, they appear in bold.
@@ -15,15 +17,27 @@ output streams, how it describes itself, and what it leaves behind. Sections 1 t
 normative core; §8 and §9 describe a history layer that consumes this format, parts of which are
 now built, and remain informative.
 
+## History
+
+v0.3 renames the protocol from Parley (spec v0.2, last at `0.2.1`) to Parley-vous, the one-time
+reinvention recorded in
+[release review](../docs/workflows/release-review/README.md#the-one-time-reinvention-as-parley-vous).
+Nothing else changes in meaning. The reserved message-id prefix `parley.` becomes `parley-vous.`,
+the schema `$id` base `https://flyingrobots.dev/parley/schemas/<id>/<version>` becomes
+`https://flyingrobots.dev/parley-vous/schemas/<id>/<version>`, the runtime paths `.parley/` and
+`$XDG_STATE_HOME/parley/` become `.parley-vous/` and `$XDG_STATE_HOME/parley-vous/`, and every
+message type restarts at version `1.0.0`. A schema released under a `parley.*` id is not a version
+of any `parley-vous.*` message, and a reader built against one is outside this version's promise.
+
 ## Lineage
 
-parley is not a new idea. It is the same idea as `echo`, `graft`, `jedit` and the witness work:
+Parley-vous is not a new idea. It is the same idea as `echo`, `graft`, `jedit` and the witness work:
 that a system should record what happened as it happens, carry its provenance, and let that
 record be read as history rather than reconstructed from guesswork. Those apply it to code,
-structure, editing and proof. parley applies it to the narrowest surface there is — what a
+structure, editing and proof. Parley-vous applies it to the narrowest surface there is — what a
 program prints.
 
-That narrowness is the point. A tool conforms to parley by changing what it writes: JSON Lines
+That narrowness is the point. A tool conforms to Parley-vous by changing what it writes: JSON Lines
 on stdout and stderr, a receipt on disk, and the hygiene and retention around it. It needs no
 substrate, no daemon, no causal graph. If the same tool later writes into a richer history,
 nothing it emits has to change, because every line is already identified, ordered within its
@@ -141,12 +155,12 @@ the spec admits.
 | Id | Scope | Derivation |
 | --- | --- | --- |
 | `run` | One execution | Unique per execution, lexicographically sortable (ULID or equivalent) |
-| `inv` | One *question* | **Content-addressed**: a digest over the tool, its version, the normalised arguments, and the **bytes of every declared input**. Tool-defined in v0.2 (§2.2) |
+| `inv` | One *question* | **Content-addressed**: a digest over the tool, its version, the normalised arguments, and the **bytes of every declared input**. Tool-defined in v0.3 (§2.2) |
 | `session` | A working period spanning runs | Supplied by the caller or inherited from the environment |
 
 Two runs of the same question are still two events whose receipts must not collide, so `run` is
 required. Knowing they *were* the same question is what buys replay and change detection, so a
-program **SHOULD** supply `inv`. v0.2 does not fix its derivation; a program that supplies it
+program **SHOULD** supply `inv`. v0.3 does not fix its derivation; a program that supplies it
 **MUST** document how (§2.2). Collapsing the two identifiers loses one or the other.
 
 `session` is optional. A program **MUST** carry it when the caller supplies one and **MUST NOT**
@@ -155,10 +169,10 @@ content identifies nothing.
 
 ### 2.2 Computing `inv`
 
-In v0.2 `inv` is **SHOULD** and its derivation is tool-defined. A shared derivation is the goal
-for v0.3, written from a real implementation and conformance vectors rather than ahead of them;
-SHA-256 over canonical JSON, full-length encoding and role-preserving inputs are the candidates
-to test, not rules. Until then, a program that supplies `inv` **MUST** document its derivation
+In v0.3 `inv` is **SHOULD** and its derivation is tool-defined. A shared derivation is the goal
+for a later version, written from a real implementation and conformance vectors rather than
+ahead of them; SHA-256 over canonical JSON, full-length encoding and role-preserving inputs are
+the candidates to test, not rules. Until then, a program that supplies `inv` **MUST** document its derivation
 and its scope, and **MUST** obey the constraints below, which are what make any derivation
 worth having.
 
@@ -201,7 +215,7 @@ are settled and before `end`:
  "inputs":[{"path":"src/tokens.css","sha256":"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"},
            {"path":"-","role":"stdin","sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
            {"path":"vendor/","role":"tree","error":"input.unreadable"}],
- "_schema":{"id":"parley.receipt.inputs","version":"1.0.0"}}
+ "_schema":{"id":"parley-vous.receipt.inputs","version":"1.0.0"}}
 ```
 
 An input the program could not read is recorded with an `error` code and no digest; a run that
@@ -238,8 +252,8 @@ examples show:
 ```json
 {"event":"cache.hit","t":1795326412350,"seq":2,"run":"01JD3KS9T4U8V1W5X2Y7Z3A6B9",
  "inv":"inv_7f3a9c1e","served_run":"01JD3KP5W2X8Y4Z1A7B3C9D6E2",
- "receipt":"/work/site/.parley/receipts/01JD3KP5W2X8Y4Z1A7B3C9D6E2.jsonl",
- "_schema":{"id":"parley.cache.hit","version":"1.0.0"}}
+ "receipt":"/work/site/.parley-vous/receipts/01JD3KP5W2X8Y4Z1A7B3C9D6E2.jsonl",
+ "_schema":{"id":"parley-vous.cache.hit","version":"1.0.0"}}
 ```
 Short-circuiting **SHOULD NOT** be the default, because inputs can be identical while the world is
 not — a declared input set never captures everything. A matching `inv` on its own never
@@ -285,8 +299,8 @@ and the command's output, in that order.
 {"event":"run","t":1795326412345,"seq":0,
  "tool":"theme-book","v":"0.2.1",
  "run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8","session":"ses_9c4f",
- "paths":{"receipt":"/work/site/.parley/receipts/01JD3KQ8Z6V9X2M4N7P1R3T5W8.jsonl"},
- "_schema":{"id":"parley.run.bootstrap","version":"1.1.1"}}
+ "paths":{"receipt":"/work/site/.parley-vous/receipts/01JD3KQ8Z6V9X2M4N7P1R3T5W8.jsonl"},
+ "_schema":{"id":"parley-vous.run.bootstrap","version":"1.0.0"}}
 ```
 
 It **MUST** be emitted before the work starts, not after it finishes. **If the run crashes, the
@@ -311,9 +325,9 @@ exits `3` (§3.4):
 ```json
 {"event":"startup.failed","t":1795326412345,"seq":0,"run":"01JD3KT1F6G2H8J4K9L3M7N5P1",
  "tool":"theme-book","v":"0.2.1","code":"startup.receipt_unwritable",
- "problem":"No writable receipt location: .parley is read-only and ~/.local/state is not writable",
- "remedy":"make .parley writable or set XDG_STATE_HOME to a writable absolute path",
- "_schema":{"id":"parley.startup.failed","version":"1.0.0"}}
+ "problem":"No writable receipt location: .parley-vous is read-only and ~/.local/state is not writable",
+ "remedy":"make .parley-vous writable or set XDG_STATE_HOME to a writable absolute path",
+ "_schema":{"id":"parley-vous.startup.failed","version":"1.0.0"}}
 ```
 
 It carries `run` because the execution still has an identity, `seq: 0` because it is the only line
@@ -338,8 +352,8 @@ is the run's final sequence number; there is no separate field for it.
 
 ```json
 {"event":"end","t":1795326412401,"seq":9,"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8",
- "status":2,"receipt":"/work/site/.parley/receipts/01JD3KQ8Z6V9X2M4N7P1R3T5W8.jsonl","redacted":true,
- "_schema":{"id":"parley.end","version":"1.0.0"}}
+ "status":2,"receipt":"/work/site/.parley-vous/receipts/01JD3KQ8Z6V9X2M4N7P1R3T5W8.jsonl","redacted":true,
+ "_schema":{"id":"parley-vous.end","version":"1.0.0"}}
 ```
 
 - `status` is the exit status the process is about to exit with (§3.4). The run shown across this
@@ -407,7 +421,7 @@ source and guess; the `command` lines are the answer.
 
 `app <command> --help` **MUST** emit the `command` line for that command, then a `schema` line for
 its success output and one for **every error type it can produce**. Every command can produce a
-startup failure (§3.2), so that list includes `parley.startup.failed` beside the command's own error
+startup failure (§3.2), so that list includes `parley-vous.startup.failed` beside the command's own error
 types.
 
 ```json
@@ -417,7 +431,7 @@ types.
            "$id":"https://flyingrobots.dev/theme-book/schemas/theme-book.count/1.0.0",
            "type":"object","required":["event","t","seq","run","value","_schema"],
            "properties":{"event":{"const":"result"},"value":{"type":"integer","minimum":0}}},
- "_schema":{"id":"parley.schema","version":"1.0.0"}}
+ "_schema":{"id":"parley-vous.schema","version":"1.0.0"}}
 ```
 
 ### 4.3 Declared effects
@@ -428,13 +442,13 @@ A command's description, its `command` line (§4.1), **MUST** declare its effect
 {"event":"command","t":1795326412401,"seq":1,"run":"01JD3KR2A7B4C9D1E6F3G8H5J2",
  "name":"count","intent":"Count the colour tokens declared under the working directory",
  "effects":{"reads":["<cwd>/**/*.css"],"writes":[],"network":false,"idempotent":true,
-            "bookkeeping":[{"op":"create","scope":".parley/receipts/"},
-                           {"op":"create","scope":".parley/.gitignore"},
-                           {"op":"delete","scope":".parley/receipts/"},
-                           {"op":"create","scope":"$XDG_STATE_HOME/parley/"}]},
+            "bookkeeping":[{"op":"create","scope":".parley-vous/receipts/"},
+                           {"op":"create","scope":".parley-vous/.gitignore"},
+                           {"op":"delete","scope":".parley-vous/receipts/"},
+                           {"op":"create","scope":"$XDG_STATE_HOME/parley-vous/"}]},
  "secrets":["--token","THEME_BOOK_TOKEN","netrc"],
- "emits":[{"id":"theme-book.count","version":"1.0.0"},{"id":"parley.error","version":"2.0.0"}],
- "_schema":{"id":"parley.command","version":"1.0.0"}}
+ "emits":[{"id":"theme-book.count","version":"1.0.0"},{"id":"parley-vous.error","version":"1.0.0"}],
+ "_schema":{"id":"parley-vous.command","version":"1.0.0"}}
 ```
 
 `writes` lists **subject-matter** writes: what the command exists to change. `writes: []` means
@@ -484,7 +498,7 @@ build metadata, and the number is a promise to readers:
   constraint. A reader **MUST NOT** report a line of a major it does not support as validated.
 - A **patch** bump changes descriptions only.
 
-parley schemas are **open**: they do not set `additionalProperties: false` anywhere, nested
+Parley-vous schemas are **open**: they do not set `additionalProperties: false` anywhere, nested
 objects included, except on `_schema` itself. Each message schema pins both `_schema.id` and
 `_schema.version` by `const` to its own exact id and version.
 
@@ -507,19 +521,16 @@ the repository that holds the draft **MUST** pin a source commit or the schema's
 reader built from a draft holds whichever bytes it shipped and **SHOULD** state their commit or
 digest until a release exists.
 
-The first release is the `0.2.0` heading in `CHANGELOG.md`, which names every schema version it
-publishes. The original `1.0.0`
-drafts of `parley.run.bootstrap`, `parley.error` and `parley.receipt.head`, in git history before
-this section existed, predate every rule in it and were never released; a reader built against
-any of those three is outside the promise. The message types added since start at `1.0.0` under
-this section's rules.
+Every message type starts at `1.0.0` under the `parley-vous.` prefix, under this section's rules.
+Its first release is the first dated heading in `CHANGELOG.md` that names its version. A schema
+released under the protocol's former name is not one of these versions ([History](#history)).
 
 ### 4.6 Resolution
 
 `_schema.id` and `_schema.version` are identifiers, not fetch instructions. A reader resolves the
 pair to the schema it ships with for exactly that id and version, and applies §4.5 when it has
 none. The `$id` inside each published schema is
-`https://flyingrobots.dev/parley/schemas/<id>/<version>` and is likewise an identifier; it is
+`https://flyingrobots.dev/parley-vous/schemas/<id>/<version>` and is likewise an identifier; it is
 not required to be served. The current version of each schema lives at `schemas/<id>.schema.json`
 in this repository, and is a draft while its changelog entry is under `Unreleased`. Each released version is snapshotted, immutable, at
 `schemas/released/<id>/<version>.schema.json`; the `CHANGELOG.md` entry for the release that
@@ -537,13 +548,13 @@ carries the §1.3 envelope fields is not validation against a schema and is perm
 A receipt is a JSON Lines file written for every run, at the path the bootstrap line declared.
 It is written **whether or not anyone asked for it**.
 
-**Where it goes.** The default location is `.parley/receipts/<run>.jsonl` under the invocation's
+**Where it goes.** The default location is `.parley-vous/receipts/<run>.jsonl` under the invocation's
 **initial** working directory, resolved once at startup and unaffected by any later `chdir`. The
 bootstrap line's `paths.receipt` **MUST** be absolute, so the path means the same thing to every
-reader. Paths in this specification are POSIX paths; v0.2 does not define the Windows form. When
+reader. Paths in this specification are POSIX paths; v0.3 does not define the Windows form. When
 that location is unavailable, because the directory is read-only or cannot be created, or because
 §5.2's hygiene cannot be established there, the program falls back to
-`$XDG_STATE_HOME/parley/<repo-hash>/receipts/<run>.jsonl`, honouring `XDG_STATE_HOME` only when it
+`$XDG_STATE_HOME/parley-vous/<repo-hash>/receipts/<run>.jsonl`, honouring `XDG_STATE_HOME` only when it
 is set, non-empty and absolute, and otherwise using `~/.local/state`. `<repo-hash>` is a digest of
 the canonical path of the git worktree root, or of the canonical initial working directory outside
 git; it keys storage and **MUST NOT** enter `inv` (§2.2). If no permitted location is writable, the
@@ -568,8 +579,8 @@ digests that arrive later ride `receipt.inputs`).
  "inputs":[{"path":"src/tokens.css","sha256":"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"},
            {"path":"-","role":"stdin"},{"path":"vendor/","role":"tree"}],
  "effects":{"reads":["src/**/*.css"],"writes":[],"network":false,"idempotent":true,
-            "bookkeeping":[{"op":"create","scope":"/work/site/.parley/receipts/"}]},
- "_schema":{"id":"parley.receipt.head","version":"2.0.0"}}
+            "bookkeeping":[{"op":"create","scope":"/work/site/.parley-vous/receipts/"}]},
+ "_schema":{"id":"parley-vous.receipt.head","version":"1.0.0"}}
 ```
 
 The head takes `seq: 1` because the bootstrap line took `0` and the run holds one counter (§1.3).
@@ -589,7 +600,7 @@ what was chosen **and why**; that is what makes a receipt worth keeping:
  "decision":"read src/tokens.css as UTF-8",
  "because":"no BOM and no @charset; the declared default for this project is UTF-8",
  "detail":{"bytes":18422},
- "_schema":{"id":"parley.receipt.step","version":"1.0.0"}}
+ "_schema":{"id":"parley-vous.receipt.step","version":"1.0.0"}}
 ```
 
 The receipt also carries every result, error and warning the run emitted, as copies of the
@@ -606,7 +617,7 @@ receipt then carries a `sidecar` event in the record's place:
 {"event":"sidecar","t":1795326412400,"seq":8,"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8",
  "source":7,"path":"01JD3KQ8Z6V9X2M4N7P1R3T5W8/7.json","bytes":2097152,
  "sha256":"3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855b",
- "_schema":{"id":"parley.sidecar","version":"1.0.0"}}
+ "_schema":{"id":"parley-vous.sidecar","version":"1.0.0"}}
 ```
 
 - `source` is the `seq` of the record the sidecar holds. Here it is the run's `page` at `seq: 7`:
@@ -647,7 +658,7 @@ retention deletes its receipt, loses that receipt.
 
 ### 5.2 Repository hygiene
 
-A program writing into `.parley/` **MUST** first ensure that `.parley/.gitignore` exists and
+A program writing into `.parley-vous/` **MUST** first ensure that `.parley-vous/.gitignore` exists and
 contains a line consisting of `*`, creating it if absent and never overwriting a file that is
 already there, whether a user wrote it or git tracks it. Two programs starting at once **MUST** both
 end with the file in place; create-if-absent is the rule, not create-or-replace. A program **MUST
@@ -665,7 +676,7 @@ cannot tell whether a negation matches **MUST** treat it as one that does.
 Be clear about what that buys. The file ignores itself, so it does not travel through a clone;
 each conforming writer establishes hygiene locally on first use, and a collaborator's first run
 does the same for them. Git's ignore rules also do nothing for a file that is already tracked. If
-local hygiene cannot be established, because `.parley/` cannot be created or the file cannot be
+local hygiene cannot be established, because `.parley-vous/` cannot be created or the file cannot be
 written, the program uses the state-directory fallback (§5) rather than touching tracked files.
 
 ### 5.3 Privacy
@@ -732,7 +743,7 @@ receipt naming where, after the record it names:
 ```json
 {"event":"redaction","t":1795326412398,"seq":6,"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8",
  "in":4,"at":"/detail/url",
- "_schema":{"id":"parley.redaction","version":"1.0.0"}}
+ "_schema":{"id":"parley-vous.redaction","version":"1.0.0"}}
 ```
 
 `in` is the `seq` of the affected record (the head, a result, an error, a reasoning line, or the
@@ -794,7 +805,7 @@ sentence and never empty:
  "problem":"No opaque sRGB foreground reaches the required contrast on this background",
  "measured":5.3783,"limit":7,"remedy":"adjust the background",
  "remedy_target":"--destructive",
- "_schema":{"id":"parley.error","version":"2.0.0"}}
+ "_schema":{"id":"parley-vous.error","version":"1.0.0"}}
 ```
 
 The fields that matter are **`measured`, `limit` and `remedy`**. An error naming the constraint,
@@ -817,7 +828,7 @@ never change the exit status (§3.4). A condition that was not recovered from is
 {"event":"warning","t":1795326412370,"seq":3,"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8",
  "code":"input.encoding_guessed","problem":"src/tokens.css has no BOM or charset; read as UTF-8",
  "remedy":"declare the file's encoding","remedy_target":"src/tokens.css",
- "_schema":{"id":"parley.warning","version":"1.0.0"}}
+ "_schema":{"id":"parley-vous.warning","version":"1.0.0"}}
 ```
 
 Progress, the "still working, 40 of 120" kind of line, is neither a result nor a warning. It goes
@@ -841,7 +852,7 @@ Unbounded output **MUST** paginate explicitly with a cursor:
 ```json
 {"event":"page","t":1795326412399,"seq":7,"run":"01JD3KQ8Z6V9X2M4N7P1R3T5W8",
  "cursor":"eyJhZnRlciI6NTB9","has_more":true,
- "_schema":{"id":"parley.page","version":"1.0.0"}}
+ "_schema":{"id":"parley-vous.page","version":"1.0.0"}}
 ```
 
 `cursor` is opaque to the caller and required whenever `has_more` is true; the last page carries
@@ -857,11 +868,11 @@ unparseable at best and quietly wrong at worst.
 This section is informative. It describes a layer that consumes the format above. The writer
 side — the shared stream, its segments and retention, and the transform that projects a copy of
 it — has an implementation and tests in `packages/parley-emit`
-([flyingrobots/parley#3](https://github.com/flyingrobots/parley/issues/3),
-[flyingrobots/parley#57](https://github.com/flyingrobots/parley/issues/57)), and preferring the
+([flyingrobots/parley-vous#3](https://github.com/flyingrobots/parley-vous/issues/3),
+[flyingrobots/parley-vous#57](https://github.com/flyingrobots/parley-vous/issues/57)), and preferring the
 least-projected copy, below, has one in `packages/parley-read`
-([flyingrobots/parley#58](https://github.com/flyingrobots/parley/issues/58)). Nothing in it is a
-conformance requirement in v0.2, and it becomes normative only when an implementation and tests
+([flyingrobots/parley-vous#58](https://github.com/flyingrobots/parley-vous/issues/58)). Nothing in it is a
+conformance requirement in v0.3, and it becomes normative only when an implementation and tests
 support its rules.
 
 Everything above works with no infrastructure. This layer is opt-in.
@@ -891,14 +902,14 @@ timeline.
 ## 9. Reading history is an act (informative)
 
 This section is informative, for the same reason as §8: the reader it describes is designed
-([flyingrobots/parley#2](https://github.com/flyingrobots/parley/issues/2)). Its query entry point,
+([flyingrobots/parley-vous#2](https://github.com/flyingrobots/parley-vous/issues/2)). Its query entry point,
 the ranking that orders a result by purpose, and the bounded digest that carries a result's lens
 and states what it excluded have an implementation and tests
-([flyingrobots/parley#48](https://github.com/flyingrobots/parley/issues/48),
-[flyingrobots/parley#49](https://github.com/flyingrobots/parley/issues/49),
-[flyingrobots/parley#50](https://github.com/flyingrobots/parley/issues/50)), and so does opening
+([flyingrobots/parley-vous#48](https://github.com/flyingrobots/parley-vous/issues/48),
+[flyingrobots/parley-vous#49](https://github.com/flyingrobots/parley-vous/issues/49),
+[flyingrobots/parley-vous#50](https://github.com/flyingrobots/parley-vous/issues/50)), and so does opening
 the records a digest names by `(run, seq)`
-([flyingrobots/parley#51](https://github.com/flyingrobots/parley/issues/51)). The direction is
+([flyingrobots/parley-vous#51](https://github.com/flyingrobots/parley-vous/issues/51)). The direction is
 kept here so the format above stays shaped for it.
 
 A read against the stream is not a passive lookup. It is itself an event, and it is

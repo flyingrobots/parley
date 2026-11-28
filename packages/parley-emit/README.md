@@ -1,6 +1,6 @@
 # @flyingrobots/parley-emit
 
-A writer for the [Parley output protocol](../../spec/parley-v0.2.md). A tool conforms by
+A writer for the [Parley output protocol](../../spec/parley-vous-v0.3.md). A tool conforms by
 constructing a writer and emitting through it; the writer owns everything the protocol asks of a
 program that is not the program's own result: the bootstrap line, the receipt and where it goes,
 the single sequence across streams, `inv`, redaction, sidecars, retention, discovery, the

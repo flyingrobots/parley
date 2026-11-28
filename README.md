@@ -16,8 +16,10 @@ excluded, built and tested ([#48](https://github.com/flyingrobots/parley/issues/
 [#50](https://github.com/flyingrobots/parley/issues/50)), and a drill-down that opens the records a
 digest names ([#51](https://github.com/flyingrobots/parley/issues/51)).
 
-> **Status: implemented, second release.** The [specification](spec/) is at `0.2.1`, and its
-> seventeen message schemas are released and immutable ([CHANGELOG.md](CHANGELOG.md),
+> **Status: implemented, second release.** The [specification](spec/) is at `0.3.0`, which
+> renames the protocol to Parley-vous and changes nothing else in meaning. The schemas and
+> libraries below keep their Parley names until their own renames land, and implement spec
+> `0.2.1`: its seventeen message schemas are released and immutable ([CHANGELOG.md](CHANGELOG.md),
 > [schemas/](schemas/README.md)); two of them, `parley.query` and `parley.lens`, are at 1.1.0, with
 > their 1.0.0 still released beside it. Two writers implement it: the TypeScript library
 > [`@flyingrobots/parley-emit`](packages/parley-emit/README.md) 0.5.0, which
@@ -75,7 +77,7 @@ A [cold resume on real history](docs/topics/reader/cold-resume.md) records what 
 other context reconstructed from fifty real receipts, checked against `git log`, and what it
 missed.
 
-What is not settled is the protocol text. Spec §8 and §9 stay informative in v0.2: the mechanisms
+What is not settled is the protocol text. Spec §8 and §9 stay informative in v0.3: the mechanisms
 exist and are tested, and making them normative is a spec version's decision, not a library's.
 
 ## Where this sits

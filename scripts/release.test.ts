@@ -115,7 +115,7 @@ describe("REL-9 one spec version", () => {
   // implements must name that one. Found at the 0.2.1 release, when three READMEs and the Python
   // writer's `--vendor-info` still said 0.2.0 (flyingrobots/parley#148).
   test("every package that states the spec version states the spec's own", () => {
-    const spec = /^\*\*Spec version:\*\* `(\d+\.\d+\.\d+)`/m.exec(readFileSync("spec/parley-v0.2.md", "utf8"))?.[1];
+    const spec = /^\*\*Spec version:\*\* `(\d+\.\d+\.\d+)`/m.exec(readFileSync("spec/parley-vous-v0.3.md", "utf8"))?.[1];
     expect(spec, "the spec has no status line").toBeDefined();
     for (const d of PACKAGES) {
       const stated = /^Spec version `(\d+\.\d+\.\d+)`/m.exec(readFileSync(join("packages", d, "README.md"), "utf8"))?.[1];

@@ -7,6 +7,21 @@ the entry under it names each schema version it releases, and those are separate
 
 ## [Unreleased]
 
+### Changed in the spec
+
+The protocol is renamed, which is why the spec version moves to `0.3.0`.
+
+- **Spec `0.2.1` → `0.3.0`: Parley becomes Parley-vous.** The spec moves from
+  `spec/parley-v0.2.md` to [`spec/parley-vous-v0.3.md`](spec/parley-vous-v0.3.md) and names every
+  protocol identity Parley-vous: the reserved message-id prefix `parley-vous.`, the schema `$id`
+  base `https://flyingrobots.dev/parley-vous/schemas/<id>/<version>`, and the runtime paths
+  `.parley-vous/receipts/` and `$XDG_STATE_HOME/parley-vous/`. Every message in its examples is at
+  `1.0.0`, and §4.5 says every message type starts there. A new History section records the rename
+  and says nothing else changes in meaning. The schemas, the code, the runtime paths the code
+  writes and the packages still say parley until flyingrobots/parley-vous#212,
+  flyingrobots/parley-vous#213 and flyingrobots/parley-vous#214 land, so the spec's examples are
+  tool-owned to the example checker until then (flyingrobots/parley-vous#211).
+
 ### Added
 
 - The owner's one-time decision to rename Parley to Parley-vous, recorded in

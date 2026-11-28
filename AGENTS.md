@@ -9,7 +9,7 @@ writer we ship is a conforming implementation of it, not the definition of it.
 
 ## The three versions, kept apart
 
-- **The spec version** (`spec/parley-vX.Y.md`) moves when the protocol changes.
+- **The spec version** (`spec/parley-vous-vX.Y.md`) moves when the protocol changes.
 - **Each message schema version** (`schemas/*.schema.json`) moves when that message changes.
 - **The package version** moves when the code changes.
 

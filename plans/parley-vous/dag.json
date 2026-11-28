@@ -1,0 +1,275 @@
+{
+  "merged": [],
+  "nodes": {
+    "A": {
+      "title": "Decision: record the one-time reinvention as Parley-vous (rename, delete old released snapshots, reset versions)",
+      "type": "decision",
+      "size_hours": 1,
+      "depends_on": []
+    },
+    "B": {
+      "title": "Spec v0.3 names the protocol Parley-vous",
+      "type": "task",
+      "size_hours": 1,
+      "depends_on": [
+        "A"
+      ]
+    },
+    "S117": {
+      "title": "Spec §4.4–§4.6: the SDL is the source, generated JSON Schema is the contract, rule (A) (existing parley#117, rewritten)",
+      "type": "task",
+      "size_hours": 1,
+      "depends_on": [
+        "B"
+      ]
+    },
+    "C": {
+      "title": "Every message is parley-vous.* at 1.0.0 in the SDL and the hand-written schemas",
+      "type": "task",
+      "size_hours": 1,
+      "depends_on": [
+        "B"
+      ],
+      "holds": [
+        "schemas/"
+      ]
+    },
+    "D": {
+      "title": "The old parley.* released snapshots are deleted under the recorded exception",
+      "type": "task",
+      "size_hours": 1,
+      "depends_on": [
+        "C"
+      ],
+      "holds": [
+        "schemas/"
+      ]
+    },
+    "E": {
+      "title": "Runtime paths and tooling ids follow the spec (.parley-vous/, parley-vous.tooling.*)",
+      "type": "task",
+      "size_hours": 1,
+      "depends_on": [
+        "B"
+      ],
+      "holds": [
+        "packages/",
+        "scripts/"
+      ]
+    },
+    "F": {
+      "title": "wesley-parley-vous reads @parley_vous_* and emits parley-vous.* identities",
+      "type": "task",
+      "size_hours": 1,
+      "depends_on": [
+        "C"
+      ]
+    },
+    "G": {
+      "title": "wesley-parley-vous emits one bundled parley-vous.schema.json",
+      "type": "feature",
+      "size_hours": 1,
+      "depends_on": [
+        "F"
+      ]
+    },
+    "H1": {
+      "title": "wesley-json-schema 0.1.0-alpha.1 is published to crates.io",
+      "type": "task",
+      "size_hours": 1,
+      "depends_on": []
+    },
+    "H2": {
+      "title": "wesley-rust-syntax 0.1.0-alpha.1 is published to crates.io",
+      "type": "task",
+      "size_hours": 1,
+      "depends_on": []
+    },
+    "H3": {
+      "title": "wesley-typescript-syntax 0.1.0-alpha.1 is published to crates.io",
+      "type": "task",
+      "size_hours": 1,
+      "depends_on": []
+    },
+    "H4": {
+      "title": "wesley-python 0.1.0a1 is published to PyPI",
+      "type": "task",
+      "size_hours": 1,
+      "depends_on": []
+    },
+    "I": {
+      "title": "wesley-parley-vous 0.1.0-alpha.1 is published to crates.io and PyPI",
+      "type": "task",
+      "size_hours": 1,
+      "depends_on": [
+        "G",
+        "H1",
+        "H2",
+        "H3",
+        "H4"
+      ]
+    },
+    "J": {
+      "title": "A hermetic Docker pipeline generates Parley-vous's schema from the SDL (existing parley#119, rewritten)",
+      "type": "feature",
+      "size_hours": 1,
+      "depends_on": [
+        "I",
+        "S117",
+        "D"
+      ]
+    },
+    "K": {
+      "title": "flyingrobots.dev/parley-vous/ serves the spec and every schema at its $id",
+      "type": "feature",
+      "size_hours": 1,
+      "depends_on": [
+        "P"
+      ]
+    },
+    "O": {
+      "title": "The gate checks every message version against the released snapshots (existing parley#122, rewritten)",
+      "type": "feature",
+      "size_hours": 1,
+      "depends_on": [
+        "J"
+      ]
+    },
+    "L1": {
+      "title": "parley-emit and parley-read become the one npm package parley-vous",
+      "type": "task",
+      "size_hours": 1,
+      "depends_on": [
+        "E"
+      ],
+      "holds": [
+        "packages/"
+      ]
+    },
+    "L2": {
+      "title": "parley-vous (npm) uses the generated message types (existing parley#120, rewritten)",
+      "type": "feature",
+      "size_hours": 1,
+      "depends_on": [
+        "L1",
+        "J"
+      ]
+    },
+    "L3": {
+      "title": "A hello-world tool built on parley-vous (npm) runs and its output passes the doctor",
+      "type": "task",
+      "size_hours": 1,
+      "depends_on": [
+        "L2"
+      ]
+    },
+    "M1": {
+      "title": "parley_emit.py becomes the PyPI package parley-vous",
+      "type": "task",
+      "size_hours": 1,
+      "depends_on": [
+        "E"
+      ],
+      "holds": [
+        "packages/"
+      ]
+    },
+    "M2": {
+      "title": "parley-vous (PyPI) carries the generated TypedDicts (existing parley#121, rewritten)",
+      "type": "feature",
+      "size_hours": 1,
+      "depends_on": [
+        "M1",
+        "J"
+      ]
+    },
+    "M3": {
+      "title": "A hello-world tool built on parley-vous (PyPI) runs and its output passes the doctor",
+      "type": "task",
+      "size_hours": 1,
+      "depends_on": [
+        "M4"
+      ]
+    },
+    "N": {
+      "title": "The crate parley-vous carries the generated message types (existing parley#123, rewritten)",
+      "type": "feature",
+      "size_hours": 1,
+      "depends_on": [
+        "J"
+      ]
+    },
+    "N2": {
+      "title": "A hello-world program built on the crate parley-vous round-trips real lines",
+      "type": "task",
+      "size_hours": 1,
+      "depends_on": [
+        "N3",
+        "N4"
+      ]
+    },
+    "P": {
+      "title": "One release workflow publishes parley-vous to npm, PyPI and crates.io in lockstep",
+      "type": "feature",
+      "size_hours": 1,
+      "depends_on": [
+        "L3",
+        "M3",
+        "N2",
+        "O",
+        "X",
+        "R"
+      ]
+    },
+    "Q": {
+      "title": "@flyingrobots/parley-emit and @flyingrobots/parley-read are deprecated in favour of parley-vous",
+      "type": "task",
+      "size_hours": 1,
+      "depends_on": [
+        "P"
+      ]
+    },
+    "M4": {
+      "title": "parley-vous (PyPI) reads receipts: the read API, ported from the TypeScript reader",
+      "type": "feature",
+      "size_hours": 1,
+      "depends_on": [
+        "M2"
+      ]
+    },
+    "N3": {
+      "title": "parley-vous (crate) writes Parley-vous output: the write API",
+      "type": "feature",
+      "size_hours": 1,
+      "depends_on": [
+        "N"
+      ]
+    },
+    "N4": {
+      "title": "parley-vous (crate) reads receipts: the read API",
+      "type": "feature",
+      "size_hours": 1,
+      "depends_on": [
+        "N"
+      ]
+    },
+    "R": {
+      "title": "The parley-vous CLI (Rust, on the crate) queries history, opens records and checks a captured run (existing parley#138, rewritten)",
+      "type": "feature",
+      "size_hours": 1,
+      "depends_on": [
+        "N4"
+      ]
+    },
+    "X": {
+      "title": "A language-agnostic conformance corpus (bash + bats) runs against every parley-vous package",
+      "type": "feature",
+      "size_hours": 1,
+      "depends_on": [
+        "L2",
+        "M2",
+        "N"
+      ]
+    }
+  }
+}

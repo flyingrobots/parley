@@ -1,7 +1,7 @@
 # Checking the examples
 
 How every JSON example in this repository is kept valid against the schema it names. This is a
-contributor operation; the protocol itself is in the [specification](../../../spec/parley-v0.2.md).
+contributor operation; the protocol itself is in the [specification](../../../spec/parley-vous-v0.3.md).
 
 ## Why
 

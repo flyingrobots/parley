@@ -1,6 +1,6 @@
 # Conformance checking
 
-How to check that a program's output conforms to the [specification](../../../spec/parley-v0.2.md),
+How to check that a program's output conforms to the [specification](../../../spec/parley-vous-v0.3.md),
 and what the checker can and cannot establish. This is a reference for tool authors and for
 anyone reviewing a parley-emitting tool.
 

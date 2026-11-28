@@ -16,7 +16,7 @@ that opens the records a digest names, recorded as a `parley.query` carrying `re
 read nowhere is what a digest excluded: it is a count, named by no id, and a caller reaches it by
 reading again under a wider budget. [A cold resume on real history](cold-resume.md) is what this
 reader was able to reconstruct, and what it was not, when an agent with no other context used it. Spec
-[§9](../../../spec/parley-v0.2.md) is informative and unchanged; the reasoning behind the three
+[§9](../../../spec/parley-vous-v0.3.md) is informative and unchanged; the reasoning behind the three
 fields is [Observer geometry and spec §9](../related-work/observer-geometry.md), and the decision
 itself is [flyingrobots/parley#46](https://github.com/flyingrobots/parley/issues/46).
 

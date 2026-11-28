@@ -1,6 +1,6 @@
 # Observer geometry and spec §9
 
-What [§9 of the specification](../../../spec/parley-v0.2.md) takes from the observer-geometry
+What [§9 of the specification](../../../spec/parley-vous-v0.3.md) takes from the observer-geometry
 treatment it cites, and where it departs from it. This page is a reference: it does not change the
 spec, and the revised §9 wording below is a **proposal**, because a spec change carries its own
 version.

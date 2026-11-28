@@ -2,7 +2,7 @@
 
 | Page | Job |
 | --- | --- |
-| [The specification](../spec/parley-v0.2.md) | Normative. What a conforming program must do. |
+| [The specification](../spec/parley-vous-v0.3.md) | Normative. What a conforming program must do. |
 | [Schemas](../schemas/README.md) | JSON Schema per message type, versioned independently; the table lists each schema and its current version |
 | [Message SDL](topics/message-sdl/README.md) | The Wesley SDL that states the same 17 messages and is not yet their source: its interim directives and the Wesley issue that retires each, and what the agreement test holding it to the schemas establishes; its [test plan](topics/message-sdl/test-plan.md) is the contract ledger |
 | [Output contract](topics/output-contract/README.md) | Why the rules are what they are |

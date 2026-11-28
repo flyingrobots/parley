@@ -1,7 +1,7 @@
 # parley-emit-py
 
 The Python writer: `packages/parley-emit-py/parley_emit.py`, one file, standard library only,
-Python 3.9 or later. A tool conforms to the [specification](../../../spec/parley-v0.2.md) by
+Python 3.9 or later. A tool conforms to the [specification](../../../spec/parley-vous-v0.3.md) by
 vendoring the file, defining itself with `define_tool` and running its handler under `main`. This
 page is the reference for what the file does on `main`; the package
 [README](../../../packages/parley-emit-py/README.md) is the front door, with a captured run and the

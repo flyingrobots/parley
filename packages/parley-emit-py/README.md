@@ -1,6 +1,6 @@
 # parley_emit.py
 
-A writer for the [Parley output protocol](../../spec/parley-v0.2.md) in one Python file. A tool
+A writer for the [Parley output protocol](../../spec/parley-vous-v0.3.md) in one Python file. A tool
 conforms by defining itself and running its handler under `main`; the writer owns everything the
 protocol asks of a program that is not the program's own result: the bootstrap line, the receipt
 and where it goes, the single sequence across streams, `inv`, redaction, sidecars, hygiene,

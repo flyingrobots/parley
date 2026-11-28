@@ -1,6 +1,6 @@
 # @flyingrobots/parley-read
 
-A reader for the [Parley output protocol](../../spec/parley-v0.2.md). It opens the receipt bundles
+A reader for the [Parley output protocol](../../spec/parley-vous-v0.3.md). It opens the receipt bundles
 a repository has accumulated and hands back every run's records, each labelled by how well it is
 established: validated against the schema for its exact pair, partially checked, or passed through
 unvalidated because its type is not ours to validate.

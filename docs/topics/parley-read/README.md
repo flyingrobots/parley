@@ -2,7 +2,7 @@
 
 The reader library: `@flyingrobots/parley-read`, under `packages/parley-read`. It opens the
 receipt bundles a repository has accumulated and returns every run's records, under the rules the
-[specification](../../../spec/parley-v0.2.md) binds a reader to, and it answers a read over those
+[specification](../../../spec/parley-vous-v0.3.md) binds a reader to, and it answers a read over those
 records — refused unless it states who it is for and what it wants, recorded as a run of its own,
 ordered by the purpose it states, and bounded by the budget it states, with a digest that says
 what the bound left out — and it opens the records a digest names, by `(run, seq)`, in full. This page is the reference for what the package does on `main`; the

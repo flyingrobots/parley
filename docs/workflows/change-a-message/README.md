@@ -2,7 +2,7 @@
 
 How to change the shape of a Parley message: add a field, tighten a constraint, edit a
 description. This is a contributor operation. What a message must say is in the
-[specification](../../../spec/parley-v0.2.md), and the rules for its version are in spec §4.5.
+[specification](../../../spec/parley-vous-v0.3.md), and the rules for its version are in spec §4.5.
 
 ## Today: two files, one commit
 

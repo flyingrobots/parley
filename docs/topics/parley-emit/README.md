@@ -1,7 +1,7 @@
 # parley-emit
 
 The writer library: `@flyingrobots/parley-emit`, under `packages/parley-emit`. A tool conforms to
-the [specification](../../../spec/parley-v0.2.md) by constructing a writer and emitting through
+the [specification](../../../spec/parley-vous-v0.3.md) by constructing a writer and emitting through
 it. This page is the reference for what the package does on `main`; the package
 [README](../../../packages/parley-emit/README.md) is the front door with a captured run, and the
 [test plan](test-plan.md) beside this page is the contract ledger.
